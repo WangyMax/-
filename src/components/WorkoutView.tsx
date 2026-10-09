@@ -48,10 +48,39 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
       const unit: ResistanceUnit = pe.targetUnit || exDetail?.defaultUnit || 'kg';
       const pulley: PulleyRatio = pe.pulleyRatio || exDetail?.defaultPulley || 'none';
+      const isDropSet = Boolean(pe.isDropSet || (pe.dropStages && pe.dropStages.length > 0));
 
-      // 默认生成组数（优先采用计划中预设的目标重量与次数，其次采用上一次的记录，最后兜底）
+      const baseDropStages = pe.dropStages && pe.dropStages.length > 0
+        ? pe.dropStages
+        : [
+            { id: 'stg-1', weightOrPlates: 10, unit: 'kg' as ResistanceUnit, reps: 12 },
+            { id: 'stg-2', weightOrPlates: 7.5, unit: 'kg' as ResistanceUnit, reps: 12 },
+            { id: 'stg-3', weightOrPlates: 5, unit: 'kg' as ResistanceUnit, reps: 10 },
+            { id: 'stg-4', weightOrPlates: 2.5, unit: 'kg' as ResistanceUnit, reps: 12 },
+          ];
+
+      // 默认生成组数（支持超级组大组 + 各阶梯重量次数独立注入）
       const sets: WorkoutSet[] = Array.from({ length: pe.targetSets || 4 }, (_, i) => {
         const lastSet = lastLog?.sets[i];
+
+        if (isDropSet) {
+          const currentStages = lastSet?.dropStages && lastSet.dropStages.length > 0
+            ? JSON.parse(JSON.stringify(lastSet.dropStages))
+            : JSON.parse(JSON.stringify(baseDropStages));
+
+          return {
+            id: `s-${Date.now()}-${i}`,
+            setNumber: i + 1,
+            unit: 'kg' as ResistanceUnit,
+            weightOrPlates: currentStages[0]?.weightOrPlates || 10,
+            reps: currentStages[0]?.reps || 12,
+            completed: false,
+            pulleyRatio: pulley,
+            isDropSet: true,
+            dropStages: currentStages,
+          };
+        }
+
         const defaultWeight = pe.targetWeight !== undefined 
           ? pe.targetWeight 
           : (lastSet?.weightOrPlates ?? (unit === 'plates' ? 10 : 30));
@@ -178,12 +207,61 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     updateActiveSession({ ...activeSession, exercises });
   };
 
-  // 增加一组
+  // 修改超级组阶梯数值 (某个递减阶段的重量或次数)
+  const updateDropStageField = (exIndex: number, setIndex: number, stageIndex: number, field: 'weightOrPlates' | 'reps', delta: number) => {
+    if (!activeSession) return;
+    const exercises = [...activeSession.exercises];
+    const targetSet = exercises[exIndex].sets[setIndex];
+    if (!targetSet.dropStages) return;
+    const stg = targetSet.dropStages[stageIndex];
+    stg[field] = Math.max(0, stg[field] + delta);
+    updateActiveSession({ ...activeSession, exercises });
+  };
+
+  const setDropStageDirectVal = (exIndex: number, setIndex: number, stageIndex: number, field: 'weightOrPlates' | 'reps', val: number) => {
+    if (!activeSession) return;
+    const exercises = [...activeSession.exercises];
+    const targetSet = exercises[exIndex].sets[setIndex];
+    if (!targetSet.dropStages) return;
+    targetSet.dropStages[stageIndex][field] = Math.max(0, val);
+    updateActiveSession({ ...activeSession, exercises });
+  };
+
+  // 为某个大组增加一个递减阶梯
+  const addDropStageToSet = (exIndex: number, setIndex: number) => {
+    if (!activeSession) return;
+    const exercises = [...activeSession.exercises];
+    const targetSet = exercises[exIndex].sets[setIndex];
+    if (!targetSet.dropStages) targetSet.dropStages = [];
+    const lastStg = targetSet.dropStages[targetSet.dropStages.length - 1];
+    const newWeight = lastStg ? Math.max(1, lastStg.weightOrPlates - 2.5) : 5;
+    targetSet.dropStages.push({
+      id: `stg-${Date.now()}`,
+      weightOrPlates: newWeight,
+      unit: lastStg ? lastStg.unit : 'kg',
+      reps: 10,
+    });
+    updateActiveSession({ ...activeSession, exercises });
+  };
+
+  // 删除某个递减阶梯
+  const removeDropStageFromSet = (exIndex: number, setIndex: number, stageIndex: number) => {
+    if (!activeSession) return;
+    const exercises = [...activeSession.exercises];
+    const targetSet = exercises[exIndex].sets[setIndex];
+    if (!targetSet.dropStages || targetSet.dropStages.length <= 1) return;
+    targetSet.dropStages.splice(stageIndex, 1);
+    updateActiveSession({ ...activeSession, exercises });
+  };
+
+  // 增加一组 (或超级组加大组)
   const addSetToExercise = (exIndex: number) => {
     if (!activeSession) return;
     const exercises = [...activeSession.exercises];
     const ex = exercises[exIndex];
     const lastSet = ex.sets[ex.sets.length - 1];
+    const isDrop = Boolean(lastSet?.isDropSet);
+
     const newSet: WorkoutSet = {
       id: `s-${Date.now()}-${ex.sets.length + 1}`,
       setNumber: ex.sets.length + 1,
@@ -192,6 +270,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       reps: lastSet ? lastSet.reps : 12,
       completed: false,
       pulleyRatio: lastSet ? lastSet.pulleyRatio : ex.pulleyRatio,
+      isDropSet: isDrop,
+      dropStages: isDrop && lastSet?.dropStages ? JSON.parse(JSON.stringify(lastSet.dropStages)) : undefined,
     };
     ex.sets.push(newSet);
     updateActiveSession({ ...activeSession, exercises });
@@ -470,111 +550,251 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                   </div>
                 )}
 
-                {/* 组数列表表格 */}
-                <div className="space-y-2">
-                  <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-slate-400 px-1">
-                    <div className="col-span-2 text-center">组数</div>
-                    <div className="col-span-5 text-center">
-                      {UNIT_LABELS[exLog.currentUnit] || '负荷'}
-                    </div>
-                    <div className="col-span-3 text-center">次数</div>
-                    <div className="col-span-2 text-center">打钩</div>
+                {/* 组数列表：超级组大组递减阶梯模式 vs 普通动作模式 */}
+                {exLog.sets.some(s => s.isDropSet) ? (
+                  <div className="space-y-3">
+                    {exLog.sets.map((bigSet, setIdx) => {
+                      const stages = bigSet.dropStages || [];
+                      return (
+                        <div
+                          key={bigSet.id}
+                          className={`rounded-2xl p-3 border transition-all ${
+                            bigSet.completed
+                              ? 'bg-emerald-50/70 border-emerald-300'
+                              : 'bg-slate-50/80 border-slate-200'
+                          }`}
+                        >
+                          {/* 大组头部 */}
+                          <div className="flex items-center justify-between pb-2 border-b border-slate-200/70">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-black text-slate-900 bg-white px-2 py-0.5 rounded-lg border border-slate-200 shadow-2xs">
+                                第 {bigSet.setNumber} 大组
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-bold">
+                                {stages.length}个连续递减重量
+                              </span>
+                            </div>
+
+                            {/* 大组完成打勾 */}
+                            <button
+                              type="button"
+                              onClick={() => toggleSetComplete(exIdx, setIdx)}
+                              className={`px-3 py-1 rounded-xl text-xs font-black flex items-center gap-1 transition-all active:scale-95 ${
+                                bigSet.completed
+                                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-2 ring-emerald-500/20'
+                                  : 'bg-white text-slate-400 hover:text-slate-700 border border-slate-200/90 shadow-2xs'
+                              }`}
+                            >
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              {bigSet.completed ? '已完成大组' : '完成该大组'}
+                            </button>
+                          </div>
+
+                          {/* 阶梯小组列表 (各重量与次数独立调整) */}
+                          <div className="mt-2.5 space-y-1.5">
+                            {stages.map((stage, stageIdx) => {
+                              return (
+                                <div
+                                  key={stage.id}
+                                  className="bg-white p-2 rounded-xl border border-slate-200/90 flex items-center justify-between text-xs gap-2 shadow-2xs"
+                                >
+                                  <div className="flex items-center gap-1 shrink-0 text-slate-400 font-mono text-[11px] font-bold">
+                                    <span>#{stageIdx + 1}</span>
+                                    {stageIdx > 0 && <span className="text-slate-300">➔</span>}
+                                  </div>
+
+                                  {/* 阶梯重量步进 */}
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'weightOrPlates', -2.5)}
+                                      className="w-6 h-6 bg-slate-100 hover:bg-slate-200 rounded text-xs font-black active:scale-95 text-slate-700"
+                                    >
+                                      -
+                                    </button>
+                                    <div className="flex items-center gap-0.5">
+                                      <input
+                                        type="number"
+                                        step="0.5"
+                                        value={stage.weightOrPlates}
+                                        onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
+                                        className="w-12 text-center bg-slate-50 border border-slate-200 rounded py-0.5 text-xs font-black text-slate-900"
+                                      />
+                                      <span className="text-[10px] text-slate-400 font-semibold">{stage.unit || 'kg'}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'weightOrPlates', 2.5)}
+                                      className="w-6 h-6 bg-slate-100 hover:bg-slate-200 rounded text-xs font-black active:scale-95 text-slate-700"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+
+                                  {/* 阶梯次数步进 */}
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'reps', -1)}
+                                      className="w-6 h-6 bg-slate-100 hover:bg-slate-200 rounded text-xs font-black active:scale-95 text-slate-700"
+                                    >
+                                      -
+                                    </button>
+                                    <div className="flex items-center gap-0.5">
+                                      <input
+                                        type="number"
+                                        value={stage.reps}
+                                        onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'reps', parseInt(e.target.value) || 0)}
+                                        className="w-10 text-center bg-slate-50 border border-slate-200 rounded py-0.5 text-xs font-black text-slate-900"
+                                      />
+                                      <span className="text-[10px] text-slate-400 font-semibold">次</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'reps', 1)}
+                                      className="w-6 h-6 bg-slate-100 hover:bg-slate-200 rounded text-xs font-black active:scale-95 text-slate-700"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+
+                                  {/* 删除该阶梯 (如果超过1个) */}
+                                  {stages.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => removeDropStageFromSet(exIdx, setIdx, stageIdx)}
+                                      className="text-slate-300 hover:text-red-500 p-1"
+                                      title="删除该递减段"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* 阶梯操作栏 */}
+                          <div className="mt-2 pt-1.5 flex items-center justify-between">
+                            <button
+                              type="button"
+                              onClick={() => addDropStageToSet(exIdx, setIdx)}
+                              className="text-[11px] text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 hover:underline"
+                            >
+                              <Plus className="w-3 h-3" /> 加一个递减重量
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-
-                  {exLog.sets.map((set, setIdx) => {
-                    const isPlates = set.unit === 'plates';
-                    return (
-                      <div
-                        key={set.id}
-                        className={`grid grid-cols-12 gap-2 items-center p-2 rounded-xl border transition-all ${
-                          set.completed
-                            ? 'bg-emerald-50/70 border-emerald-300'
-                            : 'bg-slate-50 border-slate-200/90'
-                        }`}
-                      >
-                        {/* 组号 */}
-                        <div className="col-span-2 flex items-center justify-center">
-                          <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold ${
-                            set.completed ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
-                          }`}>
-                            {set.setNumber}
-                          </span>
-                        </div>
-
-                        {/* 重量/片数调整器 */}
-                        <div className="col-span-5 flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? -1 : -2.5)}
-                            className="w-7 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
-                          >
-                            -
-                          </button>
-                          <input
-                            type="number"
-                            value={set.weightOrPlates}
-                            onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
-                            className="w-14 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-black text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? 1 : 2.5)}
-                            className="w-7 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
-                          >
-                            +
-                          </button>
-                        </div>
-
-                        {/* 次数调整器 */}
-                        <div className="col-span-3 flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => updateSetField(exIdx, setIdx, 'reps', -1)}
-                            className="w-6 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
-                          >
-                            -
-                          </button>
-                          <input
-                            type="number"
-                            value={set.reps}
-                            onChange={(e) => setDirectVal(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
-                            className="w-10 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-black text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => updateSetField(exIdx, setIdx, 'reps', 1)}
-                            className="w-6 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
-                          >
-                            +
-                          </button>
-                        </div>
-
-                        {/* 完成勾选按钮 */}
-                        <div className="col-span-2 flex items-center justify-center">
-                          <button
-                            type="button"
-                            onClick={() => toggleSetComplete(exIdx, setIdx)}
-                            className={`w-8.5 h-8.5 rounded-xl flex items-center justify-center transition-all active:scale-95 ${
-                              set.completed
-                                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-2 ring-emerald-500/20 scale-105'
-                                : 'bg-white hover:bg-slate-50 text-slate-300 hover:text-slate-600 border border-slate-200/90 shadow-2xs'
-                            }`}
-                          >
-                            <Check className="w-4 h-4 stroke-[3]" />
-                          </button>
-                        </div>
+                ) : (
+                  /* 普通动作：单行组数列表 */
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-slate-400 px-1">
+                      <div className="col-span-2 text-center">组数</div>
+                      <div className="col-span-5 text-center">
+                        {UNIT_LABELS[exLog.currentUnit] || '负荷'}
                       </div>
-                    );
-                  })}
-                </div>
+                      <div className="col-span-3 text-center">次数</div>
+                      <div className="col-span-2 text-center">打钩</div>
+                    </div>
 
-                {/* 增加一组按钮 */}
+                    {exLog.sets.map((set, setIdx) => {
+                      const isPlates = set.unit === 'plates';
+                      return (
+                        <div
+                          key={set.id}
+                          className={`grid grid-cols-12 gap-2 items-center p-2 rounded-xl border transition-all ${
+                            set.completed
+                              ? 'bg-emerald-50/70 border-emerald-300'
+                              : 'bg-slate-50 border-slate-200/90'
+                          }`}
+                        >
+                          {/* 组号 */}
+                          <div className="col-span-2 flex items-center justify-center">
+                            <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold ${
+                              set.completed ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
+                            }`}>
+                              {set.setNumber}
+                            </span>
+                          </div>
+
+                          {/* 重量/片数调整器 */}
+                          <div className="col-span-5 flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? -1 : -2.5)}
+                              className="w-7 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
+                            >
+                              -
+                            </button>
+                            <input
+                              type="number"
+                              value={set.weightOrPlates}
+                              onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
+                              className="w-14 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-black text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? 1 : 2.5)}
+                              className="w-7 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          {/* 次数调整器 */}
+                          <div className="col-span-3 flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => updateSetField(exIdx, setIdx, 'reps', -1)}
+                              className="w-6 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
+                            >
+                              -
+                            </button>
+                            <input
+                              type="number"
+                              value={set.reps}
+                              onChange={(e) => setDirectVal(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
+                              className="w-10 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-black text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateSetField(exIdx, setIdx, 'reps', 1)}
+                              className="w-6 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          {/* 完成勾选按钮 */}
+                          <div className="col-span-2 flex items-center justify-center">
+                            <button
+                              type="button"
+                              onClick={() => toggleSetComplete(exIdx, setIdx)}
+                              className={`w-8.5 h-8.5 rounded-xl flex items-center justify-center transition-all active:scale-95 ${
+                                set.completed
+                                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-2 ring-emerald-500/20 scale-105'
+                                  : 'bg-white hover:bg-slate-50 text-slate-300 hover:text-slate-600 border border-slate-200/90 shadow-2xs'
+                              }`}
+                            >
+                              <Check className="w-4 h-4 stroke-[3]" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* 增加一组 / 加一大组按钮 */}
                 <div className="mt-3 flex items-center justify-between">
                   <button
                     onClick={() => addSetToExercise(exIdx)}
-                    className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1 border border-slate-200"
+                    className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1 border border-slate-200 shadow-xs active:scale-95"
                   >
-                    <Plus className="w-3.5 h-3.5" /> 加一组
+                    <Plus className="w-3.5 h-3.5" /> {exLog.sets.some(s => s.isDropSet) ? '加一大组' : '加一组'}
                   </button>
 
                   {exLog.sets.length > 1 && (
@@ -582,7 +802,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                       onClick={() => removeSet(exIdx, exLog.sets.length - 1)}
                       className="text-xs text-slate-400 hover:text-red-600"
                     >
-                      删除末尾组
+                      {exLog.sets.some(s => s.isDropSet) ? '删除末尾大组' : '删除末尾组'}
                     </button>
                   )}
                 </div>

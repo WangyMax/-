@@ -44,7 +44,18 @@ export const INITIAL_PLANS: WorkoutPlan[] = [
     exercises: [
       { exerciseId: 'ex-sho-02', targetSets: 4, targetReps: 12, targetWeight: 30, targetUnit: 'kg', pulleyRatio: '2:1', notes: '反向飞鸟 双滑轮 30kg' },
       { exerciseId: 'ex-sho-01', targetSets: 4, targetReps: 8, targetWeight: 20, targetUnit: 'kg', pulleyRatio: 'none', notes: '推肩 20kg' },
-      { exerciseId: 'ex-sho-03', targetSets: 4, targetReps: 10, targetWeight: 10, targetUnit: 'kg', pulleyRatio: 'none', notes: '超级组飞鸟 (递减超级组)' },
+      { 
+        exerciseId: 'ex-sho-03', 
+        targetSets: 4, 
+        isDropSet: true,
+        dropStages: [
+          { id: 'stg-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
+          { id: 'stg-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
+          { id: 'stg-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
+          { id: 'stg-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
+        ],
+        notes: '超级组飞鸟 (10kg->7.5kg->5kg->2.5kg 递减)' 
+      },
       { exerciseId: 'ex-sho-04', targetSets: 4, targetReps: 12, targetWeight: 5, targetUnit: 'kg', pulleyRatio: 'none', notes: '前平举 5kg' },
       { exerciseId: 'ex-sho-05', targetSets: 4, targetReps: 12, targetWeight: 1, targetUnit: 'plates', pulleyRatio: '2:1', notes: 'Y 举 一片' },
       { exerciseId: 'ex-abs-01', targetSets: 3, targetReps: 15, targetWeight: 8, targetUnit: 'plates', pulleyRatio: 'none', notes: '器械卷腹' },

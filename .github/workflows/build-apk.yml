@@ -62,14 +62,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.9.0
-          name: "FitCustom Pro v1.9 (UI全面升级：底部操作对称一人一半 + 原生磨砂质感导航 + 步进器优化)"
+          tag_name: v2.0.0
+          name: "FitCustom Pro v2.0 (重磅专业升级：完整递减超级组系统上线)"
           body: |
             ### 更新亮点：
-            1. 底部操作按钮对称重构：放弃本次训练与结束并保存记录各占50%（一人一半），圆角与触控面积深度优化；
-            2. 动作组数步进器优化：按钮触控面积扩大至 28px，重量与次数输入框更易单手调整；
-            3. 全局底部导航栏质感升级：采用 iOS 磨砂玻璃质感与高光活动胶囊标签；
-            4. 日志中心分段控制器升级：磨砂层次分明，操作响应丝滑。
+            1. 专业递减超级组模型：大组自定义（默认4大组），每组包含多阶梯连续递减重量与独立次数；
+            2. 开练看板定制超级组大组卡片：直观呈现递减流（10kg/12次 -> 7.5kg/12次 -> 5kg/10次 -> 2.5kg/12次），每个阶梯重量与次数均可独立调整，支持自由增删递减阶梯与大组；
+            3. 计划编辑与历史记录全面升级：自定义超级组大组与阶梯，精准还原 10.08 肩部真实超级组数据。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

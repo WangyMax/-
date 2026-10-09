@@ -23,13 +23,22 @@ export interface Exercise {
   notes?: string;
 }
 
+export interface DropStage {
+  id: string;
+  weightOrPlates: number;
+  unit: ResistanceUnit;
+  reps: number;
+}
+
 export interface PlanExerciseTarget {
   exerciseId: string;
-  targetSets: number;
+  targetSets: number; // 大组数 (例如 4 个大组)
   targetReps?: number;
   targetWeight?: number; // 预设目标重量或片数
   targetUnit?: ResistanceUnit; // 预设阻力单位：kg / plates / assisted / bodyweight
   pulleyRatio?: PulleyRatio; // 预设滑轮比例：none / 1:1 / 2:1
+  isDropSet?: boolean; // 是否开启递减超级组
+  dropStages?: DropStage[]; // 预设递减阶梯 (例如: 10kg/12次 -> 7.5kg/12次 -> 5kg/10次 -> 2.5kg/12次)
   notes?: string;
 }
 
@@ -52,6 +61,9 @@ export interface WorkoutSet {
   completed: boolean;
   pulleyRatio?: PulleyRatio;
   rpe?: number;
+  // 递减超级组支持：
+  isDropSet?: boolean;
+  dropStages?: DropStage[]; // 递减阶梯详情（如 10kg/12次 -> 7.5kg/12次 -> 5kg/10次 -> 2.5kg/12次）
 }
 
 export interface ExerciseLog {

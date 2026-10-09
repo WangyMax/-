@@ -183,6 +183,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                     const ex = allExercises.find(e => e.id === pe.exerciseId);
                     const unitStr = pe.targetUnit === 'plates' ? '片' : pe.targetUnit === 'assisted' ? 'kg助力' : pe.targetUnit === 'bodyweight' ? '自重' : 'kg';
                     const pulleyStr = pe.pulleyRatio && pe.pulleyRatio !== 'none' ? ` (${pe.pulleyRatio})` : '';
+                    const isDrop = Boolean(pe.isDropSet || (pe.dropStages && pe.dropStages.length > 0));
                     return (
                       <div
                         key={idx}
@@ -193,13 +194,21 @@ export const PlansView: React.FC<PlansViewProps> = ({
                           <span className="font-semibold text-slate-800 truncate">{ex?.name || '未知动作'}</span>
                         </div>
                         <div className="flex items-center gap-1 shrink-0 ml-2">
-                          <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
-                            {pe.targetSets}组 × {pe.targetReps || 12}次
-                          </span>
-                          {pe.targetWeight !== undefined && (
-                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                              {pe.targetWeight}{unitStr}{pulleyStr}
+                          {isDrop ? (
+                            <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                              🔥 {pe.targetSets}大组 · 递减超级组
                             </span>
+                          ) : (
+                            <>
+                              <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                                {pe.targetSets}组 × {pe.targetReps || 12}次
+                              </span>
+                              {pe.targetWeight !== undefined && (
+                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                  {pe.targetWeight}{unitStr}{pulleyStr}
+                                </span>
+                              )}
+                            </>
                           )}
                         </div>
                       </div>
@@ -384,86 +393,220 @@ export const PlansView: React.FC<PlansViewProps> = ({
                             </div>
                           </div>
 
-                          {/* 预设参数区：组数、次数、预设重量、单位、滑轮 */}
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2.5 text-[11px]">
-                            {/* 目标组数 */}
-                            <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
-                              <span className="text-slate-500 font-medium">目标组数:</span>
-                              <div className="flex items-center gap-1">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max="20"
-                                  value={pe.targetSets}
-                                  onChange={(e) => {
+                          {/* 预设参数区：超级组面板 vs 普通动作面板 */}
+                          {pe.isDropSet ? (
+                            <div className="mt-2.5 space-y-2 bg-amber-50/70 p-2.5 rounded-xl border border-amber-200/90 text-xs">
+                              <div className="flex items-center justify-between">
+                                <span className="font-black text-amber-900 text-xs flex items-center gap-1">
+                                  🔥 递减超级组编排
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-slate-600 font-bold text-[11px]">目标大组数:</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="20"
+                                    value={pe.targetSets}
+                                    onChange={(e) => {
+                                      const newExs = [...editingPlan.exercises];
+                                      newExs[idx].targetSets = parseInt(e.target.value) || 1;
+                                      setEditingPlan({ ...editingPlan, exercises: newExs });
+                                    }}
+                                    className="w-12 bg-white border border-amber-300 rounded px-1 py-0.5 text-center text-slate-900 font-black text-xs"
+                                  />
+                                  <span className="text-slate-400 text-[11px]">大组</span>
+                                </div>
+                              </div>
+
+                              {/* 递减阶梯列表 */}
+                              <div className="space-y-1">
+                                {(pe.dropStages || []).map((stg, stgIdx) => (
+                                  <div key={stg.id} className="bg-white p-1.5 rounded-lg border border-amber-200/80 flex items-center justify-between text-[11px] gap-1 shadow-2xs">
+                                    <span className="font-mono text-slate-400 font-bold w-4">#{stgIdx + 1}</span>
+                                    <div className="flex items-center gap-0.5">
+                                      <input
+                                        type="number"
+                                        step="0.5"
+                                        value={stg.weightOrPlates}
+                                        onChange={(e) => {
+                                          const newExs = [...editingPlan.exercises];
+                                          newExs[idx].dropStages![stgIdx].weightOrPlates = parseFloat(e.target.value) || 0;
+                                          setEditingPlan({ ...editingPlan, exercises: newExs });
+                                        }}
+                                        className="w-12 bg-slate-50 border border-slate-200 rounded py-0.5 text-center font-black"
+                                      />
+                                      <span className="text-slate-400 font-bold">kg</span>
+                                    </div>
+                                    <span className="text-slate-300">➔</span>
+                                    <div className="flex items-center gap-0.5">
+                                      <input
+                                        type="number"
+                                        value={stg.reps}
+                                        onChange={(e) => {
+                                          const newExs = [...editingPlan.exercises];
+                                          newExs[idx].dropStages![stgIdx].reps = parseInt(e.target.value) || 0;
+                                          setEditingPlan({ ...editingPlan, exercises: newExs });
+                                        }}
+                                        className="w-10 bg-slate-50 border border-slate-200 rounded py-0.5 text-center font-black"
+                                      />
+                                      <span className="text-slate-400 font-bold">次</span>
+                                    </div>
+                                    {(pe.dropStages || []).length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const newExs = [...editingPlan.exercises];
+                                          newExs[idx].dropStages!.splice(stgIdx, 1);
+                                          setEditingPlan({ ...editingPlan, exercises: newExs });
+                                        }}
+                                        className="text-slate-300 hover:text-red-500 p-0.5 ml-1"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+
+                              <div className="flex items-center justify-between pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
                                     const newExs = [...editingPlan.exercises];
-                                    newExs[idx].targetSets = parseInt(e.target.value) || 1;
+                                    if (!newExs[idx].dropStages) newExs[idx].dropStages = [];
+                                    const last = newExs[idx].dropStages![newExs[idx].dropStages!.length - 1];
+                                    newExs[idx].dropStages!.push({
+                                      id: `stg-${Date.now()}`,
+                                      weightOrPlates: last ? Math.max(1, last.weightOrPlates - 2.5) : 5,
+                                      unit: 'kg',
+                                      reps: 10,
+                                    });
                                     setEditingPlan({ ...editingPlan, exercises: newExs });
                                   }}
-                                  className="w-10 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900 font-bold"
-                                />
-                                <span className="text-slate-400">组</span>
-                              </div>
-                            </div>
-
-                            {/* 目标次数 */}
-                            <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
-                              <span className="text-slate-500 font-medium">目标次数:</span>
-                              <div className="flex items-center gap-1">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max="100"
-                                  value={pe.targetReps ?? 12}
-                                  onChange={(e) => {
+                                  className="text-[11px] text-amber-800 hover:text-amber-900 font-bold flex items-center gap-1 hover:underline"
+                                >
+                                  <Plus className="w-3 h-3" /> 加一阶递减重量
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
                                     const newExs = [...editingPlan.exercises];
-                                    newExs[idx].targetReps = parseInt(e.target.value) || 1;
+                                    newExs[idx].isDropSet = false;
                                     setEditingPlan({ ...editingPlan, exercises: newExs });
                                   }}
-                                  className="w-10 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900 font-bold"
-                                />
-                                <span className="text-slate-400">次</span>
+                                  className="text-[10px] text-slate-400 hover:text-slate-600 underline"
+                                >
+                                  切回普通单组模式
+                                </button>
                               </div>
                             </div>
+                          ) : (
+                            /* 普通动作配置面板 */
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2.5 text-[11px]">
+                              {/* 目标组数 */}
+                              <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                                <span className="text-slate-500 font-medium">目标组数:</span>
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="20"
+                                    value={pe.targetSets}
+                                    onChange={(e) => {
+                                      const newExs = [...editingPlan.exercises];
+                                      newExs[idx].targetSets = parseInt(e.target.value) || 1;
+                                      setEditingPlan({ ...editingPlan, exercises: newExs });
+                                    }}
+                                    className="w-10 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900 font-bold"
+                                  />
+                                  <span className="text-slate-400">组</span>
+                                </div>
+                              </div>
 
-                            {/* 预设重量/片数 */}
-                            <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
-                              <span className="text-slate-500 font-medium">预设负荷:</span>
-                              <div className="flex items-center gap-1">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.5"
-                                  value={pe.targetWeight ?? 0}
+                              {/* 目标次数 */}
+                              <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                                <span className="text-slate-500 font-medium">目标次数:</span>
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="100"
+                                    value={pe.targetReps ?? 12}
+                                    onChange={(e) => {
+                                      const newExs = [...editingPlan.exercises];
+                                      newExs[idx].targetReps = parseInt(e.target.value) || 1;
+                                      setEditingPlan({ ...editingPlan, exercises: newExs });
+                                    }}
+                                    className="w-10 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900 font-bold"
+                                  />
+                                  <span className="text-slate-400">次</span>
+                                </div>
+                              </div>
+
+                              {/* 预设重量/片数 */}
+                              <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                                <span className="text-slate-500 font-medium">预设负荷:</span>
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    value={pe.targetWeight ?? 0}
+                                    onChange={(e) => {
+                                      const newExs = [...editingPlan.exercises];
+                                      newExs[idx].targetWeight = parseFloat(e.target.value) || 0;
+                                      setEditingPlan({ ...editingPlan, exercises: newExs });
+                                    }}
+                                    className="w-12 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-emerald-700 font-bold"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* 阻力单位 */}
+                              <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                                <span className="text-slate-500 font-medium">阻力单位:</span>
+                                <select
+                                  value={pe.targetUnit || ex?.defaultUnit || 'kg'}
                                   onChange={(e) => {
                                     const newExs = [...editingPlan.exercises];
-                                    newExs[idx].targetWeight = parseFloat(e.target.value) || 0;
+                                    newExs[idx].targetUnit = e.target.value as ResistanceUnit;
                                     setEditingPlan({ ...editingPlan, exercises: newExs });
                                   }}
-                                  className="w-12 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-emerald-700 font-bold"
-                                />
+                                  className="bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-[11px] font-bold text-slate-700"
+                                >
+                                  <option value="kg">kg (重量)</option>
+                                  <option value="plates">片 (插销)</option>
+                                  <option value="assisted">助力 (kg)</option>
+                                  <option value="bodyweight">自重</option>
+                                </select>
                               </div>
                             </div>
+                          )}
 
-                            {/* 阻力单位 */}
-                            <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
-                              <span className="text-slate-500 font-medium">阻力单位:</span>
-                              <select
-                                value={pe.targetUnit || ex?.defaultUnit || 'kg'}
-                                onChange={(e) => {
+                          {/* 动作底部：设为超级组按钮或滑轮备注行 */}
+                          {!pe.isDropSet && (
+                            <div className="mt-1.5 flex items-center justify-end">
+                              <button
+                                type="button"
+                                onClick={() => {
                                   const newExs = [...editingPlan.exercises];
-                                  newExs[idx].targetUnit = e.target.value as ResistanceUnit;
+                                  newExs[idx].isDropSet = true;
+                                  if (!newExs[idx].dropStages) {
+                                    newExs[idx].dropStages = [
+                                      { id: 'stg-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
+                                      { id: 'stg-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
+                                      { id: 'stg-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
+                                      { id: 'stg-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
+                                    ];
+                                  }
                                   setEditingPlan({ ...editingPlan, exercises: newExs });
                                 }}
-                                className="bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-[11px] font-bold text-slate-700"
+                                className="text-[10px] text-amber-800 hover:underline font-bold"
                               >
-                                <option value="kg">kg (重量)</option>
-                                <option value="plates">片 (插销)</option>
-                                <option value="assisted">助力 (kg)</option>
-                                <option value="bodyweight">自重</option>
-                              </select>
+                                🔥 设为递减超级组
+                              </button>
                             </div>
-                          </div>
+                          )}
 
                           {/* 滑轮与备注可选行 */}
                           <div className="flex items-center gap-2 mt-2">

@@ -476,16 +476,42 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                                 </span>
                               </div>
 
-                              {/* 各组小标签 */}
+                              {/* 各组小标签 / 超级组大组阶梯流 */}
                               <div className="flex flex-wrap gap-1.5">
-                                {completedSets.map((s, sIdx) => (
-                                  <span
-                                    key={sIdx}
-                                    className="bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200 text-[11px] font-mono text-slate-700 font-medium"
-                                  >
-                                    {s.weightOrPlates}{unitStr} × {s.reps}次
-                                  </span>
-                                ))}
+                                {completedSets.map((s, sIdx) => {
+                                  if (s.isDropSet && s.dropStages && s.dropStages.length > 0) {
+                                    return (
+                                      <div
+                                        key={sIdx}
+                                        className="w-full bg-slate-50/90 p-2 rounded-xl border border-slate-200/90 text-[11px] font-mono space-y-1.5"
+                                      >
+                                        <div className="font-bold text-slate-800 flex items-center justify-between">
+                                          <span className="text-blue-700 font-sans font-black">第 {s.setNumber} 大组 (递减超级组)</span>
+                                          <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 font-sans font-semibold">
+                                            {s.dropStages.length}阶递减全部完成
+                                          </span>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-1.5 text-slate-800">
+                                          {s.dropStages.map((stg, stgIdx) => (
+                                            <span key={stgIdx} className="bg-white px-2 py-0.5 rounded-lg border border-slate-200/80 font-bold shadow-2xs">
+                                              {stg.weightOrPlates}{stg.unit || 'kg'} × {stg.reps}次
+                                              {stgIdx < s.dropStages!.length - 1 && <span className="text-slate-300 ml-1">➔</span>}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+
+                                  return (
+                                    <span
+                                      key={sIdx}
+                                      className="bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200 text-[11px] font-mono text-slate-700 font-medium"
+                                    >
+                                      {s.weightOrPlates}{unitStr} × {s.reps}次
+                                    </span>
+                                  );
+                                })}
                               </div>
 
                               {e.notes && (

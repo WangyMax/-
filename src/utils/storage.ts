@@ -177,24 +177,68 @@ export const INITIAL_SESSIONS: WorkoutSession[] = [
         category: 'shoulder',
         pulleyRatio: 'none',
         currentUnit: 'kg',
-        notes: '超级组递减: 10kg(12/10/8/8) ➔ 7.5kg(12/10/8/8) ➔ 5kg(10/10/8/8) ➔ 2.5kg(12/8/8/8)',
+        notes: '超级组4大组: 10kg -> 7.5kg -> 5kg -> 2.5kg 递减力竭',
         sets: [
-          { id: 's1008-3-1', setNumber: 1, unit: 'kg', weightOrPlates: 10, reps: 12, completed: true },
-          { id: 's1008-3-2', setNumber: 2, unit: 'kg', weightOrPlates: 10, reps: 10, completed: true },
-          { id: 's1008-3-3', setNumber: 3, unit: 'kg', weightOrPlates: 10, reps: 8, completed: true },
-          { id: 's1008-3-4', setNumber: 4, unit: 'kg', weightOrPlates: 10, reps: 8, completed: true },
-          { id: 's1008-3-5', setNumber: 5, unit: 'kg', weightOrPlates: 7.5, reps: 12, completed: true },
-          { id: 's1008-3-6', setNumber: 6, unit: 'kg', weightOrPlates: 7.5, reps: 10, completed: true },
-          { id: 's1008-3-7', setNumber: 7, unit: 'kg', weightOrPlates: 7.5, reps: 8, completed: true },
-          { id: 's1008-3-8', setNumber: 8, unit: 'kg', weightOrPlates: 7.5, reps: 8, completed: true },
-          { id: 's1008-3-9', setNumber: 9, unit: 'kg', weightOrPlates: 5, reps: 10, completed: true },
-          { id: 's1008-3-10', setNumber: 10, unit: 'kg', weightOrPlates: 5, reps: 10, completed: true },
-          { id: 's1008-3-11', setNumber: 11, unit: 'kg', weightOrPlates: 5, reps: 8, completed: true },
-          { id: 's1008-3-12', setNumber: 12, unit: 'kg', weightOrPlates: 5, reps: 8, completed: true },
-          { id: 's1008-3-13', setNumber: 13, unit: 'kg', weightOrPlates: 2.5, reps: 12, completed: true },
-          { id: 's1008-3-14', setNumber: 14, unit: 'kg', weightOrPlates: 2.5, reps: 8, completed: true },
-          { id: 's1008-3-15', setNumber: 15, unit: 'kg', weightOrPlates: 2.5, reps: 8, completed: true },
-          { id: 's1008-3-16', setNumber: 16, unit: 'kg', weightOrPlates: 2.5, reps: 8, completed: true },
+          {
+            id: 's1008-3-round1',
+            setNumber: 1,
+            unit: 'kg',
+            weightOrPlates: 10,
+            reps: 12,
+            completed: true,
+            isDropSet: true,
+            dropStages: [
+              { id: 'stg-1008-1-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
+              { id: 'stg-1008-1-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
+              { id: 'stg-1008-1-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
+              { id: 'stg-1008-1-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
+            ]
+          },
+          {
+            id: 's1008-3-round2',
+            setNumber: 2,
+            unit: 'kg',
+            weightOrPlates: 10,
+            reps: 10,
+            completed: true,
+            isDropSet: true,
+            dropStages: [
+              { id: 'stg-1008-2-1', weightOrPlates: 10, unit: 'kg', reps: 10 },
+              { id: 'stg-1008-2-2', weightOrPlates: 7.5, unit: 'kg', reps: 10 },
+              { id: 'stg-1008-2-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
+              { id: 'stg-1008-2-4', weightOrPlates: 2.5, unit: 'kg', reps: 8 },
+            ]
+          },
+          {
+            id: 's1008-3-round3',
+            setNumber: 3,
+            unit: 'kg',
+            weightOrPlates: 10,
+            reps: 8,
+            completed: true,
+            isDropSet: true,
+            dropStages: [
+              { id: 'stg-1008-3-1', weightOrPlates: 10, unit: 'kg', reps: 8 },
+              { id: 'stg-1008-3-2', weightOrPlates: 7.5, unit: 'kg', reps: 8 },
+              { id: 'stg-1008-3-3', weightOrPlates: 5, unit: 'kg', reps: 8 },
+              { id: 'stg-1008-3-4', weightOrPlates: 2.5, unit: 'kg', reps: 8 },
+            ]
+          },
+          {
+            id: 's1008-3-round4',
+            setNumber: 4,
+            unit: 'kg',
+            weightOrPlates: 10,
+            reps: 8,
+            completed: true,
+            isDropSet: true,
+            dropStages: [
+              { id: 'stg-1008-4-1', weightOrPlates: 10, unit: 'kg', reps: 8 },
+              { id: 'stg-1008-4-2', weightOrPlates: 7.5, unit: 'kg', reps: 8 },
+              { id: 'stg-1008-4-3', weightOrPlates: 5, unit: 'kg', reps: 8 },
+              { id: 'stg-1008-4-4', weightOrPlates: 2.5, unit: 'kg', reps: 8 },
+            ]
+          },
         ]
       },
       {
@@ -451,24 +495,33 @@ export const StorageService = {
     }
     try {
       const parsed: WorkoutPlan[] = JSON.parse(raw);
-      // 确保4大计划中的关键预设属性与 INITIAL_PLANS 同步升级（若缺少 targetWeight）
+      // 确保4大计划中的关键预设属性与 INITIAL_PLANS 同步升级（若缺少 targetWeight 或缺少超级组配置）
       let hasChanges = false;
       const updated = parsed.map(plan => {
         const initMatch = INITIAL_PLANS.find(p => p.id === plan.id);
-        if (initMatch && (!plan.exercises[0]?.targetWeight)) {
-          hasChanges = true;
-          return {
-            ...plan,
-            exercises: plan.exercises.map((ex, idx) => {
-              const initEx = initMatch.exercises[idx];
+        if (initMatch) {
+          const freshExs = plan.exercises.map((ex, idx) => {
+            const initEx = initMatch.exercises[idx];
+            if (initEx && initEx.isDropSet && !ex.isDropSet) {
+              hasChanges = true;
               return {
                 ...ex,
-                targetWeight: ex.targetWeight ?? initEx?.targetWeight,
-                targetUnit: ex.targetUnit ?? initEx?.targetUnit,
-                pulleyRatio: ex.pulleyRatio ?? initEx?.pulleyRatio,
+                isDropSet: true,
+                dropStages: initEx.dropStages,
               };
-            })
-          };
+            }
+            if (initEx && (!ex.targetWeight && initEx.targetWeight)) {
+              hasChanges = true;
+              return {
+                ...ex,
+                targetWeight: initEx.targetWeight,
+                targetUnit: initEx.targetUnit,
+                pulleyRatio: initEx.pulleyRatio,
+              };
+            }
+            return ex;
+          });
+          return { ...plan, exercises: freshExs };
         }
         return plan;
       });
@@ -527,7 +580,30 @@ export const StorageService = {
     }
 
     try {
-      return JSON.parse(raw);
+      const parsed: WorkoutSession[] = JSON.parse(raw);
+      let needsSave = false;
+      const updated = parsed.map(sess => {
+        if (sess.date === '2026-10-08') {
+          const shoEx = sess.exercises.find(e => e.exerciseId === 'ex-sho-03');
+          if (shoEx && (!shoEx.sets[0]?.isDropSet || shoEx.sets.length > 4)) {
+            const initMatch = INITIAL_SESSIONS.find(s => s.id === 'sess-real-1008');
+            if (initMatch) {
+              const freshSho = initMatch.exercises.find(e => e.exerciseId === 'ex-sho-03');
+              if (freshSho) {
+                shoEx.sets = freshSho.sets;
+                shoEx.notes = freshSho.notes;
+                needsSave = true;
+              }
+            }
+          }
+        }
+        return sess;
+      });
+      if (needsSave) {
+        localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(updated));
+        return updated;
+      }
+      return parsed;
     } catch {
       return [...INITIAL_SESSIONS];
     }
