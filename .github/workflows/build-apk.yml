@@ -62,14 +62,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.6.0
-          name: "FitCustom Pro v1.6 (OPPO一加原生流体云胶囊 + 实时倒计时 + 关屏硬件震动)"
+          tag_name: v1.7.0
+          name: "FitCustom Pro v1.7 (彻底剥离计时功能与原生服务，零闪退稳定版)"
           body: |
             ### 更新亮点：
-            1. 真正嵌入 OPPO / 一加 ColorOS 系统原生流体云胶囊（退到桌面/其他软件依然常驻）；
-            2. 胶囊上实时动态显示两分钟倒计时（02:00 -> 01:59 -> 01:58...）；
-            3. 关屏幕/息屏锁屏状态下精准唤醒并触发硬件震动提醒；
-            4. 每组打勾自动开始两分钟间歇，震动提醒后做完继续循环。
+            1. 彻底删除全部计时功能与后台媒体服务，彻底杜绝打勾时的崩溃闪退问题；
+            2. 打勾完成仅执行纯粹的本地数据标记，单手操作丝滑顺畅、零卡顿、零闪退；
+            3. 保留状态栏避让垫片、历史训练折叠展开与平滑体重走势曲线。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

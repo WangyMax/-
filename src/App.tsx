@@ -8,7 +8,6 @@ import { WorkoutView } from './components/WorkoutView';
 import { PlansView } from './components/PlansView';
 import { ExerciseLibraryView } from './components/ExerciseLibraryView';
 import { WeightJournalView } from './components/WeightJournalView';
-import { FluidCapsule } from './components/FluidCapsule';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<'workout' | 'plans' | 'library' | 'journal'>('workout');
@@ -75,10 +74,7 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans relative">
-      {/* OPPO一加流体云灵动胶囊：常驻顶部打孔区中央，后台绝对时间戳保活与震动提醒 */}
-      <FluidCapsule />
-
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
       {/* 顶部系统状态栏安全避让垫片，彻底解决手机顶部时间/电量图标重叠问题 */}
       <div className="h-[max(env(safe-area-inset-top),38px)] w-full shrink-0 bg-slate-50" />
       {/* 移动端视口容器 (限制在手机尺寸优雅居中，桌面端自适应居中) */}
