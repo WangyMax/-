@@ -62,13 +62,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.8.0
-          name: "FitCustom Pro v1.8 (界面极简化：去除进行中文字与闪烁圆点)"
+          tag_name: v1.9.0
+          name: "FitCustom Pro v1.9 (UI全面升级：底部操作对称一人一半 + 原生磨砂质感导航 + 步进器优化)"
           body: |
             ### 更新亮点：
-            1. 彻底去除开练后左上角的“进行中训练”文字以及闪烁小圆点，界面视觉更加专注干净；
-            2. 仅保留训练计划大标题、已完成组数与完成训练按钮；
-            3. 打勾秒级响应，零弹窗，零闪退。
+            1. 底部操作按钮对称重构：放弃本次训练与结束并保存记录各占50%（一人一半），圆角与触控面积深度优化；
+            2. 动作组数步进器优化：按钮触控面积扩大至 28px，重量与次数输入框更易单手调整；
+            3. 全局底部导航栏质感升级：采用 iOS 磨砂玻璃质感与高光活动胶囊标签；
+            4. 日志中心分段控制器升级：磨砂层次分明，操作响应丝滑。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

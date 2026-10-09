@@ -335,14 +335,14 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         <p className="text-xs text-slate-500 mt-0.5">历史打卡归档、日常体重走势与身体状态记录</p>
       </div>
 
-      {/* 顶部子标签切换器 */}
-      <div className="bg-slate-100 p-1 rounded-2xl flex items-center gap-1 border border-slate-200/80">
+      {/* 顶部子标签分段控制器 (iOS / 现代原生风格磨砂分段器) */}
+      <div className="bg-slate-200/70 p-1.5 rounded-2xl flex items-center gap-1.5 border border-slate-300/60 shadow-inner">
         <button
           onClick={() => setActiveSubTab('training')}
-          className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+          className={`flex-1 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all duration-200 active:scale-[0.98] ${
             activeSubTab === 'training'
-              ? 'bg-white text-blue-700 shadow-sm'
-              : 'text-slate-500 hover:text-slate-800'
+              ? 'bg-white text-blue-700 font-black shadow-sm ring-1 ring-black/5'
+              : 'text-slate-600 hover:text-slate-900 font-bold hover:bg-white/50'
           }`}
         >
           <Dumbbell className="w-3.5 h-3.5" /> 历史训练记录 ({sessions.length}次)
@@ -350,10 +350,10 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
         <button
           onClick={() => setActiveSubTab('weight')}
-          className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+          className={`flex-1 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all duration-200 active:scale-[0.98] ${
             activeSubTab === 'weight'
-              ? 'bg-white text-emerald-700 shadow-sm'
-              : 'text-slate-500 hover:text-slate-800'
+              ? 'bg-white text-emerald-700 font-black shadow-sm ring-1 ring-black/5'
+              : 'text-slate-600 hover:text-slate-900 font-bold hover:bg-white/50'
           }`}
         >
           <Scale className="w-3.5 h-3.5" /> 体重与生活日志 ({weights.length}条)

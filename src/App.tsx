@@ -106,56 +106,32 @@ export function App() {
         )}
       </main>
 
-      {/* 底部导航栏 (Tab Navigation) */}
-      <nav className="fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur-xl border-t border-slate-200/90 shadow-lg shadow-slate-200/50 safe-bottom">
-        <div className="max-w-md mx-auto grid grid-cols-4 h-16 px-2">
-          <button
-            onClick={() => setActiveTab('workout')}
-            className={`flex flex-col items-center justify-center gap-1 transition-all ${
-              activeTab === 'workout'
-                ? 'text-blue-600 font-bold scale-105'
-                : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            <Dumbbell className="w-5 h-5" />
-            <span className="text-[11px]">今日训练</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('plans')}
-            className={`flex flex-col items-center justify-center gap-1 transition-all ${
-              activeTab === 'plans'
-                ? 'text-blue-600 font-bold scale-105'
-                : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            <CalendarCheck className="w-5 h-5" />
-            <span className="text-[11px]">计划分化</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('library')}
-            className={`flex flex-col items-center justify-center gap-1 transition-all ${
-              activeTab === 'library'
-                ? 'text-blue-600 font-bold scale-105'
-                : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            <BookOpen className="w-5 h-5" />
-            <span className="text-[11px]">动作库</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('journal')}
-            className={`flex flex-col items-center justify-center gap-1 transition-all ${
-              activeTab === 'journal'
-                ? 'text-blue-600 font-bold scale-105'
-                : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            <Scale className="w-5 h-5" />
-            <span className="text-[11px]">日志记录</span>
-          </button>
+      {/* 底部导航栏 (现代原生风格磨砂玻璃 Tab Bar) */}
+      <nav className="fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur-2xl border-t border-slate-200/80 shadow-[0_-4px_24px_rgba(15,23,42,0.05)] safe-bottom">
+        <div className="max-w-md mx-auto grid grid-cols-4 h-16 px-3 items-center">
+          {[
+            { id: 'workout', label: '今日训练', icon: Dumbbell },
+            { id: 'plans', label: '计划分化', icon: CalendarCheck },
+            { id: 'library', label: '动作库', icon: BookOpen },
+            { id: 'journal', label: '日志记录', icon: Scale },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as 'workout' | 'plans' | 'library' | 'journal')}
+                className={`flex flex-col items-center justify-center gap-1 transition-all py-1.5 rounded-2xl select-none active:scale-95 ${
+                  isActive
+                    ? 'text-blue-700 font-black bg-blue-50/70 ring-1 ring-blue-500/10'
+                    : 'text-slate-400 hover:text-slate-700 font-semibold'
+                }`}
+              >
+                <Icon className={`w-5 h-5 transition-transform ${isActive ? 'scale-110 stroke-[2.3]' : 'stroke-[1.8]'}`} />
+                <span className="text-[11px] tracking-tight">{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
       </nav>
     </div>

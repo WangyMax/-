@@ -506,7 +506,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                           <button
                             type="button"
                             onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? -1 : -2.5)}
-                            className="w-6 h-6 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded flex items-center justify-center font-bold text-xs shadow-xs"
+                            className="w-7 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
                           >
                             -
                           </button>
@@ -514,12 +514,12 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                             type="number"
                             value={set.weightOrPlates}
                             onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
-                            className="w-14 text-center bg-white border border-slate-200 rounded py-1 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
+                            className="w-14 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-black text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
                           />
                           <button
                             type="button"
                             onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? 1 : 2.5)}
-                            className="w-6 h-6 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded flex items-center justify-center font-bold text-xs shadow-xs"
+                            className="w-7 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
                           >
                             +
                           </button>
@@ -530,7 +530,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                           <button
                             type="button"
                             onClick={() => updateSetField(exIdx, setIdx, 'reps', -1)}
-                            className="w-5 h-6 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded flex items-center justify-center font-bold text-xs shadow-xs"
+                            className="w-6 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
                           >
                             -
                           </button>
@@ -538,12 +538,12 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                             type="number"
                             value={set.reps}
                             onChange={(e) => setDirectVal(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
-                            className="w-10 text-center bg-white border border-slate-200 rounded py-1 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
+                            className="w-10 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-black text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
                           />
                           <button
                             type="button"
                             onClick={() => updateSetField(exIdx, setIdx, 'reps', 1)}
-                            className="w-5 h-6 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded flex items-center justify-center font-bold text-xs shadow-xs"
+                            className="w-6 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
                           >
                             +
                           </button>
@@ -554,10 +554,10 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                           <button
                             type="button"
                             onClick={() => toggleSetComplete(exIdx, setIdx)}
-                            className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${
+                            className={`w-8.5 h-8.5 rounded-xl flex items-center justify-center transition-all active:scale-95 ${
                               set.completed
-                                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 scale-105'
-                                : 'bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-700 border border-slate-200 shadow-xs'
+                                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-2 ring-emerald-500/20 scale-105'
+                                : 'bg-white hover:bg-slate-50 text-slate-300 hover:text-slate-600 border border-slate-200/90 shadow-2xs'
                             }`}
                           >
                             <Check className="w-4 h-4 stroke-[3]" />
@@ -668,21 +668,21 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             />
           </div>
 
-          {/* 底部操作条 */}
-          <div className="flex items-center gap-3 pt-2">
+          {/* 底部操作条：放弃本次训练与结束保存一人一半 */}
+          <div className="grid grid-cols-2 gap-3 pt-3 pb-3">
             <button
               onClick={() => {
                 if (window.confirm('确定放弃并清空当前正在记录的训练吗？')) {
                   updateActiveSession(null);
                 }
               }}
-              className="flex-1 py-3 bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 rounded-xl text-xs font-bold border border-slate-200 transition-colors"
+              className="w-full py-3.5 bg-slate-100 hover:bg-red-50 text-slate-700 hover:text-red-600 rounded-2xl text-xs font-bold border border-slate-200 transition-all flex items-center justify-center gap-1.5 active:scale-[0.98] shadow-xs"
             >
-              放弃本次训练
+              <Trash2 className="w-3.5 h-3.5 text-slate-400" /> 放弃本次训练
             </button>
             <button
               onClick={() => setShowFinishModal(true)}
-              className="flex-2 w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]"
+              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-extrabold shadow-md shadow-emerald-600/25 flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]"
             >
               <CheckCircle2 className="w-4 h-4" /> 结束并保存记录
             </button>
