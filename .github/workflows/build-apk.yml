@@ -62,14 +62,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.3.0
-          name: "FitCustom Pro v1.3 (状态栏安全适配 + 纯粹记录免计时 + 周月视图动态联动 + 历史默认全部折叠)"
+          tag_name: v1.4.0
+          name: "FitCustom Pro v1.4 (一加流体云灵动胶囊 + 2分钟组间间歇 + 硬件震动)"
           body: |
             ### 更新亮点：
-            1. 修复状态栏兼容重叠：顶部配置沉浸式安全避让空间，彻底解决与手机电量/时间重叠；
-            2. 移除所有计时功能：进入训练后无需计时，去除秒表与休息弹窗，专注每组负荷记录；
-            3. 周/月视图动态走势联动：按钮高亮与状态横幅即时响应，30天月度时间轴全景平滑展开；
-            4. 历史训练记录默认 100% 全部折叠，无需展开，界面紧凑清爽。
+            1. 专为 OPPO / 一加 ACE 5 Pro 定制：顶部正中央常驻黑曜石质感“流体云灵动胶囊”；
+            2. 每组做完打勾自动开启 2 分钟组间间歇倒计时，切到后台/息屏绝对时间戳保活不丢时长；
+            3. 倒计时归零自动触发 ColorOS 线性马达高频节律硬件震动与清脆音效，提醒开练下一组；
+            4. 胶囊支持轻触展开 ColorOS 控制卡片：快捷 +30秒、重置2分钟、跳过；做完下一组继续循环倒计时。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

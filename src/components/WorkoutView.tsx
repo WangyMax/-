@@ -9,6 +9,7 @@ import {
   ResistanceUnit, PulleyRatio, CATEGORY_LABELS, UNIT_LABELS, Exercise 
 } from '../types';
 import { StorageService } from '../utils/storage';
+import { restTimer } from '../utils/restTimerService';
 
 interface WorkoutViewProps {
   onOpenPlansTab: () => void;
@@ -156,8 +157,14 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const exercises = [...activeSession.exercises];
     const ex = exercises[exIndex];
     const targetSet = ex.sets[setIndex];
-    targetSet.completed = !targetSet.completed;
+    const nextCompleted = !targetSet.completed;
+    targetSet.completed = nextCompleted;
     updateActiveSession({ ...activeSession, exercises });
+
+    // 每组做完点击打勾，立即自动开始两分钟组间歇，唤起顶部流体云胶囊倒计时
+    if (nextCompleted) {
+      restTimer.start(120);
+    }
   };
 
   // 修改组数据
@@ -241,6 +248,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     };
     StorageService.addSession(finalSession);
     StorageService.saveActiveSession(null);
+    restTimer.stop();
     setActiveSession(null);
     setShowFinishModal(false);
   };
@@ -283,6 +291,15 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => restTimer.start(120)}
+                className="bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 active:scale-95 transition-all"
+                title="开启/重置2分钟组间歇"
+              >
+                ⚡ 2分间歇
+              </button>
+
               <div className="bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
                 <span className="font-mono text-xs font-bold text-blue-700">
                   {totalCompletedSets} / {totalAllSets} 组
