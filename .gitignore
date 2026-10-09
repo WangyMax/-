@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+
+# Yan Agent temporary
+.yanagent/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# Android build cache
+android/.gradle/
+android/build/
+android/app/build/
+android/.idea/
+android/captures/
+android/*.iml
+android/app/*.iml
