@@ -275,11 +275,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
         <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md pb-3 pt-1 border-b border-slate-200/90 mb-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-2 h-2 rounded-full bg-blue-600 animate-ping"></span>
-                <span className="text-xs text-blue-600 font-bold uppercase tracking-wider">进行中训练</span>
-              </div>
-              <h2 className="text-xl font-black text-slate-900 tracking-tight mt-0.5">{activeSession.planName}</h2>
+              <h2 className="text-xl font-black text-slate-900 tracking-tight">{activeSession.planName}</h2>
             </div>
 
             <div className="flex items-center gap-2">

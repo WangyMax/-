@@ -62,13 +62,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.7.0
-          name: "FitCustom Pro v1.7 (彻底剥离计时功能与原生服务，零闪退稳定版)"
+          tag_name: v1.8.0
+          name: "FitCustom Pro v1.8 (界面极简化：去除进行中文字与闪烁圆点)"
           body: |
             ### 更新亮点：
-            1. 彻底删除全部计时功能与后台媒体服务，彻底杜绝打勾时的崩溃闪退问题；
-            2. 打勾完成仅执行纯粹的本地数据标记，单手操作丝滑顺畅、零卡顿、零闪退；
-            3. 保留状态栏避让垫片、历史训练折叠展开与平滑体重走势曲线。
+            1. 彻底去除开练后左上角的“进行中训练”文字以及闪烁小圆点，界面视觉更加专注干净；
+            2. 仅保留训练计划大标题、已完成组数与完成训练按钮；
+            3. 打勾秒级响应，零弹窗，零闪退。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
