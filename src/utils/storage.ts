@@ -505,16 +505,14 @@ export const StorageService = {
   // 训练记录
   getSessions(): WorkoutSession[] {
     const raw = localStorage.getItem(STORAGE_KEYS.SESSIONS);
-    let sessions: WorkoutSession[] = [];
     if (!raw) {
-      // 迁移检查：如果有旧版本，先合并旧版本的自定义会话，并且补齐 10.06 - 10.09 真实记录
+      const sessions = [...INITIAL_SESSIONS];
+      // 迁移检查：如果有旧版本，先合并旧版本的自定义会话
       const oldRaw = localStorage.getItem(STORAGE_KEYS.OLD_SESSIONS);
-      sessions = [...INITIAL_SESSIONS];
       if (oldRaw) {
         try {
           const oldSessions: WorkoutSession[] = JSON.parse(oldRaw);
           for (const s of oldSessions) {
-            // 如果不是这4个日期的会话，保留用户的历史
             if (!['2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'].includes(s.date)) {
               sessions.push(s);
             }
@@ -523,29 +521,16 @@ export const StorageService = {
           // ignore
         }
       }
-      // 按日期降序
       sessions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
       return sessions;
     }
 
     try {
-      sessions = JSON.parse(raw);
+      return JSON.parse(raw);
     } catch {
-      sessions = [...INITIAL_SESSIONS];
+      return [...INITIAL_SESSIONS];
     }
-
-    // 安全检查：如果本地记录中缺少 10.06 - 10.09 中的任何一项真实记录，自动补充合并进去
-    const missingRealSessions = INITIAL_SESSIONS.filter(
-      initSess => !sessions.some(s => s.date === initSess.date && s.exercises.length > 0)
-    );
-    if (missingRealSessions.length > 0) {
-      sessions = [...sessions, ...missingRealSessions];
-      sessions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
-    }
-
-    return sessions;
   },
 
   saveSessions(sessions: WorkoutSession[]): void {
@@ -602,9 +587,8 @@ export const StorageService = {
   // 体重与生活日志
   getWeightLogs(): WeightLog[] {
     const raw = localStorage.getItem(STORAGE_KEYS.WEIGHTS);
-    let logs: WeightLog[] = [];
     if (!raw) {
-      logs = [...INITIAL_WEIGHTS];
+      const logs = [...INITIAL_WEIGHTS];
       const oldRaw = localStorage.getItem(STORAGE_KEYS.OLD_WEIGHTS);
       if (oldRaw) {
         try {
@@ -624,22 +608,10 @@ export const StorageService = {
     }
 
     try {
-      logs = JSON.parse(raw);
+      return JSON.parse(raw);
     } catch {
-      logs = [...INITIAL_WEIGHTS];
+      return [...INITIAL_WEIGHTS];
     }
-
-    // 补齐 10.07 (晚上吃了鸡公煲), 10.08, 10.09 体重记录
-    const missingWeights = INITIAL_WEIGHTS.filter(
-      initW => !logs.some(l => l.date === initW.date)
-    );
-    if (missingWeights.length > 0) {
-      logs = [...logs, ...missingWeights];
-      logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      localStorage.setItem(STORAGE_KEYS.WEIGHTS, JSON.stringify(logs));
-    }
-
-    return logs;
   },
 
   saveWeightLogs(logs: WeightLog[]): void {

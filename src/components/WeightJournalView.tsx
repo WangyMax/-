@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Scale, Plus, TrendingDown, TrendingUp, 
   Trash2, Download, Upload, CheckCircle2, MessageSquare,
-  Dumbbell, Flame, RotateCcw, Check
+  Dumbbell, Flame, RotateCcw, Check, ChevronDown, ChevronUp,
+  AlertTriangle, Layers
 } from 'lucide-react';
 import { WeightLog, WorkoutSession } from '../types';
 import { StorageService } from '../utils/storage';
@@ -17,8 +18,9 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   // 当前子标签: 'training' | 'weight'
   const [activeSubTab, setActiveSubTab] = useState<'training' | 'weight'>('training');
   
-  // 训练记录列表
+  // 训练记录列表与展开状态集合
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
+  const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(new Set());
 
   // 体重日志列表与输入状态
   const [weights, setWeights] = useState<WeightLog[]>([]);
@@ -29,13 +31,57 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const [isEditingExisting, setIsEditingExisting] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
+  // 体重曲线时间跨度视图: 'week' (周视图/7天) | 'month' (月视图/30天) | 'all' (全部)
+  const [chartViewSpan, setChartViewSpan] = useState<'week' | 'month' | 'all'>('week');
+
+  // 内置确认弹窗状态（彻底规避安卓原生 window.confirm 被拦截问题）
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    onConfirm: () => {},
+  });
+
   useEffect(() => {
     refreshData();
   }, []);
 
   const refreshData = () => {
-    setWeights(StorageService.getWeightLogs());
-    setSessions(StorageService.getSessions());
+    const wList = StorageService.getWeightLogs();
+    const sList = StorageService.getSessions();
+    setWeights(wList);
+    setSessions(sList);
+    // 默认展开最新一条训练，其他折叠
+    if (sList.length > 0 && expandedSessionIds.size === 0) {
+      setExpandedSessionIds(new Set([sList[0].id]));
+    }
+  };
+
+  // 切换单条训练展开/折叠
+  const toggleExpandSession = (sessionId: string) => {
+    setExpandedSessionIds(prev => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+      } else {
+        next.add(sessionId);
+      }
+      return next;
+    });
+  };
+
+  // 一键全部展开 / 全部收起
+  const toggleAllSessions = () => {
+    if (expandedSessionIds.size === sessions.length) {
+      setExpandedSessionIds(new Set());
+    } else {
+      setExpandedSessionIds(new Set(sessions.map(s => s.id)));
+    }
   };
 
   // 检查选中的 inputDate 是否已经打过卡
@@ -78,33 +124,51 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     if (onDataChanged) onDataChanged();
   };
 
-  // 删除某条体重记录
-  const handleDeleteWeight = (id: string) => {
-    if (window.confirm('确定删除该条体重记录吗？')) {
-      StorageService.deleteWeightLog(id);
-      refreshData();
-      if (onDataChanged) onDataChanged();
-    }
+  // 唤起应用内删除体重确认
+  const promptDeleteWeight = (id: string, date: string, weightVal: number) => {
+    setConfirmModal({
+      isOpen: true,
+      title: '删除体重记录',
+      description: `确定要彻底删除 ${date} 的 ${weightVal}kg 体重打卡记录吗？删除后将不再复原。`,
+      onConfirm: () => {
+        StorageService.deleteWeightLog(id);
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        refreshData();
+        if (onDataChanged) onDataChanged();
+      }
+    });
   };
 
-  // 删除某次训练记录
-  const handleDeleteSession = (sessionId: string, planName: string, date: string) => {
-    if (window.confirm(`确定删除 ${date} 的 “${planName}” 训练记录吗？`)) {
-      StorageService.deleteSession(sessionId);
-      refreshData();
-      if (onDataChanged) onDataChanged();
-    }
+  // 唤起应用内删除训练确认
+  const promptDeleteSession = (sessionId: string, planName: string, date: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: '删除历史训练记录',
+      description: `确定要彻底删除 ${date} 的 “${planName}” 训练记录吗？此操作无法撤销。`,
+      onConfirm: () => {
+        StorageService.deleteSession(sessionId);
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        refreshData();
+        if (onDataChanged) onDataChanged();
+      }
+    });
   };
 
   // 恢复内置官方数据 (10.06 - 10.09)
   const handleRestoreOfficialData = () => {
-    if (window.confirm('是否重置并恢复官方 10.06 - 10.09 真实训练记录与体重日志？')) {
-      StorageService.restoreOfficialData();
-      refreshData();
-      if (onDataChanged) onDataChanged();
-      setImportStatus('已成功恢复 10.06 - 10.09 真实训练与体重数据！');
-      setTimeout(() => setImportStatus(null), 3000);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: '恢复 10.06 - 10.09 真实记录',
+      description: '确定重置并重新载入官方 10.06 - 10.09 四日完整真实训练与体重数据吗？',
+      onConfirm: () => {
+        StorageService.restoreOfficialData();
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        refreshData();
+        if (onDataChanged) onDataChanged();
+        setImportStatus('已恢复 10.06 - 10.09 官方真实记录！');
+        setTimeout(() => setImportStatus(null), 3000);
+      }
+    });
   };
 
   // 导出 JSON 备份
@@ -146,12 +210,121 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const previousWeight = weights[1]?.weight;
   const weightDiff = latestWeight && previousWeight ? (latestWeight - previousWeight).toFixed(1) : null;
 
+  // 根据当前视图筛选体重数据并按日期升序排列供画曲线
+  const filteredChartWeights = useMemo(() => {
+    if (weights.length === 0) return [];
+    // 拷贝并按日期升序排列
+    const sorted = [...weights].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    if (chartViewSpan === 'all') {
+      return sorted;
+    }
+    
+    const now = new Date();
+    const daysLimit = chartViewSpan === 'week' ? 7 : 30;
+    const cutoffTime = now.getTime() - daysLimit * 24 * 60 * 60 * 1000;
+    
+    const inRange = sorted.filter(w => new Date(w.date).getTime() >= cutoffTime);
+    // 若在设定期限内数据过少，则兜底截取最近 N 条记录保证直观
+    if (inRange.length >= 2) return inRange;
+    return sorted.slice(-daysLimit);
+  }, [weights, chartViewSpan]);
+
+  // 计算区间曲线的统计指标（最高、最低、均值、波动差值）
+  const chartStats = useMemo(() => {
+    if (filteredChartWeights.length === 0) return null;
+    const vals = filteredChartWeights.map(w => w.weight);
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+    const netChange = (vals[vals.length - 1] - vals[0]).toFixed(1);
+    return { min, max, avg, netChange: parseFloat(netChange) };
+  }, [filteredChartWeights]);
+
+  // 生成高保真 SVG 平滑贝塞尔曲线路径
+  const svgData = useMemo(() => {
+    const list = filteredChartWeights;
+    const width = 360;
+    const height = 150;
+    const padL = 36;
+    const padR = 24;
+    const padT = 24;
+    const padB = 26;
+
+    if (list.length === 0) return null;
+
+    const chartW = width - padL - padR;
+    const chartH = height - padT - padB;
+
+    const vals = list.map(d => d.weight);
+    let minVal = Math.min(...vals);
+    let maxVal = Math.max(...vals);
+    if (maxVal === minVal) {
+      minVal -= 1;
+      maxVal += 1;
+    } else {
+      const margin = (maxVal - minVal) * 0.15;
+      minVal -= margin;
+      maxVal += margin;
+    }
+
+    // 各点坐标映射
+    const points = list.map((item, idx) => {
+      const x = list.length === 1 ? padL + chartW / 2 : padL + (idx / (list.length - 1)) * chartW;
+      const y = padT + chartH - ((item.weight - minVal) / (maxVal - minVal)) * chartH;
+      return { x, y, weight: item.weight, date: item.date.slice(5) };
+    });
+
+    if (points.length === 1) {
+      const p = points[0];
+      return {
+        width,
+        height,
+        points,
+        linePath: `M ${padL} ${p.y} L ${width - padR} ${p.y}`,
+        areaPath: `M ${padL} ${p.y} L ${width - padR} ${p.y} L ${width - padR} ${height - padB} L ${padL} ${height - padB} Z`,
+        midVal: ((minVal + maxVal) / 2).toFixed(1),
+        minVal: minVal.toFixed(1),
+        maxVal: maxVal.toFixed(1),
+      };
+    }
+
+    // 三次贝塞尔平滑曲线算法
+    let linePath = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i];
+      const p1 = points[i + 1];
+      const dx = (p1.x - p0.x) * 0.45;
+      const cp1x = p0.x + dx;
+      const cp1y = p0.y;
+      const cp2x = p1.x - dx;
+      const cp2y = p1.y;
+      linePath += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p1.x} ${p1.y}`;
+    }
+
+    // 面积闭合路径
+    const lastP = points[points.length - 1];
+    const firstP = points[0];
+    const areaPath = `${linePath} L ${lastP.x} ${height - padB} L ${firstP.x} ${height - padB} Z`;
+
+    return {
+      width,
+      height,
+      points,
+      linePath,
+      areaPath,
+      midVal: ((minVal + maxVal) / 2).toFixed(1),
+      minVal: minVal.toFixed(1),
+      maxVal: maxVal.toFixed(1),
+    };
+  }, [filteredChartWeights]);
+
   return (
     <div className="pb-24 pt-2 space-y-4">
       {/* 头部标题与双标签切换 */}
       <div>
         <h1 className="text-2xl font-black text-slate-900 tracking-tight">训练与生活日志</h1>
-        <p className="text-xs text-slate-500 mt-0.5">历史打卡记录归档、日常体重波动与身体状态</p>
+        <p className="text-xs text-slate-500 mt-0.5">历史打卡归档、日常体重走势与身体状态记录</p>
       </div>
 
       {/* 顶部子标签切换器 */}
@@ -187,12 +360,20 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         </div>
       )}
 
-      {/* ===================== TAB 1: 历史训练记录 ===================== */}
+      {/* ===================== TAB 1: 历史训练记录（需求①可点击展开折叠） ===================== */}
       {activeSubTab === 'training' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
-            <span className="text-xs font-bold text-slate-500">已归档训练按日期倒序排列</span>
-            <span className="text-[11px] text-blue-600 font-semibold">10.06 - 10.09 真实记录已收录</span>
+            <span className="text-xs font-bold text-slate-500">点击卡片展开/收起具体训练组数</span>
+            {sessions.length > 0 && (
+              <button
+                onClick={toggleAllSessions}
+                className="text-[11px] text-blue-600 hover:text-blue-700 font-bold flex items-center gap-1"
+              >
+                <Layers className="w-3 h-3" />
+                {expandedSessionIds.size === sessions.length ? '全部收起' : '全部展开'}
+              </button>
+            )}
           </div>
 
           {sessions.length === 0 ? (
@@ -201,6 +382,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </div>
           ) : (
             sessions.map((sess) => {
+              const isExpanded = expandedSessionIds.has(sess.id);
               const totalCompletedSets = sess.exercises.reduce(
                 (sum, e) => sum + e.sets.filter(s => s.completed).length, 0
               );
@@ -208,92 +390,111 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
               return (
                 <div
                   key={sess.id}
-                  className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm hover:border-slate-300 transition-all"
+                  className="bg-white border border-slate-200/90 rounded-2xl shadow-sm transition-all overflow-hidden"
                 >
-                  {/* 记录头部 */}
-                  <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-slate-100">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-black text-slate-900 text-base">{sess.planName}</span>
-                        <span className="text-xs font-mono font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
+                  {/* 可点击卡片头部（触发折叠/展开） */}
+                  <div
+                    onClick={() => toggleExpandSession(sess.id)}
+                    className="p-3.5 flex items-center justify-between gap-2 cursor-pointer hover:bg-slate-50/70 transition-colors select-none"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="font-black text-slate-900 text-sm">{sess.planName}</span>
+                        <span className="text-[11px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                           {sess.date}
                         </span>
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-[11px] text-slate-500">
-                          共完成 <strong className="text-slate-800">{totalCompletedSets}</strong> 组训练
-                        </span>
                         {sess.cardioCompleted && (
-                          <span className="text-[10px] text-pink-700 bg-pink-50 px-2 py-0.5 rounded-full border border-pink-200 flex items-center gap-1 font-bold">
-                            <Flame className="w-2.5 h-2.5" /> 附加有氧已完成 ({sess.cardioMinutes || 20}m)
+                          <span className="text-[10px] text-pink-700 bg-pink-50 px-1.5 py-0.2 rounded border border-pink-200 flex items-center gap-0.5 font-bold">
+                            <Flame className="w-2.5 h-2.5" /> 有氧{sess.cardioMinutes || 20}m
                           </span>
                         )}
                         {!sess.cardioCompleted && sess.cardioMinutes === 0 && (
-                          <span className="text-[10px] text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200">
+                          <span className="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.2 rounded border border-slate-200">
                             腿日无有氧
                           </span>
                         )}
                       </div>
+
+                      {/* 折叠态摘要：展示动作名称简略列表 */}
+                      <p className="text-[11px] text-slate-500 truncate">
+                        共 {sess.exercises.length} 个动作 · {totalCompletedSets} 组完成: {' '}
+                        {sess.exercises.map(e => e.exerciseName).join('、')}
+                      </p>
                     </div>
 
-                    <button
-                      onClick={() => handleDeleteSession(sess.id, sess.planName, sess.date)}
-                      className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-slate-50 transition-colors"
-                      title="删除此条记录"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          promptDeleteSession(sess.id, sess.planName, sess.date);
+                        }}
+                        className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                        title="删除该条训练记录"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+
+                      <div className="flex items-center gap-1 text-[11px] font-bold text-blue-600 bg-blue-50/80 px-2 py-1 rounded-lg border border-blue-200/80">
+                        <span>{isExpanded ? '收起' : '展开'}</span>
+                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </div>
+                    </div>
                   </div>
 
-                  {/* 动作与组数明细 */}
-                  <div className="mt-3 space-y-2">
-                    {sess.exercises.map((e, idx) => {
-                      const completedSets = e.sets.filter(s => s.completed);
-                      const unitStr = e.currentUnit === 'plates' ? '片' : e.currentUnit === 'assisted' ? '助力' : e.currentUnit === 'bodyweight' ? '自重' : 'kg';
-                      const pulleyStr = e.pulleyRatio && e.pulleyRatio !== 'none' ? ` (${e.pulleyRatio})` : '';
+                  {/* 展开内容区：具体动作与每组明细 */}
+                  {isExpanded && (
+                    <div className="px-3.5 pb-3.5 pt-1 border-t border-slate-100 bg-slate-50/40 space-y-2.5">
+                      <div className="space-y-2 pt-2">
+                        {sess.exercises.map((e, idx) => {
+                          const completedSets = e.sets.filter(s => s.completed);
+                          const unitStr = e.currentUnit === 'plates' ? '片' : e.currentUnit === 'assisted' ? '助力' : e.currentUnit === 'bodyweight' ? '自重' : 'kg';
+                          const pulleyStr = e.pulleyRatio && e.pulleyRatio !== 'none' ? ` (${e.pulleyRatio})` : '';
 
-                      return (
-                        <div key={idx} className="bg-slate-50/90 rounded-xl p-2.5 border border-slate-200/70 text-xs">
-                          <div className="flex items-center justify-between font-bold text-slate-800 mb-1.5">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-slate-400 font-mono text-[10px]">{idx + 1}.</span>
-                              <span>{e.exerciseName}</span>
-                              {pulleyStr && (
-                                <span className="text-[10px] text-purple-700 bg-purple-50 px-1 py-0.2 rounded border border-purple-200 font-normal">
-                                  {e.pulleyRatio}
+                          return (
+                            <div key={idx} className="bg-white rounded-xl p-2.5 border border-slate-200/80 text-xs shadow-2xs">
+                              <div className="flex items-center justify-between font-bold text-slate-800 mb-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-slate-400 font-mono text-[10px]">{idx + 1}.</span>
+                                  <span className="text-slate-900">{e.exerciseName}</span>
+                                  {pulleyStr && (
+                                    <span className="text-[10px] text-purple-700 bg-purple-50 px-1 py-0.2 rounded border border-purple-200 font-normal">
+                                      {e.pulleyRatio}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[11px] text-blue-700 font-semibold font-mono">
+                                  {completedSets.length} 组完成
                                 </span>
+                              </div>
+
+                              {/* 各组小标签 */}
+                              <div className="flex flex-wrap gap-1.5">
+                                {completedSets.map((s, sIdx) => (
+                                  <span
+                                    key={sIdx}
+                                    className="bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200 text-[11px] font-mono text-slate-700 font-medium"
+                                  >
+                                    {s.weightOrPlates}{unitStr} × {s.reps}次
+                                  </span>
+                                ))}
+                              </div>
+
+                              {e.notes && (
+                                <p className="mt-1.5 text-[10px] text-slate-400 italic">“{e.notes}”</p>
                               )}
                             </div>
-                            <span className="text-[11px] text-blue-700 font-semibold font-mono">
-                              {completedSets.length} 组完成
-                            </span>
-                          </div>
+                          );
+                        })}
+                      </div>
 
-                          {/* 各组小标签 */}
-                          <div className="flex flex-wrap gap-1.5">
-                            {completedSets.map((s, sIdx) => (
-                              <span
-                                key={sIdx}
-                                className="bg-white px-2 py-0.5 rounded-lg border border-slate-200 text-[11px] font-mono text-slate-700 font-medium"
-                              >
-                                {s.weightOrPlates}{unitStr} × {s.reps}次
-                              </span>
-                            ))}
-                          </div>
-
-                          {e.notes && (
-                            <p className="mt-1.5 text-[10px] text-slate-400 italic">“{e.notes}”</p>
-                          )}
+                      {/* 训练备注 */}
+                      {sess.notes && (
+                        <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded-xl flex items-start gap-1.5 text-xs text-blue-900">
+                          <MessageSquare className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
+                          <span>{sess.notes}</span>
                         </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* 训练备注 */}
-                  {sess.notes && (
-                    <div className="mt-3 p-2 bg-blue-50/60 border border-blue-200 rounded-xl flex items-start gap-1.5 text-xs text-blue-900">
-                      <MessageSquare className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
-                      <span>{sess.notes}</span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -390,10 +591,9 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   type="date"
                   value={inputDate}
                   onChange={(e) => setInputDate(e.target.value)}
-                  className="bg-slate-100 text-slate-700 text-xs px-2.5 py-1.5 rounded-lg border border-slate-200"
+                  className="bg-slate-100 text-slate-700 text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 font-medium"
                 />
 
-                {/* 需求 4: 打卡完之后直接灰下去，禁止重复点击 */}
                 {isAlreadyLogged ? (
                   <button
                     type="button"
@@ -414,7 +614,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </form>
           </div>
 
-          {/* 体重看板统计 */}
+          {/* 体重看板最新概览 */}
           {latestWeight && (
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-sm">
@@ -446,38 +646,161 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </div>
           )}
 
-          {/* 体重趋势图表 */}
-          {weights.length >= 2 && (
-            <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
-              <span className="text-xs font-bold text-slate-800 block mb-2">近期体重波动曲线</span>
-              <div className="h-28 flex items-end gap-2 pt-4 px-2">
-                {weights.slice(0, 7).reverse().map((w, _, arr) => {
-                  const min = Math.min(...arr.map(a => a.weight)) - 1;
-                  const max = Math.max(...arr.map(a => a.weight)) + 1;
-                  const heightPercent = Math.max(15, ((w.weight - min) / (max - min)) * 100);
+          {/* ===================== 需求②&③: 真正的 SVG 平滑波动曲线图（支持周/月/全部视图） ===================== */}
+          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm space-y-3">
+            {/* 顶栏：标题与视图切换按钮 */}
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <span className="text-xs font-black text-slate-900 flex items-center gap-1">
+                  <TrendingDown className="w-3.5 h-3.5 text-emerald-600" /> 体重波动曲线
+                </span>
+                <span className="text-[10px] text-slate-400">平滑贝塞尔走势</span>
+              </div>
 
-                  return (
-                    <div key={w.id} className="flex-1 flex flex-col items-center gap-1 group">
-                      <span className="text-[10px] text-slate-500 font-mono group-hover:text-emerald-600">{w.weight}</span>
-                      <div className="w-full bg-slate-100 rounded-t-lg overflow-hidden flex items-end h-16">
-                        <div
-                          className="w-full bg-emerald-500 group-hover:bg-emerald-600 transition-all rounded-t-lg"
-                          style={{ height: `${heightPercent}%` }}
-                        />
-                      </div>
-                      <span className="text-[9px] text-slate-400 truncate w-full text-center">
-                        {w.date.slice(5)}
-                      </span>
-                    </div>
-                  );
-                })}
+              {/* 周期切换: 周视图 / 月视图 / 全部 */}
+              <div className="bg-slate-100 p-0.5 rounded-xl flex items-center border border-slate-200/80 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setChartViewSpan('week')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                    chartViewSpan === 'week'
+                      ? 'bg-white text-emerald-700 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  周视图 (近7天)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartViewSpan('month')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                    chartViewSpan === 'month'
+                      ? 'bg-white text-emerald-700 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  月视图 (近30天)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartViewSpan('all')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                    chartViewSpan === 'all'
+                      ? 'bg-white text-emerald-700 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  全部
+                </button>
               </div>
             </div>
-          )}
 
-          {/* 历史打卡日志列表 */}
+            {/* 区间统计指标指示条 */}
+            {chartStats && (
+              <div className="grid grid-cols-4 gap-1.5 py-2 px-2.5 bg-slate-50 rounded-xl border border-slate-200/70 text-center">
+                <div>
+                  <span className="text-[10px] text-slate-400 block">区间最低</span>
+                  <span className="text-xs font-bold text-emerald-600 font-mono">{chartStats.min}kg</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">区间最高</span>
+                  <span className="text-xs font-bold text-slate-700 font-mono">{chartStats.max}kg</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">平均水平</span>
+                  <span className="text-xs font-bold text-slate-700 font-mono">{chartStats.avg}kg</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">区间净变</span>
+                  <span className={`text-xs font-bold font-mono ${
+                    chartStats.netChange > 0 ? 'text-amber-600' : chartStats.netChange < 0 ? 'text-emerald-600' : 'text-slate-500'
+                  }`}>
+                    {chartStats.netChange > 0 ? `+${chartStats.netChange}` : chartStats.netChange}kg
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* SVG 矢量平滑折线走势图 */}
+            {svgData && svgData.points.length > 0 ? (
+              <div className="w-full overflow-hidden pt-1">
+                <svg
+                  viewBox={`0 0 ${svgData.width} ${svgData.height}`}
+                  className="w-full h-36 select-none"
+                >
+                  <defs>
+                    <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#10b981" stopOpacity="0.25" />
+                      <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
+                    </linearGradient>
+                  </defs>
+
+                  {/* 背景参考横虚线 */}
+                  <line x1="36" y1="30" x2="336" y2="30" stroke="#f1f5f9" strokeDasharray="3 3" strokeWidth="1" />
+                  <line x1="36" y1="75" x2="336" y2="75" stroke="#f1f5f9" strokeDasharray="3 3" strokeWidth="1" />
+                  <line x1="36" y1="120" x2="336" y2="120" stroke="#f1f5f9" strokeDasharray="3 3" strokeWidth="1" />
+
+                  {/* 面积渐变填充 */}
+                  <path d={svgData.areaPath} fill="url(#weightGradient)" />
+
+                  {/* 平滑贝塞尔曲线 */}
+                  <path
+                    d={svgData.linePath}
+                    fill="none"
+                    stroke="#10b981"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+
+                  {/* 节点高亮圆点与文字标注 */}
+                  {svgData.points.map((p, idx) => (
+                    <g key={idx}>
+                      {/* 外发光圈 */}
+                      <circle cx={p.x} cy={p.y} r="5" fill="#10b981" fillOpacity="0.15" />
+                      {/* 核心圆点 */}
+                      <circle cx={p.x} cy={p.y} r="3" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" />
+                      {/* 体重数值气泡 */}
+                      <text
+                        x={p.x}
+                        y={p.y - 8}
+                        textAnchor="middle"
+                        fontSize="10"
+                        fontWeight="bold"
+                        fill="#0f172a"
+                        className="font-mono"
+                      >
+                        {p.weight}
+                      </text>
+                      {/* X 轴日期 */}
+                      <text
+                        x={p.x}
+                        y={svgData.height - 8}
+                        textAnchor="middle"
+                        fontSize="9"
+                        fill="#94a3b8"
+                        className="font-mono"
+                      >
+                        {p.date}
+                      </text>
+                    </g>
+                  ))}
+                </svg>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-slate-400 text-xs bg-slate-50 rounded-xl">
+                该周期内暂无体重数据
+              </div>
+            )}
+          </div>
+
+          {/* 历史打卡日志列表（修复删除按钮） */}
           <div>
-            <h3 className="text-sm font-bold text-slate-800 mb-2.5 px-1">体重与日记记录</h3>
+            <div className="flex items-center justify-between mb-2.5 px-1">
+              <h3 className="text-sm font-bold text-slate-800">体重与日记记录</h3>
+              <span className="text-xs text-slate-400">共 {weights.length} 条</span>
+            </div>
+
             <div className="space-y-2">
               {weights.map((log) => {
                 const slotMap: Record<string, string> = {
@@ -489,7 +812,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 return (
                   <div
                     key={log.id}
-                    className="bg-white border border-slate-200/90 rounded-xl p-3 shadow-sm flex items-start justify-between gap-3"
+                    className="bg-white border border-slate-200/90 rounded-xl p-3 shadow-sm flex items-start justify-between gap-3 hover:border-slate-300 transition-all"
                   >
                     <div className="space-y-1 flex-1">
                       <div className="flex items-center gap-2">
@@ -509,8 +832,10 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                     </div>
 
                     <button
-                      onClick={() => handleDeleteWeight(log.id)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-slate-100 transition-colors"
+                      type="button"
+                      onClick={() => promptDeleteWeight(log.id, log.date, log.weight)}
+                      className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                      title="删除此条记录"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -555,6 +880,40 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           </label>
         </div>
       </div>
+
+      {/* ===================== 应用内置通用确认弹窗 (解决安卓 WebView confirm 拦截) ===================== */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-sm p-5 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center shrink-0 border border-red-100">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-bold text-slate-900 text-sm">{confirmModal.title}</h3>
+                <p className="text-xs text-slate-500 mt-1 leading-relaxed">{confirmModal.description}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl transition-all"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={confirmModal.onConfirm}
+                className="px-5 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl shadow-md shadow-red-500/20 active:scale-95 transition-all"
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
