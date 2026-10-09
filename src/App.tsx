@@ -152,7 +152,7 @@ export function App() {
             }`}
           >
             <Scale className="w-5 h-5" />
-            <span className="text-[11px]">体重日志</span>
+            <span className="text-[11px]">日志记录</span>
           </button>
         </div>
       </nav>

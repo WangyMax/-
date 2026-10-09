@@ -289,41 +289,51 @@ export const INITIAL_EXERCISES: Exercise[] = [
   // ===================== 肩部 (Shoulder) =====================
   {
     id: 'ex-sho-01',
-    name: '坐姿器械/哑铃推肩',
-    category: 'shoulder',
-    defaultUnit: 'plates',
-    defaultPulley: 'none',
-    isFavorite: true,
-    notes: '肩部主复合力量动作'
-  },
-  {
-    id: 'ex-sho-02',
-    name: '哑铃侧平举',
+    name: '推肩',
     category: 'shoulder',
     defaultUnit: 'kg',
     defaultPulley: 'none',
     isFavorite: true,
-    notes: '打造肩部中束宽度，轻重量多组数'
+    notes: '肩部主复合力量动作，哑铃/器械推肩'
+  },
+  {
+    id: 'ex-sho-02',
+    name: '反向飞鸟 (双滑轮)',
+    category: 'shoulder',
+    defaultUnit: 'kg',
+    defaultPulley: '2:1',
+    isFavorite: true,
+    notes: '龙门架双滑轮交叉后束飞鸟，孤立三角肌后束'
   },
   {
     id: 'ex-sho-03',
-    name: '绳索单臂侧平举',
+    name: '超级组飞鸟 (侧平举)',
     category: 'shoulder',
-    defaultUnit: 'plates',
-    defaultPulley: '2:1',
-    notes: '全程恒定张力'
+    defaultUnit: 'kg',
+    defaultPulley: 'none',
+    isFavorite: true,
+    notes: '三角肌中束侧平举，多重量递减超级组'
   },
   {
     id: 'ex-sho-04',
-    name: '蝴蝶机反向飞鸟 (反向夹胸)',
+    name: '前平举',
     category: 'shoulder',
-    defaultUnit: 'plates',
+    defaultUnit: 'kg',
     defaultPulley: 'none',
     isFavorite: true,
-    notes: '针对三角肌后束孤立刺激'
+    notes: '哑铃/杠铃/绳索前平举，刺激三角肌前束'
   },
   {
     id: 'ex-sho-05',
+    name: 'Y 举',
+    category: 'shoulder',
+    defaultUnit: 'plates',
+    defaultPulley: '2:1',
+    isFavorite: true,
+    notes: '绳索/器械Y字推举，强化下斜方与中后束稳定'
+  },
+  {
+    id: 'ex-sho-06',
     name: '绳索面拉 (Face Pull)',
     category: 'shoulder',
     defaultUnit: 'plates',

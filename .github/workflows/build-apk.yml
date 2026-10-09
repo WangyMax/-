@@ -7,6 +7,9 @@ on:
       - master
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     name: Build & Package APK
@@ -48,9 +51,26 @@ jobs:
           cd android
           ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK Artifact (直接在 Actions 页面下载)
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: FitCustomPro-Android-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+
+      - name: Release APK Directly
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: v1.1.0
+          name: "FitCustom Pro v1.1 (最新版直链安装包)"
+          body: |
+            ### 更新亮点：
+            1. 完整导入 10.06 - 10.09 真实训练记录（胸、背、肩、腿）与体重日志；
+            2. 训练计划支持预设目标重量/片数、组数与滑轮倍率，开练一键带入；
+            3. 最近训练记录与体重日志统一合并至“日志记录”中心，今日训练更聚焦；
+            4. 每日打卡完成后按钮立即置灰禁用，防止重复误点。
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true

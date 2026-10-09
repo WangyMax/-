@@ -27,6 +27,9 @@ export interface PlanExerciseTarget {
   exerciseId: string;
   targetSets: number;
   targetReps?: number;
+  targetWeight?: number; // 预设目标重量或片数
+  targetUnit?: ResistanceUnit; // 预设阻力单位：kg / plates / assisted / bodyweight
+  pulleyRatio?: PulleyRatio; // 预设滑轮比例：none / 1:1 / 2:1
   notes?: string;
 }
 

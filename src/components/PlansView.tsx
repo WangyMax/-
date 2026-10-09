@@ -3,17 +3,18 @@ import {
   Plus, Edit3, Trash2, Copy, Play, 
   Flame, ArrowUp, ArrowDown, X
 } from 'lucide-react';
-import { WorkoutPlan, Exercise, PlanExerciseTarget, CATEGORY_LABELS } from '../types';
+import { WorkoutPlan, Exercise, PlanExerciseTarget, CATEGORY_LABELS, ResistanceUnit, PulleyRatio } from '../types';
 import { StorageService } from '../utils/storage';
 
 interface PlansViewProps {
   allExercises: Exercise[];
   onStartPlan: (plan: WorkoutPlan) => void;
+  onRefreshExercises?: () => void;
 }
 
 export const PlansView: React.FC<PlansViewProps> = ({
   allExercises,
-  onStartPlan
+  onStartPlan,
 }) => {
   const [plans, setPlans] = useState<WorkoutPlan[]>([]);
   const [editingPlan, setEditingPlan] = useState<WorkoutPlan | null>(null);
@@ -21,36 +22,38 @@ export const PlansView: React.FC<PlansViewProps> = ({
   const [isSelectExOpen, setIsSelectExOpen] = useState(false);
   const [exerciseSearch, setExerciseSearch] = useState('');
 
-  useEffect(() => {
-    setPlans(StorageService.getPlans());
-  }, []);
-
-  const refreshPlans = () => {
-    setPlans(StorageService.getPlans());
+  // 加载计划列表
+  const loadPlans = () => {
+    const list = StorageService.getPlans();
+    setPlans(list);
   };
 
-  // 打开创建新计划
-  const handleOpenCreate = () => {
+  useEffect(() => {
+    loadPlans();
+  }, []);
+
+  // 新建空计划
+  const handleCreateNew = () => {
     const newPlan: WorkoutPlan = {
       id: `plan-${Date.now()}`,
-      name: '',
-      categoryTags: ['力量训练'],
+      name: '自定义分化计划',
+      categoryTags: ['自定义'],
       description: '',
-      exercises: [],
       cardioMinutes: 20,
       cardioType: '跑步机坡度快走',
+      exercises: []
     };
     setEditingPlan(newPlan);
     setIsModalOpen(true);
   };
 
-  // 打开编辑已有计划
-  const handleOpenEdit = (plan: WorkoutPlan) => {
+  // 编辑现有计划
+  const handleEditPlan = (plan: WorkoutPlan) => {
     setEditingPlan(JSON.parse(JSON.stringify(plan)));
     setIsModalOpen(true);
   };
 
-  // 复制计划
+  // 复制计划副本
   const handleDuplicate = (plan: WorkoutPlan) => {
     const copy: WorkoutPlan = {
       ...JSON.parse(JSON.stringify(plan)),
@@ -58,14 +61,14 @@ export const PlansView: React.FC<PlansViewProps> = ({
       name: `${plan.name} (副本)`,
     };
     StorageService.savePlan(copy);
-    refreshPlans();
+    loadPlans();
   };
 
   // 删除计划
-  const handleDelete = (planId: string) => {
-    if (window.confirm('确定删除该训练计划吗？')) {
+  const handleDeletePlan = (planId: string, name: string) => {
+    if (window.confirm(`确定删除训练计划 “${name}” 吗？`)) {
       StorageService.deletePlan(planId);
-      refreshPlans();
+      loadPlans();
     }
   };
 
@@ -73,22 +76,25 @@ export const PlansView: React.FC<PlansViewProps> = ({
   const handleSavePlan = () => {
     if (!editingPlan) return;
     if (!editingPlan.name.trim()) {
-      alert('请输入计划名称！');
+      alert('请输入计划名称');
       return;
     }
     StorageService.savePlan(editingPlan);
-    refreshPlans();
     setIsModalOpen(false);
     setEditingPlan(null);
+    loadPlans();
   };
 
-  // 在编辑中添加动作
+  // 添加动作到当前编辑计划
   const handleAddExerciseToPlan = (exercise: Exercise) => {
     if (!editingPlan) return;
     const newTarget: PlanExerciseTarget = {
       exerciseId: exercise.id,
       targetSets: 4,
       targetReps: 12,
+      targetWeight: exercise.defaultUnit === 'plates' ? 10 : 30,
+      targetUnit: exercise.defaultUnit,
+      pulleyRatio: exercise.defaultPulley || 'none',
       notes: exercise.notes || ''
     };
     setEditingPlan({
@@ -124,38 +130,36 @@ export const PlansView: React.FC<PlansViewProps> = ({
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">自定义训练计划</h1>
-          <p className="text-xs text-slate-500 mt-0.5">自主编排分化循环，灵活设定动作与目标</p>
+          <p className="text-xs text-slate-500 mt-0.5">自主编排分化循环，灵活设定目标重量与组数</p>
         </div>
         <button
-          onClick={handleOpenCreate}
-          className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-md shadow-blue-500/20 flex items-center gap-1.5 transition-all active:scale-95"
+          onClick={handleCreateNew}
+          className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20 active:scale-95 transition-all"
         >
           <Plus className="w-4 h-4" /> 新建计划
         </button>
       </div>
 
-      {/* 计划列表 */}
+      {/* 计划卡片列表 */}
       <div className="space-y-4">
         {plans.map((plan) => {
-          const isLeg = plan.name.includes('腿');
           return (
             <div
               key={plan.id}
-              className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm hover:border-slate-300 hover:shadow transition-all"
+              className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm hover:border-slate-300 transition-all"
             >
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-lg font-black text-slate-900 tracking-tight">{plan.name}</h3>
-                    {isLeg ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        下肢专注 · 无有氧
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <h3 className="text-base font-black text-slate-900 tracking-tight">{plan.name}</h3>
+                    {plan.categoryTags.map((tag, i) => (
+                      <span
+                        key={i}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200"
+                      >
+                        {tag}
                       </span>
-                    ) : (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-50 text-pink-700 border border-pink-200 flex items-center gap-1">
-                        <Flame className="w-2.5 h-2.5" /> 附加 {plan.cardioMinutes}m 有氧
-                      </span>
-                    )}
+                    ))}
                   </div>
                   {plan.description && (
                     <p className="text-xs text-slate-500 mt-1">{plan.description}</p>
@@ -165,18 +169,20 @@ export const PlansView: React.FC<PlansViewProps> = ({
                 {/* 快捷开练大按钮 */}
                 <button
                   onClick={() => onStartPlan(plan)}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-blue-600/20 active:scale-95 transition-all shrink-0"
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-blue-600/20 active:scale-95 transition-all shrink-0"
                 >
-                  <Play className="w-3.5 h-3.5 fill-current" /> 开练
+                  <Play className="w-3.5 h-3.5 fill-current" /> 一键开练
                 </button>
               </div>
 
               {/* 动作清单 */}
               <div className="mt-3.5 pt-3 border-t border-slate-100">
-                <span className="text-[11px] font-bold text-slate-400 block mb-2">动作编排 ({plan.exercises.length}个):</span>
+                <span className="text-[11px] font-bold text-slate-400 block mb-2">动作编排与预设负荷 ({plan.exercises.length}个):</span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                   {plan.exercises.map((pe, idx) => {
                     const ex = allExercises.find(e => e.id === pe.exerciseId);
+                    const unitStr = pe.targetUnit === 'plates' ? '片' : pe.targetUnit === 'assisted' ? 'kg助力' : pe.targetUnit === 'bodyweight' ? '自重' : 'kg';
+                    const pulleyStr = pe.pulleyRatio && pe.pulleyRatio !== 'none' ? ` (${pe.pulleyRatio})` : '';
                     return (
                       <div
                         key={idx}
@@ -186,9 +192,16 @@ export const PlansView: React.FC<PlansViewProps> = ({
                           <span className="text-slate-400 font-mono text-[10px]">{idx + 1}.</span>
                           <span className="font-semibold text-slate-800 truncate">{ex?.name || '未知动作'}</span>
                         </div>
-                        <span className="text-[10px] text-slate-500 shrink-0 font-medium ml-2">
-                          {pe.targetSets}组 × {pe.targetReps || 12}次
-                        </span>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                            {pe.targetSets}组 × {pe.targetReps || 12}次
+                          </span>
+                          {pe.targetWeight !== undefined && (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                              {pe.targetWeight}{unitStr}{pulleyStr}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -208,15 +221,16 @@ export const PlansView: React.FC<PlansViewProps> = ({
                     <Copy className="w-3.5 h-3.5" />
                   </button>
                   <button
-                    onClick={() => handleOpenEdit(plan)}
-                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center gap-1 text-[11px] font-semibold border border-slate-200"
+                    onClick={() => handleEditPlan(plan)}
+                    className="p-1.5 text-blue-600 hover:text-blue-700 rounded-lg hover:bg-blue-50 transition-colors font-bold flex items-center gap-1"
+                    title="编辑计划参数"
                   >
-                    <Edit3 className="w-3 h-3" /> 编辑
+                    <Edit3 className="w-3.5 h-3.5" /> 编辑
                   </button>
                   <button
-                    onClick={() => handleDelete(plan.id)}
-                    className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-slate-100 transition-colors"
-                    title="删除"
+                    onClick={() => handleDeletePlan(plan.id, plan.name)}
+                    className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                    title="删除计划"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -227,11 +241,11 @@ export const PlansView: React.FC<PlansViewProps> = ({
         })}
       </div>
 
-      {/* 创建 / 编辑计划模态框 */}
+      {/* 新建/编辑计划 模态框 */}
       {isModalOpen && editingPlan && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-xl max-h-[90vh] flex flex-col p-4 shadow-2xl">
-            {/* 模态框顶部 */}
+          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col p-4 shadow-2xl">
+            {/* 模态框头部 */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-black text-slate-900 text-base">
                 {editingPlan.id ? '编辑训练计划' : '创建新计划'}
@@ -303,93 +317,183 @@ export const PlansView: React.FC<PlansViewProps> = ({
                 )}
               </div>
 
-              {/* 动作列表编辑与拖拽/上下调换 */}
+              {/* 动作列表编辑与重量预设 */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-slate-700">
-                    计划动作序列 ({editingPlan.exercises.length}个)
-                  </label>
+                  <div>
+                    <label className="text-xs font-bold text-slate-800 block">
+                      动作编排与预设重量 ({editingPlan.exercises.length}个)
+                    </label>
+                    <span className="text-[10px] text-slate-400">设置组数与重量后，一键开练将直接带入</span>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setIsSelectExOpen(true)}
                     className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"
                   >
-                    <Plus className="w-3.5 h-3.5" /> 从动作库添加
+                    <Plus className="w-3.5 h-3.5" /> 挑选动作
                   </button>
                 </div>
 
                 {editingPlan.exercises.length === 0 ? (
                   <div className="text-center py-6 border border-dashed border-slate-200 rounded-xl text-slate-400 text-xs bg-slate-50">
-                    还没有添加动作，点击上方“从动作库添加”挑选动作
+                    还没有添加动作，点击上方“挑选动作”添加
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     {editingPlan.exercises.map((pe, idx) => {
                       const ex = allExercises.find(e => e.id === pe.exerciseId);
                       return (
                         <div
                           key={idx}
-                          className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex items-center justify-between gap-2"
+                          className="bg-slate-50 border border-slate-200 rounded-xl p-3"
                         >
-                          <div className="flex items-center gap-2 truncate">
-                            <span className="text-slate-400 font-mono text-xs w-4">{idx + 1}.</span>
-                            <div>
-                              <div className="font-bold text-slate-900 text-xs truncate">{ex?.name || '未知动作'}</div>
-                              <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500">
-                                <span>
-                                  目标组:
-                                  <input
-                                    type="number"
-                                    value={pe.targetSets}
-                                    onChange={(e) => {
-                                      const newExs = [...editingPlan.exercises];
-                                      newExs[idx].targetSets = parseInt(e.target.value) || 1;
-                                      setEditingPlan({ ...editingPlan, exercises: newExs });
-                                    }}
-                                    className="w-10 ml-1 bg-white border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900"
-                                  />
-                                </span>
-                                <span>
-                                  目标次:
-                                  <input
-                                    type="number"
-                                    value={pe.targetReps || 12}
-                                    onChange={(e) => {
-                                      const newExs = [...editingPlan.exercises];
-                                      newExs[idx].targetReps = parseInt(e.target.value) || 1;
-                                      setEditingPlan({ ...editingPlan, exercises: newExs });
-                                    }}
-                                    className="w-10 ml-1 bg-white border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900"
-                                  />
-                                </span>
-                              </div>
+                          {/* 动作头部 */}
+                          <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200/60">
+                            <div className="flex items-center gap-2 truncate">
+                              <span className="text-slate-400 font-mono text-xs font-bold w-4">{idx + 1}.</span>
+                              <span className="font-bold text-slate-900 text-xs truncate">{ex?.name || '未知动作'}</span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => moveExercise(idx, 'up')}
+                                disabled={idx === 0}
+                                className="p-1 bg-white text-slate-500 hover:text-slate-800 border border-slate-200 disabled:opacity-30 rounded"
+                                title="上移"
+                              >
+                                <ArrowUp className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveExercise(idx, 'down')}
+                                disabled={idx === editingPlan.exercises.length - 1}
+                                className="p-1 bg-white text-slate-500 hover:text-slate-800 border border-slate-200 disabled:opacity-30 rounded"
+                                title="下移"
+                              >
+                                <ArrowDown className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeExerciseFromPlan(idx)}
+                                className="p-1 text-slate-400 hover:text-red-600 rounded ml-1"
+                                title="删除"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => moveExercise(idx, 'up')}
-                              disabled={idx === 0}
-                              className="p-1 bg-white text-slate-500 hover:text-slate-800 border border-slate-200 disabled:opacity-30 rounded"
-                            >
-                              <ArrowUp className="w-3 h-3" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => moveExercise(idx, 'down')}
-                              disabled={idx === editingPlan.exercises.length - 1}
-                              className="p-1 bg-white text-slate-500 hover:text-slate-800 border border-slate-200 disabled:opacity-30 rounded"
-                            >
-                              <ArrowDown className="w-3 h-3" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeExerciseFromPlan(idx)}
-                              className="p-1 text-slate-400 hover:text-red-600 rounded ml-1"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                          {/* 预设参数区：组数、次数、预设重量、单位、滑轮 */}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2.5 text-[11px]">
+                            {/* 目标组数 */}
+                            <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                              <span className="text-slate-500 font-medium">目标组数:</span>
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="20"
+                                  value={pe.targetSets}
+                                  onChange={(e) => {
+                                    const newExs = [...editingPlan.exercises];
+                                    newExs[idx].targetSets = parseInt(e.target.value) || 1;
+                                    setEditingPlan({ ...editingPlan, exercises: newExs });
+                                  }}
+                                  className="w-10 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900 font-bold"
+                                />
+                                <span className="text-slate-400">组</span>
+                              </div>
+                            </div>
+
+                            {/* 目标次数 */}
+                            <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                              <span className="text-slate-500 font-medium">目标次数:</span>
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="100"
+                                  value={pe.targetReps ?? 12}
+                                  onChange={(e) => {
+                                    const newExs = [...editingPlan.exercises];
+                                    newExs[idx].targetReps = parseInt(e.target.value) || 1;
+                                    setEditingPlan({ ...editingPlan, exercises: newExs });
+                                  }}
+                                  className="w-10 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900 font-bold"
+                                />
+                                <span className="text-slate-400">次</span>
+                              </div>
+                            </div>
+
+                            {/* 预设重量/片数 */}
+                            <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                              <span className="text-slate-500 font-medium">预设负荷:</span>
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.5"
+                                  value={pe.targetWeight ?? 0}
+                                  onChange={(e) => {
+                                    const newExs = [...editingPlan.exercises];
+                                    newExs[idx].targetWeight = parseFloat(e.target.value) || 0;
+                                    setEditingPlan({ ...editingPlan, exercises: newExs });
+                                  }}
+                                  className="w-12 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-emerald-700 font-bold"
+                                />
+                              </div>
+                            </div>
+
+                            {/* 阻力单位 */}
+                            <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                              <span className="text-slate-500 font-medium">阻力单位:</span>
+                              <select
+                                value={pe.targetUnit || ex?.defaultUnit || 'kg'}
+                                onChange={(e) => {
+                                  const newExs = [...editingPlan.exercises];
+                                  newExs[idx].targetUnit = e.target.value as ResistanceUnit;
+                                  setEditingPlan({ ...editingPlan, exercises: newExs });
+                                }}
+                                className="bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-[11px] font-bold text-slate-700"
+                              >
+                                <option value="kg">kg (重量)</option>
+                                <option value="plates">片 (插销)</option>
+                                <option value="assisted">助力 (kg)</option>
+                                <option value="bodyweight">自重</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* 滑轮与备注可选行 */}
+                          <div className="flex items-center gap-2 mt-2">
+                            <div className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
+                              <span>滑轮:</span>
+                              <select
+                                value={pe.pulleyRatio || ex?.defaultPulley || 'none'}
+                                onChange={(e) => {
+                                  const newExs = [...editingPlan.exercises];
+                                  newExs[idx].pulleyRatio = e.target.value as PulleyRatio;
+                                  setEditingPlan({ ...editingPlan, exercises: newExs });
+                                }}
+                                className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] text-slate-700"
+                              >
+                                <option value="none">普通器械</option>
+                                <option value="1:1">单滑轮 (1:1)</option>
+                                <option value="2:1">双滑轮 (2:1)</option>
+                              </select>
+                            </div>
+                            <input
+                              type="text"
+                              value={pe.notes || ''}
+                              onChange={(e) => {
+                                const newExs = [...editingPlan.exercises];
+                                newExs[idx].notes = e.target.value;
+                                setEditingPlan({ ...editingPlan, exercises: newExs });
+                              }}
+                              placeholder="动作小贴士 (如: 顶峰停顿1秒/热身组)"
+                              className="flex-1 bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-700 placeholder-slate-400"
+                            />
                           </div>
                         </div>
                       );

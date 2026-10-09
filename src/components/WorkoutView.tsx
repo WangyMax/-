@@ -22,7 +22,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   allExercises
 }) => {
   const [plans, setPlans] = useState<WorkoutPlan[]>([]);
-  const [recentSessions, setRecentSessions] = useState<WorkoutSession[]>([]);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isTimerOpen, setIsTimerOpen] = useState(false);
@@ -33,7 +32,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
   useEffect(() => {
     setPlans(StorageService.getPlans());
-    setRecentSessions(StorageService.getSessions());
     const savedActive = StorageService.getActiveSession();
     if (savedActive) {
       setActiveSession(savedActive);
@@ -67,20 +65,27 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       const exDetail = allExercises.find(e => e.id === pe.exerciseId);
       const lastLog = StorageService.getLastExerciseLog(pe.exerciseId);
 
-      const unit: ResistanceUnit = exDetail?.defaultUnit || 'plates';
-      const pulley: PulleyRatio = exDetail?.defaultPulley || 'none';
+      const unit: ResistanceUnit = pe.targetUnit || exDetail?.defaultUnit || 'kg';
+      const pulley: PulleyRatio = pe.pulleyRatio || exDetail?.defaultPulley || 'none';
 
-      // 默认生成组数
+      // 默认生成组数（优先采用计划中预设的目标重量与次数，其次采用上一次的记录，最后兜底）
       const sets: WorkoutSet[] = Array.from({ length: pe.targetSets || 4 }, (_, i) => {
         const lastSet = lastLog?.sets[i];
+        const defaultWeight = pe.targetWeight !== undefined 
+          ? pe.targetWeight 
+          : (lastSet?.weightOrPlates ?? (unit === 'plates' ? 10 : 30));
+        const defaultReps = pe.targetReps !== undefined
+          ? pe.targetReps
+          : (lastSet?.reps ?? 12);
+
         return {
           id: `s-${Date.now()}-${i}`,
           setNumber: i + 1,
-          unit: lastSet?.unit || unit,
-          weightOrPlates: lastSet?.weightOrPlates || (unit === 'plates' ? 8 : 40),
-          reps: lastSet?.reps || pe.targetReps || 12,
+          unit: pe.targetUnit || lastSet?.unit || unit,
+          weightOrPlates: defaultWeight,
+          reps: defaultReps,
           completed: false,
-          pulleyRatio: lastSet?.pulleyRatio || pulley,
+          pulleyRatio: pe.pulleyRatio || lastSet?.pulleyRatio || pulley,
         };
       });
 
@@ -266,7 +271,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     StorageService.addSession(finalSession);
     StorageService.saveActiveSession(null);
     setActiveSession(null);
-    setRecentSessions(StorageService.getSessions());
     setShowFinishModal(false);
   };
 
@@ -410,48 +414,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             >
               <Plus className="w-3.5 h-3.5 text-blue-600" /> 自由训练（不选预设计划）
             </button>
-          </div>
-
-          {/* 最近训练记录回顾 */}
-          <div>
-            <div className="flex items-center justify-between mb-2 px-1">
-              <h3 className="text-sm font-bold text-slate-800">最近训练记录</h3>
-              <span className="text-xs text-slate-400">共 {recentSessions.length} 次</span>
-            </div>
-
-            {recentSessions.length === 0 ? (
-              <div className="text-center py-8 bg-white border border-slate-200 rounded-2xl text-slate-400 text-xs">
-                暂无记录，点击上方计划开启你的第一次训练吧！
-              </div>
-            ) : (
-              <div className="space-y-2.5">
-                {recentSessions.slice(0, 3).map((sess) => (
-                  <div key={sess.id} className="bg-white border border-slate-200/90 rounded-xl p-3.5 shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-900 text-sm">{sess.planName}</span>
-                        <span className="text-xs text-slate-400">{sess.date}</span>
-                      </div>
-                      {sess.cardioCompleted && (
-                        <span className="text-[10px] text-pink-700 bg-pink-50 px-2 py-0.5 rounded-full border border-pink-200 flex items-center gap-1 font-medium">
-                          <Flame className="w-2.5 h-2.5" /> 有氧已做
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-2 text-xs text-slate-500 flex flex-wrap gap-x-2.5 gap-y-1">
-                      {sess.exercises.map((e, idx) => (
-                        <span key={idx} className="bg-slate-100 px-2 py-0.5 rounded text-slate-700 font-medium">
-                          {e.exerciseName} ({e.sets.filter(s => s.completed).length}组)
-                        </span>
-                      ))}
-                    </div>
-                    {sess.notes && (
-                      <p className="mt-2 text-xs text-slate-500 italic">“{sess.notes}”</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       )}
