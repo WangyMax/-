@@ -62,14 +62,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.1.0
-          name: "FitCustom Pro v1.1 (最新版直链安装包)"
+          tag_name: v1.1.1
+          name: "FitCustom Pro v1.1.1 (双重签名兼容优化版)"
           body: |
             ### 更新亮点：
-            1. 完整导入 10.06 - 10.09 真实训练记录（胸、背、肩、腿）与体重日志；
-            2. 训练计划支持预设目标重量/片数、组数与滑轮倍率，开练一键带入；
-            3. 最近训练记录与体重日志统一合并至“日志记录”中心，今日训练更聚焦；
-            4. 每日打卡完成后按钮立即置灰禁用，防止重复误点。
+            1. 启用 v1 + v2 双重签名兼容，彻底解决 QQ 传输与手机解析软件包报错问题；
+            2. 版本号递增为 1.1 (versionCode: 2)，支持直接覆盖安装或全新安装；
+            3. 完整收录 10.06 - 10.09 真实训练数据（胸、背、肩、腿）与体重日志；
+            4. 计划编辑支持预设目标负荷（重量/片数）、组数与滑轮倍率，一键开练无缝带入；
+            5. 每日打卡完成后自动置灰禁用。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
