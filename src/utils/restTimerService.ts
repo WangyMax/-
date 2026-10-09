@@ -29,6 +29,14 @@ class RestTimerService {
     localStorage.setItem(STORAGE_KEY, targetEndTime.toString());
     localStorage.setItem(STORAGE_TOTAL_KEY, seconds.toString());
 
+    // 唤起 OPPO/一加 系统级原生流体云灵动胶囊
+    try {
+      const win = window as unknown as { Capacitor?: { Plugins?: { FluidMediaCapsule?: { start: (opts: { seconds: number }) => Promise<void> } } } };
+      win.Capacitor?.Plugins?.FluidMediaCapsule?.start({ seconds });
+    } catch {
+      // ignore
+    }
+
     this.ensureTicker();
     this.tick();
   }
@@ -48,6 +56,14 @@ class RestTimerService {
     const currentTotal = rawTotal ? parseInt(rawTotal, 10) : 120;
     localStorage.setItem(STORAGE_TOTAL_KEY, (currentTotal + delta).toString());
 
+    const remaining = Math.max(1, Math.ceil((newTarget - Date.now()) / 1000));
+    try {
+      const win = window as unknown as { Capacitor?: { Plugins?: { FluidMediaCapsule?: { start: (opts: { seconds: number }) => Promise<void> } } } };
+      win.Capacitor?.Plugins?.FluidMediaCapsule?.start({ seconds: remaining });
+    } catch {
+      // ignore
+    }
+
     this.tick();
   }
 
@@ -59,6 +75,14 @@ class RestTimerService {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+
+    try {
+      const win = window as unknown as { Capacitor?: { Plugins?: { FluidMediaCapsule?: { stop: () => Promise<void> } } } };
+      win.Capacitor?.Plugins?.FluidMediaCapsule?.stop();
+    } catch {
+      // ignore
+    }
+
     this.notify(0, 0, false);
   }
 
