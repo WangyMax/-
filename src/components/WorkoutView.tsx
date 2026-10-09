@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { 
-  Play, Plus, Check, Trash2, Clock, 
+  Play, Plus, Check, Trash2, 
   Dumbbell, Flame, 
   CheckCircle2, Sparkles, Award
 } from 'lucide-react';
@@ -9,7 +9,6 @@ import {
   ResistanceUnit, PulleyRatio, CATEGORY_LABELS, UNIT_LABELS, Exercise 
 } from '../types';
 import { StorageService } from '../utils/storage';
-import { RestTimerModal } from './RestTimerModal';
 
 interface WorkoutViewProps {
   onOpenPlansTab: () => void;
@@ -23,9 +22,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 }) => {
   const [plans, setPlans] = useState<WorkoutPlan[]>([]);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [isTimerOpen, setIsTimerOpen] = useState(false);
-  const [timerDuration, setTimerDuration] = useState(90);
   const [showAddExModal, setShowAddExModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showFinishModal, setShowFinishModal] = useState(false);
@@ -35,23 +31,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const savedActive = StorageService.getActiveSession();
     if (savedActive) {
       setActiveSession(savedActive);
-      const elapsed = Math.floor((Date.now() - savedActive.startTime) / 1000);
-      setElapsedSeconds(elapsed > 0 ? elapsed : 0);
     }
   }, []);
-
-  // 训练计时器
-  useEffect(() => {
-    let interval: number | undefined;
-    if (activeSession) {
-      interval = window.setInterval(() => {
-        setElapsedSeconds(prev => prev + 1);
-      }, 1000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [activeSession]);
 
   // 同步活动状态到本地缓存
   const updateActiveSession = (updated: WorkoutSession | null) => {
@@ -113,7 +94,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       cardioNotes: plan.cardioMinutes > 0 ? '坡度 10，速度 5.0 km/h 维持心率' : '',
     };
 
-    setElapsedSeconds(0);
     updateActiveSession(newSession);
   };
 
@@ -129,7 +109,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       cardioCompleted: false,
       cardioType: '跑步机坡度快走',
     };
-    setElapsedSeconds(0);
     updateActiveSession(newSession);
   };
 
@@ -177,16 +156,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const exercises = [...activeSession.exercises];
     const ex = exercises[exIndex];
     const targetSet = ex.sets[setIndex];
-    const nextCompleted = !targetSet.completed;
-
-    targetSet.completed = nextCompleted;
+    targetSet.completed = !targetSet.completed;
     updateActiveSession({ ...activeSession, exercises });
-
-    // 完成时自动触发休息计时
-    if (nextCompleted) {
-      setTimerDuration(90);
-      setIsTimerOpen(true);
-    }
   };
 
   // 修改组数据
@@ -274,31 +245,16 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     setShowFinishModal(false);
   };
 
-  // 格式化秒表
-  const formatStopwatch = (totalSecs: number) => {
-    const hrs = Math.floor(totalSecs / 3600);
-    const mins = Math.floor((totalSecs % 3600) / 60);
-    const secs = totalSecs % 60;
-    if (hrs > 0) {
-      return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    }
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  };
-
-  // 计算已完成总组数
+  // 计算已完成总组数与总计划组数
   const totalCompletedSets = activeSession?.exercises.reduce(
     (acc, ex) => acc + ex.sets.filter(s => s.completed).length, 0
+  ) || 0;
+  const totalAllSets = activeSession?.exercises.reduce(
+    (acc, ex) => acc + ex.sets.length, 0
   ) || 0;
 
   return (
     <div className="pb-24 pt-2">
-      {/* 休息倒计时模态浮层 */}
-      <RestTimerModal
-        isOpen={isTimerOpen}
-        initialSeconds={timerDuration}
-        onClose={() => setIsTimerOpen(false)}
-      />
-
       {/* 头部状态条 */}
       {!activeSession ? (
         <div className="mb-6">
@@ -315,7 +271,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
           <p className="text-xs text-slate-500 mt-0.5">记录每组重量与片数，自动累积力量进展</p>
         </div>
       ) : (
-        /* 进行中训练常驻顶部看板 */
+        /* 进行中训练常驻顶部看板（无倒计时，清爽记录） */
         <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md pb-3 pt-1 border-b border-slate-200/90 mb-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
@@ -327,14 +283,15 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-blue-600 animate-spin" />
-                <span className="font-mono text-sm font-bold text-slate-900">{formatStopwatch(elapsedSeconds)}</span>
+              <div className="bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                <span className="font-mono text-xs font-bold text-blue-700">
+                  {totalCompletedSets} / {totalAllSets} 组
+                </span>
               </div>
 
               <button
                 onClick={() => setShowFinishModal(true)}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-md shadow-emerald-600/20 flex items-center gap-1 transition-all active:scale-95"
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-md shadow-emerald-600/20 flex items-center gap-1 transition-all active:scale-95"
               >
                 <CheckCircle2 className="w-4 h-4" /> 完成训练
               </button>
@@ -801,15 +758,15 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
             <div className="grid grid-cols-3 gap-2 my-5 bg-slate-50 p-3 rounded-2xl border border-slate-200 text-center">
               <div>
-                <span className="text-[10px] text-slate-400 uppercase block">训练时长</span>
-                <span className="font-mono text-sm font-bold text-slate-900">{formatStopwatch(elapsedSeconds)}</span>
+                <span className="text-[10px] text-slate-400 block">动作数量</span>
+                <span className="font-mono text-sm font-bold text-slate-900">{activeSession.exercises.length} 个</span>
               </div>
               <div>
-                <span className="text-[10px] text-slate-400 uppercase block">完成总组数</span>
+                <span className="text-[10px] text-slate-400 block">完成总组数</span>
                 <span className="font-mono text-sm font-bold text-emerald-600">{totalCompletedSets} 组</span>
               </div>
               <div>
-                <span className="text-[10px] text-slate-400 uppercase block">有氧燃脂</span>
+                <span className="text-[10px] text-slate-400 block">有氧燃脂</span>
                 <span className="font-mono text-sm font-bold text-pink-600">
                   {activeSession.cardioCompleted ? `${activeSession.cardioMinutes}m` : '0m'}
                 </span>

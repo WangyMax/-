@@ -56,10 +56,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     const sList = StorageService.getSessions();
     setWeights(wList);
     setSessions(sList);
-    // 默认展开最新一条训练，其他折叠
-    if (sList.length > 0 && expandedSessionIds.size === 0) {
-      setExpandedSessionIds(new Set([sList[0].id]));
-    }
+    // 默认所有历史记录全部折叠，不自动展开任何记录
   };
 
   // 切换单条训练展开/折叠
@@ -213,20 +210,20 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   // 根据当前视图筛选体重数据并按日期升序排列供画曲线
   const filteredChartWeights = useMemo(() => {
     if (weights.length === 0) return [];
-    // 拷贝并按日期升序排列
     const sorted = [...weights].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     
     if (chartViewSpan === 'all') {
       return sorted;
     }
     
-    const now = new Date();
+    // 周视图取近 7 天，月视图取近 30 天
     const daysLimit = chartViewSpan === 'week' ? 7 : 30;
-    const cutoffTime = now.getTime() - daysLimit * 24 * 60 * 60 * 1000;
+    // 取最新记录的日期作为基准时间（防止历史预置日期距今天数过大导致过滤为空）
+    const latestTimestamp = new Date(sorted[sorted.length - 1].date).getTime();
+    const cutoffTime = latestTimestamp - (daysLimit - 1) * 24 * 60 * 60 * 1000;
     
     const inRange = sorted.filter(w => new Date(w.date).getTime() >= cutoffTime);
-    // 若在设定期限内数据过少，则兜底截取最近 N 条记录保证直观
-    if (inRange.length >= 2) return inRange;
+    if (inRange.length > 0) return inRange;
     return sorted.slice(-daysLimit);
   }, [weights, chartViewSpan]);
 
@@ -241,7 +238,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     return { min, max, avg, netChange: parseFloat(netChange) };
   }, [filteredChartWeights]);
 
-  // 生成高保真 SVG 平滑贝塞尔曲线路径
+  // 生成高保真 SVG 平滑贝塞尔曲线路径（周视图/月视图动态适配不同时间轴跨度）
   const svgData = useMemo(() => {
     const list = filteredChartWeights;
     const width = 360;
@@ -263,14 +260,25 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       minVal -= 1;
       maxVal += 1;
     } else {
-      const margin = (maxVal - minVal) * 0.15;
+      const margin = (maxVal - minVal) * 0.18;
       minVal -= margin;
       maxVal += margin;
     }
 
-    // 各点坐标映射
+    // 各点坐标映射：周视图下铺满近7天刻度；月视图下呈现30天宽幅全景走势
     const points = list.map((item, idx) => {
-      const x = list.length === 1 ? padL + chartW / 2 : padL + (idx / (list.length - 1)) * chartW;
+      let x: number;
+      if (list.length === 1) {
+        x = padL + chartW / 2;
+      } else if (chartViewSpan === 'month') {
+        // 月视图下点间距更加紧凑平缓，展示全月趋势全貌
+        const startOffset = padL + chartW * 0.2;
+        const availableW = chartW * 0.75;
+        x = startOffset + (idx / (list.length - 1)) * availableW;
+      } else {
+        // 周视图与全部视图：均匀舒展排布
+        x = padL + (idx / (list.length - 1)) * chartW;
+      }
       const y = padT + chartH - ((item.weight - minVal) / (maxVal - minVal)) * chartH;
       return { x, y, weight: item.weight, date: item.date.slice(5) };
     });
@@ -294,7 +302,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     for (let i = 0; i < points.length - 1; i++) {
       const p0 = points[i];
       const p1 = points[i + 1];
-      const dx = (p1.x - p0.x) * 0.45;
+      const dx = (p1.x - p0.x) * (chartViewSpan === 'month' ? 0.35 : 0.45);
       const cp1x = p0.x + dx;
       const cp1y = p0.y;
       const cp2x = p1.x - dx;
@@ -317,7 +325,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       minVal: minVal.toFixed(1),
       maxVal: maxVal.toFixed(1),
     };
-  }, [filteredChartWeights]);
+  }, [filteredChartWeights, chartViewSpan]);
 
   return (
     <div className="pb-24 pt-2 space-y-4">
@@ -658,14 +666,14 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
               </div>
 
               {/* 周期切换: 周视图 / 月视图 / 全部 */}
-              <div className="bg-slate-100 p-0.5 rounded-xl flex items-center border border-slate-200/80 text-[11px]">
+              <div className="bg-slate-200/80 p-0.5 rounded-xl flex items-center border border-slate-300/80 text-[11px] gap-0.5">
                 <button
                   type="button"
                   onClick={() => setChartViewSpan('week')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                  className={`px-2.5 py-1 rounded-lg font-black transition-all active:scale-95 ${
                     chartViewSpan === 'week'
-                      ? 'bg-white text-emerald-700 shadow-xs'
-                      : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
                   周视图 (近7天)
@@ -673,10 +681,10 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setChartViewSpan('month')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                  className={`px-2.5 py-1 rounded-lg font-black transition-all active:scale-95 ${
                     chartViewSpan === 'month'
-                      ? 'bg-white text-emerald-700 shadow-xs'
-                      : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
                   月视图 (近30天)
@@ -684,15 +692,36 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setChartViewSpan('all')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                  className={`px-2.5 py-1 rounded-lg font-black transition-all active:scale-95 ${
                     chartViewSpan === 'all'
-                      ? 'bg-white text-emerald-700 shadow-xs'
-                      : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
                   全部
                 </button>
               </div>
+            </div>
+
+            {/* 动态视图说明横幅（明确指示当前视图与数据条数） */}
+            <div className={`text-[11px] font-bold px-2.5 py-1 rounded-lg flex items-center justify-between border transition-all ${
+              chartViewSpan === 'week'
+                ? 'bg-emerald-50/90 text-emerald-800 border-emerald-200/80'
+                : chartViewSpan === 'month'
+                ? 'bg-blue-50/90 text-blue-800 border-blue-200/80'
+                : 'bg-purple-50/90 text-purple-800 border-purple-200/80'
+            }`}>
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                <span>
+                  {chartViewSpan === 'week' && '周视图已激活：近7日逐日微幅走势'}
+                  {chartViewSpan === 'month' && '月视图已激活：过去30天全月跨度走势'}
+                  {chartViewSpan === 'all' && '全部历史已激活：全周期累计数据'}
+                </span>
+              </div>
+              <span className="font-mono text-[10px] opacity-80">
+                {filteredChartWeights.length} 条记录
+              </span>
             </div>
 
             {/* 区间统计指标指示条 */}

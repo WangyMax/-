@@ -75,8 +75,10 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
+      {/* 顶部系统状态栏安全避让垫片，彻底解决手机顶部时间/电量图标重叠问题 */}
+      <div className="h-[max(env(safe-area-inset-top),38px)] w-full shrink-0 bg-slate-50" />
       {/* 移动端视口容器 (限制在手机尺寸优雅居中，桌面端自适应居中) */}
-      <main className="flex-1 w-full max-w-md mx-auto px-4 pt-3 pb-8">
+      <main className="flex-1 w-full max-w-md mx-auto px-4 pt-1 pb-8">
         {activeTab === 'workout' && (
           <WorkoutView
             onOpenPlansTab={() => setActiveTab('plans')}

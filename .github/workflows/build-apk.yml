@@ -62,13 +62,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.2.0
-          name: "FitCustom Pro v1.2 (历史折叠展开 + SVG走势曲线 + 删除修复)"
+          tag_name: v1.3.0
+          name: "FitCustom Pro v1.3 (状态栏安全适配 + 纯粹记录免计时 + 周月视图动态联动 + 历史默认全部折叠)"
           body: |
             ### 更新亮点：
-            1. 历史训练支持每一天点击展开/收起具体动作组数，界面更加紧凑高效；
-            2. 修复删除按钮失效根因，接入应用内确认弹窗，彻底解决删除被自动回填问题；
-            3. 体重波动图全面升级为 SVG 贝塞尔平滑波动曲线，新增“周视图 (近7天)”与“月视图 (近30天)”切换及区间统计。
+            1. 修复状态栏兼容重叠：顶部配置沉浸式安全避让空间，彻底解决与手机电量/时间重叠；
+            2. 移除所有计时功能：进入训练后无需计时，去除秒表与休息弹窗，专注每组负荷记录；
+            3. 周/月视图动态走势联动：按钮高亮与状态横幅即时响应，30天月度时间轴全景平滑展开；
+            4. 历史训练记录默认 100% 全部折叠，无需展开，界面紧凑清爽。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
