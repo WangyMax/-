@@ -25,9 +25,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const [showAddExModal, setShowAddExModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showFinishModal, setShowFinishModal] = useState(false);
-  const [showRestModal, setShowRestModal] = useState(false);
-  const [restType, setRestType] = useState<'full_rest' | 'active_recovery' | 'busy_or_unwell'>('full_rest');
-  const [restNotes, setRestNotes] = useState('肌肉超量恢复中，好好休息保证充足睡眠与营养');
 
   useEffect(() => {
     setPlans(StorageService.getPlans());
@@ -328,24 +325,22 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     setShowFinishModal(false);
   };
 
-  // 打卡今日休息日
+  // 一键打卡今日完全休息
   const handleLogRestDay = () => {
     const todayStr = new Date().toISOString().split('T')[0];
     const restSession: WorkoutSession = {
       id: `sess-rest-${Date.now()}`,
       date: todayStr,
-      planName: '休息日 (Rest Day)',
+      planName: '休息日 (完全休息)',
       startTime: Date.now(),
       endTime: Date.now(),
       exercises: [],
       cardioMinutes: 0,
       cardioCompleted: false,
       isRestDay: true,
-      restType: restType,
-      notes: restNotes.trim() || '肌肉超量恢复中，好好休息保证睡眠',
+      notes: '完全休息',
     };
     StorageService.addSession(restSession);
-    setShowRestModal(false);
     setPlans(StorageService.getPlans());
   };
 
@@ -428,30 +423,20 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
         <div className="space-y-4">
           {/* 今日休息日状态横幅（若已打卡休息） */}
           {todayRestSession && (
-            <div className="bg-gradient-to-r from-amber-50 to-orange-50/70 border border-amber-200/90 rounded-2xl p-4 shadow-sm space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center font-bold">
-                    <Coffee className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="font-black text-amber-950 text-sm">今日已安排身体超量恢复</h3>
-                    <span className="text-[10px] text-amber-700/90 font-medium">充分休息、拉伸与营养补充是肌肉生长的核心</span>
-                  </div>
+            <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-3.5 shadow-xs flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center font-bold">
+                  <Coffee className="w-4 h-4" />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleCancelRestDay(todayRestSession.id)}
-                  className="text-xs text-amber-800 hover:text-red-600 font-bold underline shrink-0 ml-2"
-                >
-                  取消重新开练
-                </button>
+                <span className="font-black text-amber-950 text-sm">今日已安排完全休息</span>
               </div>
-              {todayRestSession.notes && (
-                <p className="text-xs text-amber-900/90 bg-white/80 p-2.5 rounded-xl border border-amber-200/60 italic">
-                  “{todayRestSession.notes}”
-                </p>
-              )}
+              <button
+                type="button"
+                onClick={() => handleCancelRestDay(todayRestSession.id)}
+                className="text-xs text-amber-800 hover:text-red-600 font-bold underline"
+              >
+                取消重新开练
+              </button>
             </div>
           )}
 
@@ -514,22 +499,16 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               <Plus className="w-3.5 h-3.5 text-blue-600" /> 自由训练（不选预设计划）
             </button>
 
-            {/* 休息日打卡入口（若今日尚未打卡休息） */}
+            {/* 今日完全休息一键打卡（若今日尚未打卡休息） */}
             {!todayRestSession && (
               <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Coffee className="w-4 h-4 text-amber-600 shrink-0" />
-                  <div>
-                    <span className="text-xs font-bold text-slate-800 block">今天不练，安排身体休息？</span>
-                    <span className="text-[10px] text-slate-400">超量恢复也是训练不可或缺的关键一环</span>
-                  </div>
-                </div>
+                <span className="text-xs font-bold text-slate-700">今天不练？</span>
                 <button
                   type="button"
-                  onClick={() => setShowRestModal(true)}
-                  className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/90 rounded-xl text-xs font-bold flex items-center gap-1 active:scale-95 transition-all shadow-2xs shrink-0"
+                  onClick={handleLogRestDay}
+                  className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/90 rounded-xl text-xs font-black flex items-center gap-1.5 active:scale-95 transition-all shadow-2xs"
                 >
-                  <Coffee className="w-3.5 h-3.5 text-amber-700" /> 打卡今日休息
+                  <Coffee className="w-3.5 h-3.5 text-amber-700" /> 今日完全休息
                 </button>
               </div>
             )}
@@ -1087,81 +1066,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 className="flex-2 w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/30"
               >
                 确认归档记录
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 休息日打卡模态框 */}
-      {showRestModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex flex-col justify-end sm:justify-center p-0 sm:p-4 animate-in fade-in duration-150">
-          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-sm p-4 shadow-2xl mx-auto space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <Coffee className="w-5 h-5 text-amber-600" />
-                <h3 className="font-black text-slate-900 text-base">打卡今日休息日 (Rest Day)</h3>
-              </div>
-              <button
-                onClick={() => setShowRestModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-xs px-2 py-1 rounded-lg bg-slate-100"
-              >
-                关闭
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-[11px] font-bold text-slate-600 block mb-1.5">选择今日恢复类型</label>
-                <div className="grid grid-cols-3 gap-1.5 text-xs">
-                  {[
-                    { key: 'full_rest', label: '💤 完全休息', desc: '充足睡眠' },
-                    { key: 'active_recovery', label: '🧘 主动恢复', desc: '拉伸/散步' },
-                    { key: 'busy_or_unwell', label: '💼 事务休整', desc: '合理调整' },
-                  ].map((t) => (
-                    <button
-                      key={t.key}
-                      type="button"
-                      onClick={() => setRestType(t.key as 'full_rest' | 'active_recovery' | 'busy_or_unwell')}
-                      className={`py-2 px-1 rounded-xl text-center border transition-all ${
-                        restType === t.key
-                          ? 'bg-amber-600 text-white font-black border-amber-600 shadow-sm'
-                          : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border-slate-200'
-                      }`}
-                    >
-                      <span className="block font-bold">{t.label}</span>
-                      <span className={`text-[10px] block ${restType === t.key ? 'text-amber-100' : 'text-slate-400'}`}>{t.desc}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold text-slate-600 block mb-1">身体感受与恢复随笔</label>
-                <textarea
-                  rows={2}
-                  value={restNotes}
-                  onChange={(e) => setRestNotes(e.target.value)}
-                  placeholder="例如: 腿部微酸，今天早点休息；饮食正常，蛋白质充足..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowRestModal(false)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleLogRestDay}
-                className="flex-2 w-full py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-black shadow-md shadow-amber-600/30 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
-              >
-                <Coffee className="w-3.5 h-3.5" /> 确认打卡休息
               </button>
             </div>
           </div>

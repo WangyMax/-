@@ -62,14 +62,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.1.0
-          name: "FitCustom Pro v2.1 (新增休息日打卡 + 身体超量恢复全周期追踪)"
+          tag_name: v2.2.0
+          name: "FitCustom Pro v2.2 (一键完全休息，纯粹极简体验)"
           body: |
             ### 更新亮点：
-            1. 新增【今日休息 / 恢复日 (Rest Day)】功能：支持一键打卡生理超量恢复日；
-            2. 记录恢复类型（完全休息/主动拉伸散步/事务休整）与身体状态随笔；
-            3. 今日看板自动显示“已安排超量恢复”，支持取消重新开练；
-            4. 历史训练日志中优雅串联休息日卡片，形成完整的健美周期闭环。
+            1. 极简休息功能：一键打卡【今日完全休息】，无多余弹窗与输入，干净直接；
+            2. 状态看板一目了然：已安排休息后展示状态，支持随时取消重新开练；
+            3. 历史记录纯粹呈现：以温润的“休息日 (完全休息)”卡片完美闭环训练周期。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
