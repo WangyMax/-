@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { WorkoutPlan, Exercise } from './types';
 import { StorageService } from './utils/storage';
+import { buildSessionFromPlan } from './utils/sessionBuilder';
 import { WorkoutView } from './components/WorkoutView';
 import { PlansView } from './components/PlansView';
 import { ExerciseLibraryView } from './components/ExerciseLibraryView';
@@ -21,56 +22,13 @@ export function App() {
     setAllExercises(StorageService.getExercises());
   };
 
-  // 从计划列表点击“开练”：切换到训练 Tab 并启动
+  // 从计划列表点击“开练”：切换到训练 Tab 并启动。
+  // 统一走 sessionBuilder：旧内联构造缺少 isDropSet/dropStages 处理，
+  // 从计划页开练超级组计划会丢阶梯数据；同时移除 window.location.hash 重绘 hack
+  //（Tab 条件渲染本就保证 WorkoutView 重挂载并重读 activeSession，hash 只污染返回键历史）。
   const handleStartPlanFromPlansTab = (plan: WorkoutPlan) => {
-    // 构造或更新当前进行中训练
-    const exerciseLogs = plan.exercises.map(pe => {
-      const exDetail = allExercises.find(e => e.id === pe.exerciseId);
-      const lastLog = StorageService.getLastExerciseLog(pe.exerciseId);
-      const unit = exDetail?.defaultUnit || 'plates';
-      const pulley = exDetail?.defaultPulley || 'none';
-
-      const sets = Array.from({ length: pe.targetSets || 4 }, (_, i) => {
-        const lastSet = lastLog?.sets[i];
-        return {
-          id: `s-${Date.now()}-${i}`,
-          setNumber: i + 1,
-          unit: lastSet?.unit || unit,
-          weightOrPlates: lastSet?.weightOrPlates || (unit === 'plates' ? 8 : 40),
-          reps: lastSet?.reps || pe.targetReps || 12,
-          completed: false,
-          pulleyRatio: lastSet?.pulleyRatio || pulley,
-        };
-      });
-
-      return {
-        exerciseId: pe.exerciseId,
-        exerciseName: exDetail?.name || '未知动作',
-        category: exDetail?.category || 'chest',
-        pulleyRatio: pulley,
-        currentUnit: unit,
-        sets,
-        notes: pe.notes || ''
-      };
-    });
-
-    const newSession = {
-      id: `sess-${Date.now()}`,
-      date: new Date().toISOString().split('T')[0],
-      planId: plan.id,
-      planName: plan.name,
-      startTime: Date.now(),
-      exercises: exerciseLogs,
-      cardioMinutes: plan.cardioMinutes,
-      cardioCompleted: plan.cardioMinutes > 0,
-      cardioType: plan.cardioType || (plan.cardioMinutes > 0 ? '跑步机坡度快走' : undefined),
-      cardioNotes: plan.cardioMinutes > 0 ? '坡度 10，速度 5.0 km/h 维持心率' : '',
-    };
-
-    StorageService.saveActiveSession(newSession);
+    StorageService.saveActiveSession(buildSessionFromPlan(plan, allExercises));
     setActiveTab('workout');
-    // 强制触发一次重绘
-    window.location.hash = '#workout-' + Date.now();
   };
 
   return (
@@ -82,7 +40,6 @@ export function App() {
         {activeTab === 'workout' && (
           <WorkoutView
             onOpenPlansTab={() => setActiveTab('plans')}
-            onOpenLibraryTab={() => setActiveTab('library')}
             allExercises={allExercises}
           />
         )}

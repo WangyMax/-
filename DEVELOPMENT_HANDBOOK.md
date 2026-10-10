@@ -71,12 +71,40 @@
 - **全面屏状态栏避让垫片**：
   - 在 `src/App.tsx` 顶部配有专门的避让垫片：
     `<div className="h-[max(env(safe-area-inset-top),38px)] w-full shrink-0 bg-slate-50" />`
-    确保任何挖孔屏、水滴屏手机打开后，页面标题都不会与系统时间、5G、电量图标重叠。
+  - 确保任何挖孔屏、水滴屏手机打开后，页面标题都不会与系统时间、5G、电量图标重叠。
 - **开练底栏 50/50 对称布局**：
   - 位于 `WorkoutView.tsx` 底部，使用 `grid grid-cols-2 gap-3`，左侧【放弃本次训练】与右侧【结束并保存记录】严格各占 50%，触控面积舒适。
 - **SVG 贝塞尔平滑波动曲线**：
   - 位于 `src/components/WeightJournalView.tsx`，完全使用原生 SVG 三次贝塞尔曲线（Cubic Bézier）绘制，带渐变阴影与数据点气泡；
   - 联动支持【周视图 (近7天)】、【月视图 (近30天)】与【全部】三档无缝切换。
+
+### 5. 统一会话构建器（修复计划页开练丢超级组）
+位置：`src/utils/sessionBuilder.ts`（v2.3 新增）
+- **踩坑背景**：「今日训练」页的 `startPlan` 与「计划分化」页 App.tsx 里的 `handleStartPlanFromPlansTab` 曾是**两份各自维护的内联构造代码**。计划页那份漏掉了 `isDropSet / dropStages` 处理——从计划页开练「肩 ➕ 腹部」超级组计划时，递减阶梯会整体丢失，变成普通组。
+- **铁律**：**同一个业务动作只允许存在一份构造逻辑**。两条开练入口统一调用：
+  ```ts
+  buildSessionFromPlan(plan: WorkoutPlan, allExercises: Exercise[]): WorkoutSession
+  ```
+  内部处理：预设单位/滑轮回退、上次训练数据智能预填、超级组阶梯深拷贝注入（计划预设优先，其次上次训练，最后默认 10→7.5→5→2.5kg 四阶）。
+- **维护约定**：日后修改开练预填规则只改 `sessionBuilder.ts`，**严禁**在任何组件里再写内联的会话构造代码。
+
+### 6. localStorage 解析缓存与 React 引用语义（v2.3 重要避坑）
+位置：`src/utils/storage.ts` 顶部 `cache` 对象
+- **踩坑背景**：训练页曾在**渲染函数体里**每次渲染调用 `getSessions()`，全量 `JSON.parse`；打字改备注时每按一次按键触发一次重渲染，5 个动作就要解析数十遍全量历史。现已改为：`get*` 首次解析后写入进程内缓存，后续读取零 parse；`save*` 写穿（localStorage + 缓存同步更新）。
+- **核心避坑（差点翻车点）——React setState 引用语义**：
+  - 项目里大量「mutate → save → `setState(StorageService.get*())`」的刷新模式；
+  - React 的 `setState` 收到**与当前 state 相同的对象引用**时会静默 bail-out，**不重渲染**；
+  - 若 `save*` 把调用方传入的**同一数组引用**写回缓存，`get*` 返回同一引用 → setState 失效 → 打卡后界面完全不动（旧版每次 `JSON.parse` 都返回新引用，所以碰巧正常，缓存上线后此问题立即暴露）；
+  - **因此所有 `save*` 必须缓存浅拷贝**：`cache.xxx = [...list];`（当前代码有注释标注，勿删）。
+- **另外两条配套约定**：
+  - `restoreOfficialData()` / `resetAllData()` 直接 `setItem/removeItem` 绕过了 `save*`，**必须手动同步或清空缓存**（当前代码已处理）；
+  - `importBackupJson()` 内部走 `save*`，自动继承缓存更新，无需额外处理。
+- **改缓存相关代码时三查**：① 新写入路径是否更新了缓存；② 是否浅拷贝（防引用 bail-out）；③ restore/reset 是否同步。
+
+### 7. 渲染路径零 IO 原则（v2.3 性能基线）
+- **任何组件的渲染函数体内禁止调用 `StorageService.get*`**：数据一律进 React state，变更时显式刷新（先 `StorageService.addSession/deleteSession` 再 `setSessions(StorageService.getSessions())`）。
+- **「上次训练参考」用一次扫描建 Map**：`WorkoutView` 中用 `useMemo` 把 sessions 扫成 `Map<exerciseId, 最近完成日志>`，替代原先每张动作卡片各自全量查找（O(N×M) → O(N)）。语义与 `getLastExerciseLog` 完全一致：按日期降序取首个含已完成组的命中。
+- 休息日打卡横幅读的是 **sessions** 不是 plans——刷新横幅务必 `setSessions`，早期版本误写成 `setPlans` 导致打卡后横幅不出现，已修复。
 
 ---
 
@@ -105,7 +133,8 @@
 │   ├── types/
 │   │   └── index.ts               # TypeScript 核心数据接口定义
 │   ├── utils/
-│   │   └── storage.ts             # 数据持久化封装、版本迁移、备份导出导入
+│   │   ├── sessionBuilder.ts      # 统一会话构建器：计划→进行中训练的唯一构造入口（含超级组阶梯注入）
+│   │   └── storage.ts             # 数据持久化封装、进程内解析缓存、版本迁移、备份导出导入
 │   ├── App.tsx                    # 主视图容器、顶部安全垫片、磨砂底部导航
 │   └── main.tsx                   # 前端挂载入口
 ├── capacitor.config.ts            # Capacitor 移动端配置文件

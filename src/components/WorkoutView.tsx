@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Play, Plus, Check, Trash2, 
   Dumbbell, Flame, 
@@ -9,10 +9,10 @@ import {
   ResistanceUnit, PulleyRatio, CATEGORY_LABELS, UNIT_LABELS, Exercise 
 } from '../types';
 import { StorageService } from '../utils/storage';
+import { buildSessionFromPlan } from '../utils/sessionBuilder';
 
 interface WorkoutViewProps {
   onOpenPlansTab: () => void;
-  onOpenLibraryTab: () => void;
   allExercises: Exercise[];
 }
 
@@ -21,6 +21,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   allExercises
 }) => {
   const [plans, setPlans] = useState<WorkoutPlan[]>([]);
+  const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
   const [showAddExModal, setShowAddExModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -28,6 +29,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
   useEffect(() => {
     setPlans(StorageService.getPlans());
+    setSessions(StorageService.getSessions());
     const savedActive = StorageService.getActiveSession();
     if (savedActive) {
       setActiveSession(savedActive);
@@ -40,90 +42,10 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     StorageService.saveActiveSession(updated);
   };
 
-  // 启动某个计划
+  // 启动某个计划（统一走 sessionBuilder，与计划页一键开练共用同一构造逻辑，
+  // 保证超级组阶梯预设在两条入口都不会丢失）
   const startPlan = (plan: WorkoutPlan) => {
-    const exerciseLogs: ExerciseLog[] = plan.exercises.map(pe => {
-      const exDetail = allExercises.find(e => e.id === pe.exerciseId);
-      const lastLog = StorageService.getLastExerciseLog(pe.exerciseId);
-
-      const unit: ResistanceUnit = pe.targetUnit || exDetail?.defaultUnit || 'kg';
-      const pulley: PulleyRatio = pe.pulleyRatio || exDetail?.defaultPulley || 'none';
-      const isDropSet = Boolean(pe.isDropSet || (pe.dropStages && pe.dropStages.length > 0));
-
-      const baseDropStages = pe.dropStages && pe.dropStages.length > 0
-        ? pe.dropStages
-        : [
-            { id: 'stg-1', weightOrPlates: 10, unit: 'kg' as ResistanceUnit, reps: 12 },
-            { id: 'stg-2', weightOrPlates: 7.5, unit: 'kg' as ResistanceUnit, reps: 12 },
-            { id: 'stg-3', weightOrPlates: 5, unit: 'kg' as ResistanceUnit, reps: 10 },
-            { id: 'stg-4', weightOrPlates: 2.5, unit: 'kg' as ResistanceUnit, reps: 12 },
-          ];
-
-      // 默认生成组数（支持超级组大组 + 各阶梯重量次数独立注入）
-      const sets: WorkoutSet[] = Array.from({ length: pe.targetSets || 4 }, (_, i) => {
-        const lastSet = lastLog?.sets[i];
-
-        if (isDropSet) {
-          const currentStages = lastSet?.dropStages && lastSet.dropStages.length > 0
-            ? JSON.parse(JSON.stringify(lastSet.dropStages))
-            : JSON.parse(JSON.stringify(baseDropStages));
-
-          return {
-            id: `s-${Date.now()}-${i}`,
-            setNumber: i + 1,
-            unit: 'kg' as ResistanceUnit,
-            weightOrPlates: currentStages[0]?.weightOrPlates || 10,
-            reps: currentStages[0]?.reps || 12,
-            completed: false,
-            pulleyRatio: pulley,
-            isDropSet: true,
-            dropStages: currentStages,
-          };
-        }
-
-        const defaultWeight = pe.targetWeight !== undefined 
-          ? pe.targetWeight 
-          : (lastSet?.weightOrPlates ?? (unit === 'plates' ? 10 : 30));
-        const defaultReps = pe.targetReps !== undefined
-          ? pe.targetReps
-          : (lastSet?.reps ?? 12);
-
-        return {
-          id: `s-${Date.now()}-${i}`,
-          setNumber: i + 1,
-          unit: pe.targetUnit || lastSet?.unit || unit,
-          weightOrPlates: defaultWeight,
-          reps: defaultReps,
-          completed: false,
-          pulleyRatio: pe.pulleyRatio || lastSet?.pulleyRatio || pulley,
-        };
-      });
-
-      return {
-        exerciseId: pe.exerciseId,
-        exerciseName: exDetail?.name || '未知动作',
-        category: exDetail?.category || 'chest',
-        pulleyRatio: pulley,
-        currentUnit: unit,
-        sets,
-        notes: pe.notes || ''
-      };
-    });
-
-    const newSession: WorkoutSession = {
-      id: `sess-${Date.now()}`,
-      date: new Date().toISOString().split('T')[0],
-      planId: plan.id,
-      planName: plan.name,
-      startTime: Date.now(),
-      exercises: exerciseLogs,
-      cardioMinutes: plan.cardioMinutes,
-      cardioCompleted: plan.cardioMinutes > 0,
-      cardioType: plan.cardioType || (plan.cardioMinutes > 0 ? '跑步机坡度快走' : undefined),
-      cardioNotes: plan.cardioMinutes > 0 ? '坡度 10，速度 5.0 km/h 维持心率' : '',
-    };
-
-    updateActiveSession(newSession);
+    updateActiveSession(buildSessionFromPlan(plan, allExercises));
   };
 
   // 启动自由训练
@@ -322,6 +244,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     StorageService.addSession(finalSession);
     StorageService.saveActiveSession(null);
     setActiveSession(null);
+    setSessions(StorageService.getSessions());
     setShowFinishModal(false);
   };
 
@@ -341,14 +264,14 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       notes: '完全休息',
     };
     StorageService.addSession(restSession);
-    setPlans(StorageService.getPlans());
+    setSessions(StorageService.getSessions());
   };
 
   // 取消今日休息日打卡
   const handleCancelRestDay = (sessionId: string) => {
     if (window.confirm('确定取消今日休息日打卡，重新开启训练吗？')) {
       StorageService.deleteSession(sessionId);
-      setPlans(StorageService.getPlans());
+      setSessions(StorageService.getSessions());
     }
   };
 
@@ -360,10 +283,23 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     (acc, ex) => acc + ex.sets.length, 0
   ) || 0;
 
-  // 检查今日是否已安排休息日
+  // 检查今日是否已安排休息日（读 state，不再在渲染体里打 localStorage）
   const todayDateStr = new Date().toISOString().split('T')[0];
-  const allCurrentSessions = StorageService.getSessions();
-  const todayRestSession = allCurrentSessions.find(s => s.date === todayDateStr && s.isRestDay);
+  const todayRestSession = sessions.find(s => s.date === todayDateStr && s.isRestDay);
+
+  // 每个动作最近一次已完成训练日志：一次扫描建 Map，
+  // 替代原先每张动作卡片各自全量查找（语义与 getLastExerciseLog 一致：按日期降序取首个命中）
+  const lastLogMap = useMemo(() => {
+    const map = new Map<string, ExerciseLog>();
+    for (const session of sessions) {
+      for (const exLog of session.exercises) {
+        if (!map.has(exLog.exerciseId) && exLog.sets.some(s => s.completed)) {
+          map.set(exLog.exerciseId, exLog);
+        }
+      }
+    }
+    return map;
+  }, [sessions]);
 
   return (
     <div className="pb-24 pt-2">
@@ -521,7 +457,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
         <div className="space-y-4">
           {activeSession.exercises.map((exLog, exIdx) => {
             const catInfo = CATEGORY_LABELS[exLog.category] || CATEGORY_LABELS.chest;
-            const lastLog = StorageService.getLastExerciseLog(exLog.exerciseId);
+            const lastLog = lastLogMap.get(exLog.exerciseId) || null;
 
             return (
               <div

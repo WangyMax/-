@@ -18,7 +18,7 @@
 ## 🛠️ 技术栈
 - **框架**：React 18 + TypeScript + Vite
 - **样式**：Tailwind CSS + Lucide Icons
-- **移动端容器**：Capacitor 6 (Android)
+- **移动端容器**：Capacitor 8 (Android)
 - **CI/CD**：GitHub Actions (Ubuntu + Java 21 + Gradle)
 
 ---

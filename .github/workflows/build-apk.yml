@@ -62,7 +62,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.2.0
+          tag_name: v2.3.0
           name: "FitCustom Pro v2.2 (一键完全休息，纯粹极简体验)"
           body: |
             ### 更新亮点：

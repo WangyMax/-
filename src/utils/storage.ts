@@ -8,13 +8,21 @@ const STORAGE_KEYS = {
   SESSIONS: 'fitcustom_sessions_v2',
   WEIGHTS: 'fitcustom_weights_v2',
   ACTIVE_SESSION: 'fitcustom_active_session_v2',
-  REST_TIMER: 'fitcustom_rest_timer_v2',
   // 旧版本键名，用于自动迁移
   OLD_SESSIONS: 'fitcustom_sessions_v1',
   OLD_WEIGHTS: 'fitcustom_weights_v1',
   OLD_PLANS: 'fitcustom_plans_v1',
   OLD_EXERCISES: 'fitcustom_exercises_v1',
 };
+
+// 解析缓存：训练中每次按键都会触发多处读取，
+// 避免重复 JSON.parse 全量数据；所有写入路径必须同步更新对应缓存。
+const cache: {
+  exercises: Exercise[] | null;
+  plans: WorkoutPlan[] | null;
+  sessions: WorkoutSession[] | null;
+  weights: WeightLog[] | null;
+} = { exercises: null, plans: null, sessions: null, weights: null };
 
 // 预填充真实历史体重记录 (来自用户的真实记录)
 export const INITIAL_WEIGHTS: WeightLog[] = [
@@ -425,6 +433,7 @@ export const INITIAL_SESSIONS: WorkoutSession[] = [
 export const StorageService = {
   // 动作库
   getExercises(): Exercise[] {
+    if (cache.exercises) return cache.exercises;
     const raw = localStorage.getItem(STORAGE_KEYS.EXERCISES);
     if (!raw) {
       // 检查旧版本数据
@@ -441,17 +450,24 @@ export const StorageService = {
         }
       }
       localStorage.setItem(STORAGE_KEYS.EXERCISES, JSON.stringify(list));
+      cache.exercises = list;
       return list;
     }
     try {
-      return JSON.parse(raw);
+      const parsed: Exercise[] = JSON.parse(raw);
+      cache.exercises = parsed;
+      return parsed;
     } catch {
+      cache.exercises = INITIAL_EXERCISES;
       return INITIAL_EXERCISES;
     }
   },
 
   saveExercises(exercises: Exercise[]): void {
     localStorage.setItem(STORAGE_KEYS.EXERCISES, JSON.stringify(exercises));
+    // 浅拷贝新引用：调用方会继续 mutate 传入的数组，缓存必须持有独立数组，
+    // 否则后续 setState(get()) 因引用相同被 React bail-out 导致界面不刷新
+    cache.exercises = [...exercises];
   },
 
   toggleFavorite(exerciseId: string): void {
@@ -487,10 +503,12 @@ export const StorageService = {
 
   // 计划库
   getPlans(): WorkoutPlan[] {
+    if (cache.plans) return cache.plans;
     const raw = localStorage.getItem(STORAGE_KEYS.PLANS);
     if (!raw) {
       // 初始化为包含完整重量预设的四大计划
       localStorage.setItem(STORAGE_KEYS.PLANS, JSON.stringify(INITIAL_PLANS));
+      cache.plans = INITIAL_PLANS;
       return INITIAL_PLANS;
     }
     try {
@@ -527,16 +545,20 @@ export const StorageService = {
       });
       if (hasChanges) {
         localStorage.setItem(STORAGE_KEYS.PLANS, JSON.stringify(updated));
+        cache.plans = updated;
         return updated;
       }
+      cache.plans = parsed;
       return parsed;
     } catch {
+      cache.plans = INITIAL_PLANS;
       return INITIAL_PLANS;
     }
   },
 
   savePlans(plans: WorkoutPlan[]): void {
     localStorage.setItem(STORAGE_KEYS.PLANS, JSON.stringify(plans));
+    cache.plans = [...plans];
   },
 
   savePlan(plan: WorkoutPlan): void {
@@ -557,6 +579,7 @@ export const StorageService = {
 
   // 训练记录
   getSessions(): WorkoutSession[] {
+    if (cache.sessions) return cache.sessions;
     const raw = localStorage.getItem(STORAGE_KEYS.SESSIONS);
     if (!raw) {
       const sessions = [...INITIAL_SESSIONS];
@@ -576,6 +599,7 @@ export const StorageService = {
       }
       sessions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
+      cache.sessions = sessions;
       return sessions;
     }
 
@@ -601,16 +625,20 @@ export const StorageService = {
       });
       if (needsSave) {
         localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(updated));
+        cache.sessions = updated;
         return updated;
       }
+      cache.sessions = parsed;
       return parsed;
     } catch {
-      return [...INITIAL_SESSIONS];
+      cache.sessions = [...INITIAL_SESSIONS];
+      return cache.sessions;
     }
   },
 
   saveSessions(sessions: WorkoutSession[]): void {
     localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
+    cache.sessions = [...sessions];
   },
 
   addSession(session: WorkoutSession): void {
@@ -662,6 +690,7 @@ export const StorageService = {
 
   // 体重与生活日志
   getWeightLogs(): WeightLog[] {
+    if (cache.weights) return cache.weights;
     const raw = localStorage.getItem(STORAGE_KEYS.WEIGHTS);
     if (!raw) {
       const logs = [...INITIAL_WEIGHTS];
@@ -680,18 +709,23 @@ export const StorageService = {
       }
       logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       localStorage.setItem(STORAGE_KEYS.WEIGHTS, JSON.stringify(logs));
+      cache.weights = logs;
       return logs;
     }
 
     try {
-      return JSON.parse(raw);
+      const parsed: WeightLog[] = JSON.parse(raw);
+      cache.weights = parsed;
+      return parsed;
     } catch {
-      return [...INITIAL_WEIGHTS];
+      cache.weights = [...INITIAL_WEIGHTS];
+      return cache.weights;
     }
   },
 
   saveWeightLogs(logs: WeightLog[]): void {
     localStorage.setItem(STORAGE_KEYS.WEIGHTS, JSON.stringify(logs));
+    cache.weights = [...logs];
   },
 
   addWeightLog(log: Omit<WeightLog, 'id'>): WeightLog {
@@ -730,6 +764,11 @@ export const StorageService = {
     localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(INITIAL_SESSIONS));
     localStorage.setItem(STORAGE_KEYS.WEIGHTS, JSON.stringify(INITIAL_WEIGHTS));
     localStorage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
+    // 直接 setItem 绕过了 save*，这里必须同步缓存（拷贝，避免缓存与模块常量共用引用）
+    cache.exercises = [...INITIAL_EXERCISES];
+    cache.plans = [...INITIAL_PLANS];
+    cache.sessions = [...INITIAL_SESSIONS];
+    cache.weights = [...INITIAL_WEIGHTS];
   },
 
   // 备份与恢复
@@ -765,5 +804,9 @@ export const StorageService = {
     localStorage.removeItem(STORAGE_KEYS.SESSIONS);
     localStorage.removeItem(STORAGE_KEYS.WEIGHTS);
     localStorage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
+    cache.exercises = null;
+    cache.plans = null;
+    cache.sessions = null;
+    cache.weights = null;
   }
 };
