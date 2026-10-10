@@ -63,12 +63,13 @@ jobs:
         if: github.ref == 'refs/heads/main'
         with:
           tag_name: v2.3.0
-          name: "FitCustom Pro v2.2 (一键完全休息，纯粹极简体验)"
+          name: "FitCustom Pro v2.3 (超级组双入口修复 + 记录性能优化)"
           body: |
             ### 更新亮点：
-            1. 极简休息功能：一键打卡【今日完全休息】，无多余弹窗与输入，干净直接；
-            2. 状态看板一目了然：已安排休息后展示状态，支持随时取消重新开练；
-            3. 历史记录纯粹呈现：以温润的“休息日 (完全休息)”卡片完美闭环训练周期。
+            1. 修复计划页开练超级组计划丢失递减阶梯的问题，两条开练入口统一构建逻辑；
+            2. 修复今日休息日打卡后状态横幅不刷新的问题；
+            3. 记录页性能优化：本地存储解析缓存 + 上次训练参考一次性建索引，打字备注不再卡顿；
+            4. 清理重绘 hack 与死代码，代码结构与开发手册同步更新。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
