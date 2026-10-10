@@ -3,7 +3,7 @@ import {
   Scale, Plus, TrendingDown, TrendingUp, 
   Trash2, Download, Upload, CheckCircle2, MessageSquare,
   Dumbbell, Flame, RotateCcw, Check, ChevronDown, ChevronUp,
-  AlertTriangle, Layers
+  AlertTriangle, Layers, Coffee
 } from 'lucide-react';
 import { WeightLog, WorkoutSession } from '../types';
 import { StorageService } from '../utils/storage';
@@ -390,6 +390,54 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </div>
           ) : (
             sessions.map((sess) => {
+              // 专属渲染：休息日 (Rest Day) 卡片
+              if (sess.isRestDay) {
+                const restLabelMap: Record<string, string> = {
+                  'full_rest': '💤 完全休息 / 充足睡眠',
+                  'active_recovery': '🧘 主动恢复 / 轻度拉伸',
+                  'busy_or_unwell': '💼 事务休整 / 身体调整',
+                };
+                return (
+                  <div
+                    key={sess.id}
+                    className="bg-gradient-to-r from-amber-50/90 to-orange-50/50 border border-amber-200/90 rounded-2xl p-4 shadow-sm transition-all"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center font-bold shrink-0">
+                          <Coffee className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-black text-amber-950 text-sm">{sess.planName}</span>
+                            <span className="text-[11px] font-mono font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded border border-amber-200">
+                              {sess.date}
+                            </span>
+                            <span className="text-[10px] bg-white text-amber-800 px-2 py-0.5 rounded-full border border-amber-200 font-bold">
+                              {restLabelMap[sess.restType || 'full_rest'] || '超量恢复'}
+                            </span>
+                          </div>
+                          {sess.notes && (
+                            <p className="text-xs text-amber-900 mt-1.5 italic">
+                              “{sess.notes}”
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => promptDeleteSession(sess.id, sess.planName, sess.date)}
+                        className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-amber-100/50 transition-colors"
+                        title="删除此条记录"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
               const isExpanded = expandedSessionIds.has(sess.id);
               const totalCompletedSets = sess.exercises.reduce(
                 (sum, e) => sum + e.sets.filter(s => s.completed).length, 0

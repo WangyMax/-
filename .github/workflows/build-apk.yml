@@ -62,13 +62,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.0.0
-          name: "FitCustom Pro v2.0 (重磅专业升级：完整递减超级组系统上线)"
+          tag_name: v2.1.0
+          name: "FitCustom Pro v2.1 (新增休息日打卡 + 身体超量恢复全周期追踪)"
           body: |
             ### 更新亮点：
-            1. 专业递减超级组模型：大组自定义（默认4大组），每组包含多阶梯连续递减重量与独立次数；
-            2. 开练看板定制超级组大组卡片：直观呈现递减流（10kg/12次 -> 7.5kg/12次 -> 5kg/10次 -> 2.5kg/12次），每个阶梯重量与次数均可独立调整，支持自由增删递减阶梯与大组；
-            3. 计划编辑与历史记录全面升级：自定义超级组大组与阶梯，精准还原 10.08 肩部真实超级组数据。
+            1. 新增【今日休息 / 恢复日 (Rest Day)】功能：支持一键打卡生理超量恢复日；
+            2. 记录恢复类型（完全休息/主动拉伸散步/事务休整）与身体状态随笔；
+            3. 今日看板自动显示“已安排超量恢复”，支持取消重新开练；
+            4. 历史训练日志中优雅串联休息日卡片，形成完整的健美周期闭环。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

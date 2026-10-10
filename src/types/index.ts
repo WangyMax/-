@@ -89,6 +89,8 @@ export interface WorkoutSession {
   cardioType?: string;
   cardioNotes?: string;
   notes?: string;
+  isRestDay?: boolean; // 是否为休息日打卡
+  restType?: 'full_rest' | 'active_recovery' | 'busy_or_unwell'; // 休息恢复类型
 }
 
 export interface WeightLog {
