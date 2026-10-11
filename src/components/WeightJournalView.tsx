@@ -611,9 +611,9 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
               { label: '连续打卡', value: `${historyStats.streak}天`, accent: 'text-amber-600' },
               { label: '总完成组', value: `${historyStats.totalSets}组`, accent: 'text-emerald-600' },
             ].map(s => (
-              <div key={s.label} className="bg-white border border-slate-200/90 rounded-2xl p-2.5 text-center shadow-sm">
-                <span className="text-[10px] text-slate-400 block">{s.label}</span>
-                <span className={`text-sm font-black font-mono ${s.accent}`}>{s.value}</span>
+              <div key={s.label} className="bg-white border border-slate-200/90 rounded-2xl p-2 text-center shadow-sm min-w-0">
+                <span className="text-[10px] text-slate-400 block truncate">{s.label}</span>
+                <span className={`text-xs font-black font-mono ${s.accent}`}>{s.value}</span>
               </div>
             ))}
           </div>
@@ -975,7 +975,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
           {/* 体重看板：最新 / 变化 / 目标 */}
           {latestWeight && (
-            <div className="grid grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-3 gap-2">
               <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
                 <span className="text-[11px] text-slate-500 font-medium">当前最新</span>
                 <div className="flex items-baseline gap-1 mt-1">
@@ -1030,32 +1030,36 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </div>
           )}
 
-          {/* 目标编辑行 */}
+          {/* 目标编辑行（竖排：输入一行 + 按钮一行，杜绝小屏横向溢出） */}
           {showGoalEditor && (
-            <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3 flex items-center gap-2 animate-card-in">
-              <input
-                type="number"
-                step="0.1"
-                value={goalInput}
-                onChange={(e) => setGoalInput(e.target.value)}
-                placeholder={weightGoal !== null ? `当前 ${weightGoal}` : '例如 65'}
-                className="flex-1 bg-white border border-blue-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
-              />
-              <span className="text-xs text-slate-500">kg</span>
-              <button
-                type="button"
-                onClick={handleSaveGoal}
-                className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold"
-              >
-                保存
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowGoalEditor(false)}
-                className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold"
-              >
-                取消
-              </button>
+            <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3 space-y-2 animate-card-in">
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  step="0.1"
+                  value={goalInput}
+                  onChange={(e) => setGoalInput(e.target.value)}
+                  placeholder={weightGoal !== null ? `当前 ${weightGoal}` : '例如 65'}
+                  className="flex-1 min-w-0 bg-white border border-blue-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-xs text-slate-500 shrink-0">kg</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowGoalEditor(false)}
+                  className="py-2.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveGoal}
+                  className="py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95"
+                >
+                  保存目标
+                </button>
+              </div>
             </div>
           )}
           {weightGoal !== null && !showGoalEditor && (
@@ -1256,9 +1260,9 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
           {/* 历史打卡日志列表 */}
           <div>
-            <div className="flex items-center justify-between mb-2.5 px-1">
-              <h3 className="text-sm font-bold text-slate-800">体重与日记记录</h3>
-              <div className="flex items-center gap-1">
+            <div className="flex items-center justify-between gap-2 mb-2.5 px-1 flex-wrap">
+              <h3 className="text-sm font-bold text-slate-800 shrink-0">体重与日记记录</h3>
+              <div className="flex items-center gap-1 flex-wrap">
                 <div className="flex items-center gap-1 bg-slate-200/70 p-0.5 rounded-xl border border-slate-300/60 text-[10px] font-bold">
                   {([
                     { key: 'all', label: '全部' },

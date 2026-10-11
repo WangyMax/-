@@ -546,12 +546,12 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
           >
             −
           </button>
-          <div className="text-center min-w-[3.5rem]">
+          <div className="text-center min-w-0 flex-1">
             <input
               type="number"
               value={set.weightOrPlates || ''}
               onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
-              className="w-16 text-center bg-transparent font-black text-xl text-slate-900 focus:outline-none"
+              className="w-full min-w-[2.5rem] max-w-[4rem] text-center bg-transparent font-black text-xl text-slate-900 focus:outline-none"
             />
             <div className="text-[10px] text-slate-400 font-semibold -mt-0.5">
               {isPlates ? '片' : set.unit === 'assisted' ? '助力kg' : set.unit === 'bodyweight' ? '自重' : 'kg'}
@@ -573,7 +573,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             type="number"
             value={set.reps || ''}
             onChange={(e) => setDirectVal(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
-            className="w-12 text-center bg-white border border-slate-200 rounded-xl py-2 font-black text-lg text-slate-900 focus:outline-none focus:border-blue-500"
+            className="w-full min-w-[2rem] max-w-[3rem] text-center bg-white border border-slate-200 rounded-xl py-2 font-black text-lg text-slate-900 focus:outline-none focus:border-blue-500"
           />
         </div>
         <div className="col-span-2 flex items-center justify-center">
@@ -637,7 +637,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               {stages.map((stage, stageIdx) => (
                 <div
                   key={stage.id}
-                  className="bg-white p-2 rounded-xl border border-slate-200/90 flex items-center justify-between text-xs gap-2"
+                  className="bg-white p-2 rounded-xl border border-slate-200/90 flex items-center justify-between text-xs gap-1 flex-wrap"
                 >
                   <span className="text-slate-400 font-mono text-[11px] font-bold shrink-0">#{stageIdx + 1}</span>
                   <div className="flex items-center gap-1">

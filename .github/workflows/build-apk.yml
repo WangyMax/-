@@ -62,8 +62,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.8.0
-          name: "FitCustom Pro v2.8 (专注模式·界面焕新)"
+          tag_name: v2.8.1
+          name: "FitCustom Pro v2.8.1 (修复横向溢出)"
           body: |
             ### 更新亮点：
             1. 专注模式：开练后一屏只看一个动作，左右切换，底部导航隐藏防误触，右下角悬浮结束钮；
@@ -73,6 +73,7 @@ jobs:
             5. 体重记录升级：目标体重+曲线目标线、趋势洞察、近6周打卡日历、时段过滤；
             6. 全应用统一自建确认抽屉，彻底告别原生弹窗；
             7. 同签名，直接覆盖安装，数据无缝保留。
+            8. [v2.8.1] 修复目标体重编辑行在小屏上横向溢出、保存按钮被挤出屏外的问题；全局禁止页面横滑。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
