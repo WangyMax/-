@@ -62,13 +62,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.5.0
-          name: "FitCustom Pro v2.5 (固定签名·覆盖安装保数据)"
+          tag_name: v2.6.0
+          name: "FitCustom Pro v2.6 (休息日补签)"
           body: |
             ### 更新亮点：
-            1. 固定 APK 签名：以后更新直接下载覆盖安装，手机本地训练数据无缝保留，无需再卸载；
-            2. 注意：本次 v2.5 与旧版签名不同，仍需最后一次卸载重装（旧数据需手动补录 3 天体重+2 个休息日）；
-            3. 从 v2.5 起所有版本签名永久一致，覆盖升级数据纹丝不动。
+            1. 新增休息日补签：忘记打卡时可选过去某天补上，当天已有记录则拒绝重复；
+            2. 与 v2.5 同签名，可直接覆盖安装，数据无缝保留。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

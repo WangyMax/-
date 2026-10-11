@@ -10,7 +10,7 @@ import {
 } from '../types';
 import { StorageService } from '../utils/storage';
 import { buildSessionFromPlan } from '../utils/sessionBuilder';
-import { todayLocalDate } from '../utils/date';
+import { todayLocalDate, yesterdayLocalDate } from '../utils/date';
 
 interface WorkoutViewProps {
   onOpenPlansTab: () => void;
@@ -27,6 +27,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const [showAddExModal, setShowAddExModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showFinishModal, setShowFinishModal] = useState(false);
+  const [backfillDate, setBackfillDate] = useState(() => yesterdayLocalDate());
+  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
 
   useEffect(() => {
     setPlans(StorageService.getPlans());
@@ -276,6 +278,37 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     }
   };
 
+  // 补签过去某一天的休息日（只能补今天之前的日期，且当天无任何记录）
+  const handleBackfillRestDay = () => {
+    if (!backfillDate) {
+      setBackfillMsg('请先选择要补签的日期');
+      return;
+    }
+    if (backfillDate >= todayLocalDate()) {
+      setBackfillMsg('只能补签今天之前的日期');
+      return;
+    }
+    if (sessions.some(s => s.date === backfillDate)) {
+      setBackfillMsg(`${backfillDate} 已有训练或休息记录，无需补签`);
+      return;
+    }
+    const restSession: WorkoutSession = {
+      id: `sess-rest-${Date.now()}`,
+      date: backfillDate,
+      planName: '休息日 (完全休息)',
+      startTime: Date.now(),
+      endTime: Date.now(),
+      exercises: [],
+      cardioMinutes: 0,
+      cardioCompleted: false,
+      isRestDay: true,
+      notes: '完全休息（补签）',
+    };
+    StorageService.addSession(restSession);
+    setSessions(StorageService.getSessions());
+    setBackfillMsg(`已补签 ${backfillDate} 的休息`);
+  };
+
   // 计算已完成总组数与总计划组数
   const totalCompletedSets = activeSession?.exercises.reduce(
     (acc, ex) => acc + ex.sets.filter(s => s.completed).length, 0
@@ -449,6 +482,31 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 </button>
               </div>
             )}
+            {/* 休息日补签：忘记打卡时补过去某一天 */}
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-slate-700 shrink-0">之前漏打卡了？</span>
+                <input
+                  type="date"
+                  value={backfillDate}
+                  max={yesterdayLocalDate()}
+                  onChange={(e) => { setBackfillDate(e.target.value); setBackfillMsg(null); }}
+                  className="bg-slate-100 text-slate-700 text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 font-medium"
+                />
+                <button
+                  type="button"
+                  onClick={handleBackfillRestDay}
+                  className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/90 rounded-xl text-xs font-black flex items-center gap-1.5 active:scale-95 transition-all shadow-2xs shrink-0"
+                >
+                  <Coffee className="w-3.5 h-3.5 text-amber-700" /> 补签休息
+                </button>
+              </div>
+              {backfillMsg && (
+                <p className="mt-2 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200/80 rounded-lg px-2.5 py-1.5">
+                  {backfillMsg}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}
