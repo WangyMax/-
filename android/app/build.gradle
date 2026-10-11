@@ -1,5 +1,13 @@
 apply plugin: 'com.android.application'
 
+// 固定签名：所有版本用同一 keystore 打包，保证手机上可覆盖安装、localStorage 数据保留。
+// keystore 与 key.properties 均提交仓库（个人自用不上架，密码公开无风险），CI 无需额外配置。
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace = "com.fitcustom.pro"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +15,8 @@ android {
         applicationId "com.fitcustom.pro"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 15
-        versionName "2.4"
+        versionCode 16
+        versionName "2.5"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -17,16 +25,21 @@ android {
         }
     }
     signingConfigs {
-        debug {
+        fitcustom {
+            keyAlias keystoreProperties['keyAlias']
+            keyPassword keystoreProperties['keyPassword']
+            storeFile rootProject.file(keystoreProperties['storeFile'])
+            storePassword keystoreProperties['storePassword']
             v1SigningEnabled true
             v2SigningEnabled true
         }
     }
     buildTypes {
         debug {
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.fitcustom
         }
         release {
+            signingConfig signingConfigs.fitcustom
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

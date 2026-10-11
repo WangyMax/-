@@ -62,13 +62,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.4.0
-          name: "FitCustom Pro v2.4 (UTC日期时区修复)"
+          tag_name: v2.5.0
+          name: "FitCustom Pro v2.5 (固定签名·覆盖安装保数据)"
           body: |
             ### 更新亮点：
-            1. 修复 UTC 时区日期 bug：此前每天 0:00-8:00 取到的是前一天，现统一走本地日期；
-            2. 修复"上次参考"浮标中助力/自重单位被显示为 kg 的小问题；
-            3. 清理无效 Tailwind 类名，开发手册同步更新避坑经验。
+            1. 固定 APK 签名：以后更新直接下载覆盖安装，手机本地训练数据无缝保留，无需再卸载；
+            2. 注意：本次 v2.5 与旧版签名不同，仍需最后一次卸载重装（旧数据需手动补录 3 天体重+2 个休息日）；
+            3. 从 v2.5 起所有版本签名永久一致，覆盖升级数据纹丝不动。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

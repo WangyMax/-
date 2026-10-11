@@ -116,6 +116,12 @@
   - `restType / rpe` 类型字段暂无消费，纯类型声明零运行时成本，不动类型定义。
   - `VIBRATE` 权限声明在 Manifest 里残留（JS 层零调用、原生源码零残留，删流体云功能时漏删）——无害声明，下次动原生层时顺手清理。
 
+### 9. APK 固定签名铁律：v2.5 覆盖安装保数据
+- **踩坑背景**：GitHub Actions 每次用全新虚拟机 + 临时 debug 签名打包，每版签名都不同。Android 规定签名不同的同包名 APK 不能覆盖安装，用户只能卸载重装，卸载会清空 localStorage——用户 10-09 之后的体重与休息日数据因此失夺。
+- **修法**：仓库内固定 keystore（`android/fitcustom.keystore`，密码 `fitcustom`，有效期 30 年）+ `android/key.properties` 写死配置并提交，`app/build.gradle` 的 debug/release 均用该签名。CI 无需额外配置，每次打包签名自动一致。
+- **铁律**：**绝不更换或删除 keystore**；CI 签名配置不得删除；每次发版后验证新旧包签名证书指纹一致。从 v2.5 起所有版本支持直接覆盖安装，手机本地数据无缝保留。
+- **备注**：v2.5 与旧版签名不同，需最后一次卸载重装；之后永不再需要卸载。
+
 ---
 
 ## 三、 工程结构目录速查
@@ -125,7 +131,10 @@
 ├── .github/
 │   └── workflows/
 │       └── build-apk.yml          # GitHub Actions 云端自动构建打包工作流
-├── android/                       # Capacitor Android 原生容器工程
+├── android/
+│   ├── fitcustom.keystore         # 固定签名密钥库（不可更换删除）
+│   ├── key.properties             # 签名配置（密码 fitcustom，随仓库提交）
+│   └── (Capacitor Android 原生容器工程)
 │   ├── app/
 │   │   ├── build.gradle           # 原生编译配置（版本号 versionCode/versionName、签名配置）
 │   │   └── src/main/
