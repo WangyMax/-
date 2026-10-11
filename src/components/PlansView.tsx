@@ -79,7 +79,22 @@ export const PlansView: React.FC<PlansViewProps> = ({
       alert('请输入计划名称');
       return;
     }
-    StorageService.savePlan(editingPlan);
+    // 保存前清洗数字：清空未填的组数回退到标准 4 组，无效预设置空
+    const sanitized: WorkoutPlan = {
+      ...editingPlan,
+      exercises: editingPlan.exercises.map(pe => ({
+        ...pe,
+        targetSets: pe.targetSets >= 1 ? Math.floor(pe.targetSets) : 4,
+        targetReps: typeof pe.targetReps === 'number' && pe.targetReps >= 1 ? Math.floor(pe.targetReps) : undefined,
+        targetWeight: typeof pe.targetWeight === 'number' && pe.targetWeight >= 0 ? pe.targetWeight : undefined,
+        dropStages: pe.dropStages?.map(stg => ({
+          ...stg,
+          weightOrPlates: typeof stg.weightOrPlates === 'number' && stg.weightOrPlates >= 0 ? stg.weightOrPlates : 0,
+          reps: typeof stg.reps === 'number' && stg.reps >= 0 ? Math.floor(stg.reps) : 0,
+        })),
+      })),
+    };
+    StorageService.savePlan(sanitized);
     setIsModalOpen(false);
     setEditingPlan(null);
     loadPlans();
@@ -406,10 +421,10 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                     type="number"
                                     min="1"
                                     max="20"
-                                    value={pe.targetSets}
+                                    value={pe.targetSets || ''}
                                     onChange={(e) => {
                                       const newExs = [...editingPlan.exercises];
-                                      newExs[idx].targetSets = parseInt(e.target.value) || 1;
+                                      newExs[idx].targetSets = e.target.value === '' ? 0 : (parseInt(e.target.value) || 1);
                                       setEditingPlan({ ...editingPlan, exercises: newExs });
                                     }}
                                     className="w-12 bg-white border border-amber-300 rounded px-1 py-0.5 text-center text-slate-900 font-black text-xs"
@@ -427,7 +442,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                       <input
                                         type="number"
                                         step="0.5"
-                                        value={stg.weightOrPlates}
+                                        value={stg.weightOrPlates || ''}
                                         onChange={(e) => {
                                           const newExs = [...editingPlan.exercises];
                                           newExs[idx].dropStages![stgIdx].weightOrPlates = parseFloat(e.target.value) || 0;
@@ -441,7 +456,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                     <div className="flex items-center gap-0.5">
                                       <input
                                         type="number"
-                                        value={stg.reps}
+                                        value={stg.reps || ''}
                                         onChange={(e) => {
                                           const newExs = [...editingPlan.exercises];
                                           newExs[idx].dropStages![stgIdx].reps = parseInt(e.target.value) || 0;
@@ -511,10 +526,10 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                     type="number"
                                     min="1"
                                     max="20"
-                                    value={pe.targetSets}
+                                    value={pe.targetSets || ''}
                                     onChange={(e) => {
                                       const newExs = [...editingPlan.exercises];
-                                      newExs[idx].targetSets = parseInt(e.target.value) || 1;
+                                      newExs[idx].targetSets = e.target.value === '' ? 0 : (parseInt(e.target.value) || 1);
                                       setEditingPlan({ ...editingPlan, exercises: newExs });
                                     }}
                                     className="w-10 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900 font-bold"
@@ -531,10 +546,10 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                     type="number"
                                     min="1"
                                     max="100"
-                                    value={pe.targetReps ?? 12}
+                                    value={pe.targetReps ?? ''} placeholder="12"
                                     onChange={(e) => {
                                       const newExs = [...editingPlan.exercises];
-                                      newExs[idx].targetReps = parseInt(e.target.value) || 1;
+                                      newExs[idx].targetReps = e.target.value === '' ? undefined : (parseInt(e.target.value) || 1);
                                       setEditingPlan({ ...editingPlan, exercises: newExs });
                                     }}
                                     className="w-10 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900 font-bold"
@@ -551,10 +566,10 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                     type="number"
                                     min="0"
                                     step="0.5"
-                                    value={pe.targetWeight ?? 0}
+                                    value={pe.targetWeight ?? ''}
                                     onChange={(e) => {
                                       const newExs = [...editingPlan.exercises];
-                                      newExs[idx].targetWeight = parseFloat(e.target.value) || 0;
+                                      newExs[idx].targetWeight = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0);
                                       setEditingPlan({ ...editingPlan, exercises: newExs });
                                     }}
                                     className="w-12 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-emerald-700 font-bold"

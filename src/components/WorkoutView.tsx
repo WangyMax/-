@@ -676,7 +676,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                                       <input
                                         type="number"
                                         step="0.5"
-                                        value={stage.weightOrPlates}
+                                        value={stage.weightOrPlates || ''}
                                         onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
                                         className="w-12 text-center bg-slate-50 border border-slate-200 rounded py-0.5 text-xs font-black text-slate-900"
                                       />
@@ -703,7 +703,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                                     <div className="flex items-center gap-0.5">
                                       <input
                                         type="number"
-                                        value={stage.reps}
+                                        value={stage.reps || ''}
                                         onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'reps', parseInt(e.target.value) || 0)}
                                         className="w-10 text-center bg-slate-50 border border-slate-200 rounded py-0.5 text-xs font-black text-slate-900"
                                       />
@@ -791,7 +791,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                             </button>
                             <input
                               type="number"
-                              value={set.weightOrPlates}
+                              value={set.weightOrPlates || ''}
                               onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
                               className="w-14 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-black text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
                             />
@@ -815,7 +815,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                             </button>
                             <input
                               type="number"
-                              value={set.reps}
+                              value={set.reps || ''}
                               onChange={(e) => setDirectVal(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
                               className="w-10 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-black text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
                             />
