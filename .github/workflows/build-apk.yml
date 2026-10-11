@@ -62,14 +62,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.3.0
-          name: "FitCustom Pro v2.3 (超级组双入口修复 + 记录性能优化)"
+          tag_name: v2.4.0
+          name: "FitCustom Pro v2.4 (UTC日期时区修复)"
           body: |
             ### 更新亮点：
-            1. 修复计划页开练超级组计划丢失递减阶梯的问题，两条开练入口统一构建逻辑；
-            2. 修复今日休息日打卡后状态横幅不刷新的问题；
-            3. 记录页性能优化：本地存储解析缓存 + 上次训练参考一次性建索引，打字备注不再卡顿；
-            4. 清理重绘 hack 与死代码，代码结构与开发手册同步更新。
+            1. 修复 UTC 时区日期 bug：此前每天 0:00-8:00 取到的是前一天，现统一走本地日期；
+            2. 修复"上次参考"浮标中助力/自重单位被显示为 kg 的小问题；
+            3. 清理无效 Tailwind 类名，开发手册同步更新避坑经验。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

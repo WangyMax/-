@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { WeightLog, WorkoutSession } from '../types';
 import { StorageService } from '../utils/storage';
+import { todayLocalDate } from '../utils/date';
 
 interface WeightJournalViewProps {
   onDataChanged?: () => void;
@@ -25,7 +26,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   // 体重日志列表与输入状态
   const [weights, setWeights] = useState<WeightLog[]>([]);
   const [inputWeight, setInputWeight] = useState('63.3');
-  const [inputDate, setInputDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [inputDate, setInputDate] = useState(() => todayLocalDate());
   const [inputSlot, setInputSlot] = useState<'morning' | 'evening' | 'post-workout'>('morning');
   const [inputNote, setInputNote] = useState('');
   const [isEditingExisting, setIsEditingExisting] = useState(false);
@@ -175,7 +176,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `fitcustom-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `fitcustom-backup-${todayLocalDate()}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

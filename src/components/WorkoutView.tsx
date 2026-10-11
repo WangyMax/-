@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { StorageService } from '../utils/storage';
 import { buildSessionFromPlan } from '../utils/sessionBuilder';
+import { todayLocalDate } from '../utils/date';
 
 interface WorkoutViewProps {
   onOpenPlansTab: () => void;
@@ -52,7 +53,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const startFreeWorkout = () => {
     const newSession: WorkoutSession = {
       id: `sess-${Date.now()}`,
-      date: new Date().toISOString().split('T')[0],
+      date: todayLocalDate(),
       planName: '自由训练',
       startTime: Date.now(),
       exercises: [],
@@ -250,7 +251,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
   // 一键打卡今日完全休息
   const handleLogRestDay = () => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = todayLocalDate();
     const restSession: WorkoutSession = {
       id: `sess-rest-${Date.now()}`,
       date: todayStr,
@@ -284,7 +285,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   ) || 0;
 
   // 检查今日是否已安排休息日（读 state，不再在渲染体里打 localStorage）
-  const todayDateStr = new Date().toISOString().split('T')[0];
+  const todayDateStr = todayLocalDate();
   const todayRestSession = sessions.find(s => s.date === todayDateStr && s.isRestDay);
 
   // 每个动作最近一次已完成训练日志：一次扫描建 Map，
@@ -527,7 +528,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                     <div className="flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-blue-600" />
                       <span>
-                        上次参考: {lastLog.sets.filter((s: WorkoutSet) => s.completed).map((s: WorkoutSet) => `${s.weightOrPlates}${s.unit === 'plates' ? '片' : 'kg'}×${s.reps}`).join(' / ') || '无记录'}
+                        上次参考: {lastLog.sets.filter((s: WorkoutSet) => s.completed).map((s: WorkoutSet) => `${s.weightOrPlates}${s.unit === 'plates' ? '片' : s.unit === 'assisted' ? '助力' : s.unit === 'bodyweight' ? '自重' : 'kg'}×${s.reps}`).join(' / ') || '无记录'}
                       </span>
                     </div>
                     <button
@@ -999,7 +1000,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               </button>
               <button
                 onClick={finishSession}
-                className="flex-2 w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/30"
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/30"
               >
                 确认归档记录
               </button>

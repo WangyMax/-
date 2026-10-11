@@ -3,6 +3,7 @@ import {
   ResistanceUnit, PulleyRatio, Exercise,
 } from '../types';
 import { StorageService } from './storage';
+import { todayLocalDate } from './date';
 
 // 由训练计划一键构建进行中的会话。
 // 统一供 WorkoutView 与 App（计划页一键开练）使用，
@@ -80,7 +81,7 @@ export function buildSessionFromPlan(
 
   return {
     id: `sess-${Date.now()}`,
-    date: new Date().toISOString().split('T')[0],
+    date: todayLocalDate(),
     planId: plan.id,
     planName: plan.name,
     startTime: Date.now(),

@@ -106,6 +106,16 @@
 - **「上次训练参考」用一次扫描建 Map**：`WorkoutView` 中用 `useMemo` 把 sessions 扫成 `Map<exerciseId, 最近完成日志>`，替代原先每张动作卡片各自全量查找（O(N×M) → O(N)）。语义与 `getLastExerciseLog` 完全一致：按日期降序取首个含已完成组的命中。
 - 休息日打卡横幅读的是 **sessions** 不是 plans——刷新横幅务必 `setSessions`，早期版本误写成 `setPlans` 导致打卡后横幅不出现，已修复。
 
+### 8. 本地日期铁律：v2.4 UTC 时区 bug 排坑
+- **踩坑背景**：`new Date().toISOString().split('T')[0]` 取的是 UTC 日期。北京时间（UTC+8）下每天 0:00–8:00 返回的是**前一天**（已用节点脚本演示验证：模拟 10-11 早7点取到 10-10）。影响面：休息日横幅匹配、训练归档日期、体重打卡默认日期、备份文件名。
+- **铁律**：所有“今天是几号”场景必须调 `src/utils/date.ts` 的 `todayLocalDate()`，**禁止**再写 `toISOString().split('T')` 取日期。唯一例外是 `exportBackupJson` 的 `exportedAt` 时间戳——那里要的就是 UTC ISO 格式，正确无误。
+- **同期验证后刻意不动的东西**（防止后人盲改）：
+  - `浮点精度`：曾怀疑 `updateSetField ±2.5` 会累积误差，验证后推翻—2.5 是二进制精确表示，任意有限小数加减在 double 精度内无可见误差。
+  - `window.confirm ×3` + `alert ×4`：存量的全是用户点击后同步触发，没有真机复现证据证明会被 WebView 拦截，保持现状。若日后真机复现拦截，参照 WeightJournalView 内建确认弹窗的方式替换。
+  - `toggleFavorite / updateExerciseUnit / resetAllData` 暂无 UI 调用，但是数据层 API 集合的正常成员，留着无害不删。
+  - `restType / rpe` 类型字段暂无消费，纯类型声明零运行时成本，不动类型定义。
+  - `VIBRATE` 权限声明在 Manifest 里残留（JS 层零调用、原生源码零残留，删流体云功能时漏删）——无害声明，下次动原生层时顺手清理。
+
 ---
 
 ## 三、 工程结构目录速查
@@ -134,6 +144,7 @@
 │   │   └── index.ts               # TypeScript 核心数据接口定义
 │   ├── utils/
 │   │   ├── sessionBuilder.ts      # 统一会话构建器：计划→进行中训练的唯一构造入口（含超级组阶梯注入）
+│   │   ├── date.ts                # 本地日期工具：todayLocalDate，禁止再用 toISOString 取日期
 │   │   └── storage.ts             # 数据持久化封装、进程内解析缓存、版本迁移、备份导出导入
 │   ├── App.tsx                    # 主视图容器、顶部安全垫片、磨砂底部导航
 │   └── main.tsx                   # 前端挂载入口
