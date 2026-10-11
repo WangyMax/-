@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { WorkoutPlan, Exercise, PlanExerciseTarget, CATEGORY_LABELS, ResistanceUnit, PulleyRatio } from '../types';
 import { StorageService } from '../utils/storage';
+import { ConfirmSheet } from './ConfirmSheet';
 
 interface PlansViewProps {
   allExercises: Exercise[];
@@ -21,6 +22,10 @@ export const PlansView: React.FC<PlansViewProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSelectExOpen, setIsSelectExOpen] = useState(false);
   const [exerciseSearch, setExerciseSearch] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean; title: string; description: string; onConfirm: () => void;
+  }>({ open: false, title: '', description: '', onConfirm: () => {} });
 
   // 加载计划列表
   const loadPlans = () => {
@@ -64,21 +69,28 @@ export const PlansView: React.FC<PlansViewProps> = ({
     loadPlans();
   };
 
-  // 删除计划
+  // 删除计划（自建抽屉确认）
   const handleDeletePlan = (planId: string, name: string) => {
-    if (window.confirm(`确定删除训练计划 “${name}” 吗？`)) {
-      StorageService.deletePlan(planId);
-      loadPlans();
-    }
+    setConfirmState({
+      open: true,
+      title: '删除训练计划',
+      description: `确定删除训练计划 “${name}” 吗？此操作无法撤销。`,
+      onConfirm: () => {
+        StorageService.deletePlan(planId);
+        loadPlans();
+        setConfirmState(prev => ({ ...prev, open: false }));
+      },
+    });
   };
 
   // 保存计划
   const handleSavePlan = () => {
     if (!editingPlan) return;
     if (!editingPlan.name.trim()) {
-      alert('请输入计划名称');
+      setFormError('请输入计划名称');
       return;
     }
+    setFormError(null);
     // 保存前清洗数字：清空未填的组数回退到标准 4 组，无效预设置空
     const sanitized: WorkoutPlan = {
       ...editingPlan,
@@ -284,6 +296,11 @@ export const PlansView: React.FC<PlansViewProps> = ({
 
             {/* 表单内容 */}
             <div className="flex-1 overflow-y-auto py-3 space-y-4 pr-1">
+              {formError && (
+                <p className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+                  {formError}
+                </p>
+              )}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">计划名称 (如: 胸 ➕ 三头)</label>
                 <input
@@ -731,6 +748,17 @@ export const PlansView: React.FC<PlansViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* 统一确认抽屉 */}
+      <ConfirmSheet
+        open={confirmState.open}
+        title={confirmState.title}
+        description={confirmState.description}
+        confirmText="确认删除"
+        danger
+        onCancel={() => setConfirmState(prev => ({ ...prev, open: false }))}
+        onConfirm={confirmState.onConfirm}
+      />
     </div>
   );
 };

@@ -1,27 +1,42 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Scale, Plus, TrendingDown, TrendingUp, 
+import {
+  Scale, Plus, TrendingDown, TrendingUp,
   Trash2, Download, Upload, CheckCircle2, MessageSquare,
   Dumbbell, Flame, RotateCcw, Check, ChevronDown, ChevronUp,
-  AlertTriangle, Layers, Coffee
+  Layers, Coffee, Target, CalendarDays, Zap
 } from 'lucide-react';
 import { WeightLog, WorkoutSession } from '../types';
 import { StorageService } from '../utils/storage';
-import { todayLocalDate } from '../utils/date';
+import { todayLocalDate, shiftLocalDate, weekdayOf } from '../utils/date';
+import {
+  sessionVolumes, formatVolumeShort, sessionDurationMin,
+  countWeekTrainings, computeStreak, totalCompletedSetsAll,
+} from '../utils/stats';
+import { ConfirmSheet } from './ConfirmSheet';
 
 interface WeightJournalViewProps {
   onDataChanged?: () => void;
 }
+
+const SLOT_SHORT: Record<string, string> = {
+  'morning': '晨起',
+  'evening': '晚间',
+  'post-workout': '练后',
+};
 
 export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   onDataChanged,
 }) => {
   // 当前子标签: 'training' | 'weight'
   const [activeSubTab, setActiveSubTab] = useState<'training' | 'weight'>('training');
-  
+
   // 训练记录列表与展开状态集合
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(new Set());
+  // 历史筛选：全部 / 训练 / 休息
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'training' | 'rest'>('all');
+  // 活动日历选中的日期（点格子过滤）
+  const [selectedCalDate, setSelectedCalDate] = useState<string | null>(null);
 
   // 体重日志列表与输入状态
   const [weights, setWeights] = useState<WeightLog[]>([]);
@@ -31,22 +46,23 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const [inputNote, setInputNote] = useState('');
   const [isEditingExisting, setIsEditingExisting] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  // 体重目标
+  const [weightGoal, setWeightGoal] = useState<number | null>(null);
+  const [goalInput, setGoalInput] = useState('');
+  const [showGoalEditor, setShowGoalEditor] = useState(false);
+  // 时段过滤：all / morning / post-workout / evening
+  const [slotFilter, setSlotFilter] = useState<string>('all');
+  // 体重打卡日历选中的日期
+  const [selectedWeightDate, setSelectedWeightDate] = useState<string | null>(null);
 
   // 体重曲线时间跨度视图: 'week' (周视图/7天) | 'month' (月视图/30天) | 'all' (全部)
   const [chartViewSpan, setChartViewSpan] = useState<'week' | 'month' | 'all'>('week');
 
-  // 内置确认弹窗状态（彻底规避安卓原生 window.confirm 被拦截问题）
-  const [confirmModal, setConfirmModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    description: string;
+  // 统一确认抽屉（删除/恢复操作）
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean; title: string; description: string; confirmText: string;
     onConfirm: () => void;
-  }>({
-    isOpen: false,
-    title: '',
-    description: '',
-    onConfirm: () => {},
-  });
+  }>({ open: false, title: '', description: '', confirmText: '确认删除', onConfirm: () => {} });
 
   useEffect(() => {
     refreshData();
@@ -57,7 +73,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     const sList = StorageService.getSessions();
     setWeights(wList);
     setSessions(sList);
-    // 默认所有历史记录全部折叠，不自动展开任何记录
+    setWeightGoal(StorageService.getWeightGoal());
   };
 
   // 切换单条训练展开/折叠
@@ -73,12 +89,17 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     });
   };
 
-  // 一键全部展开 / 全部收起
-  const toggleAllSessions = () => {
-    if (expandedSessionIds.size === sessions.length) {
-      setExpandedSessionIds(new Set());
+  // 一键全部展开 / 全部收起（只针对当前过滤后的列表）
+  const toggleAllSessions = (visibleIds: string[]) => {
+    const allVisibleExpanded = visibleIds.every(id => expandedSessionIds.has(id));
+    if (allVisibleExpanded) {
+      setExpandedSessionIds(prev => {
+        const next = new Set(prev);
+        visibleIds.forEach(id => next.delete(id));
+        return next;
+      });
     } else {
-      setExpandedSessionIds(new Set(sessions.map(s => s.id)));
+      setExpandedSessionIds(prev => new Set([...prev, ...visibleIds]));
     }
   };
 
@@ -100,13 +121,15 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   }, [inputDate, weights]);
 
   // 提交打卡
+  const [formError, setFormError] = useState<string | null>(null);
   const handleAddLog = (e: React.FormEvent) => {
     e.preventDefault();
     if (isAlreadyLogged) return;
 
     const val = parseFloat(inputWeight);
     if (!val || val <= 0) {
-      alert('请输入正确的体重数字！');
+      setFormError('请输入正确的体重数字！');
+      setTimeout(() => setFormError(null), 2500);
       return;
     }
 
@@ -122,50 +145,67 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     if (onDataChanged) onDataChanged();
   };
 
-  // 唤起应用内删除体重确认
+  // 保存体重目标
+  const handleSaveGoal = () => {
+    const v = parseFloat(goalInput);
+    if (!v || v <= 0) {
+      setFormError('请输入正确的目标体重！');
+      setTimeout(() => setFormError(null), 2500);
+      return;
+    }
+    StorageService.saveWeightGoal(v);
+    setWeightGoal(v);
+    setShowGoalEditor(false);
+    if (onDataChanged) onDataChanged();
+  };
+
+  // 唤起删除体重确认
   const promptDeleteWeight = (id: string, date: string, weightVal: number) => {
-    setConfirmModal({
-      isOpen: true,
+    setConfirmState({
+      open: true,
       title: '删除体重记录',
       description: `确定要彻底删除 ${date} 的 ${weightVal}kg 体重打卡记录吗？删除后将不再复原。`,
+      confirmText: '确认删除',
       onConfirm: () => {
         StorageService.deleteWeightLog(id);
-        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setConfirmState(prev => ({ ...prev, open: false }));
         refreshData();
         if (onDataChanged) onDataChanged();
-      }
+      },
     });
   };
 
-  // 唤起应用内删除训练确认
+  // 唤起删除训练确认
   const promptDeleteSession = (sessionId: string, planName: string, date: string) => {
-    setConfirmModal({
-      isOpen: true,
+    setConfirmState({
+      open: true,
       title: '删除历史训练记录',
       description: `确定要彻底删除 ${date} 的 “${planName}” 训练记录吗？此操作无法撤销。`,
+      confirmText: '确认删除',
       onConfirm: () => {
         StorageService.deleteSession(sessionId);
-        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setConfirmState(prev => ({ ...prev, open: false }));
         refreshData();
         if (onDataChanged) onDataChanged();
-      }
+      },
     });
   };
 
   // 恢复内置官方数据 (10.06 - 10.09)
   const handleRestoreOfficialData = () => {
-    setConfirmModal({
-      isOpen: true,
+    setConfirmState({
+      open: true,
       title: '恢复 10.06 - 10.09 真实记录',
       description: '确定重置并重新载入官方 10.06 - 10.09 四日完整真实训练与体重数据吗？',
+      confirmText: '确认恢复',
       onConfirm: () => {
         StorageService.restoreOfficialData();
-        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setConfirmState(prev => ({ ...prev, open: false }));
         refreshData();
         if (onDataChanged) onDataChanged();
         setImportStatus('已恢复 10.06 - 10.09 官方真实记录！');
         setTimeout(() => setImportStatus(null), 3000);
-      }
+      },
     });
   };
 
@@ -203,26 +243,119 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     reader.readAsText(file);
   };
 
-  // 统计数据
+  // ================= 训练历史统计 =================
+  const todayStr = todayLocalDate();
+  const historyStats = useMemo(() => ({
+    trainings: sessions.filter(s => !s.isRestDay).length,
+    rests: sessions.filter(s => s.isRestDay).length,
+    weekTrainings: countWeekTrainings(sessions, todayStr),
+    streak: computeStreak(sessions, todayStr),
+    totalSets: totalCompletedSetsAll(sessions),
+  }), [sessions, todayStr]);
+
+  // 活动日历：近 8 周（56 天），以今天结尾
+  const activityCal = useMemo(() => {
+    const days: { date: string; day: number; isToday: boolean; hasTraining: boolean; hasRest: boolean }[] = [];
+    const byDate = new Map<string, { t: boolean; r: boolean }>();
+    for (const s of sessions) {
+      const cur = byDate.get(s.date) || { t: false, r: false };
+      if (s.isRestDay) cur.r = true; else cur.t = true;
+      byDate.set(s.date, cur);
+    }
+    for (let i = 55; i >= 0; i--) {
+      const date = shiftLocalDate(todayStr, -i);
+      const info = byDate.get(date);
+      days.push({
+        date,
+        day: Number(date.slice(8, 10)),
+        isToday: i === 0,
+        hasTraining: Boolean(info?.t),
+        hasRest: Boolean(info?.r),
+      });
+    }
+    return days;
+  }, [sessions, todayStr]);
+
+  // 过滤后的历史列表（类型筛选 + 日历日期筛选）
+  const visibleSessions = useMemo(() => {
+    return sessions.filter(s => {
+      if (historyFilter === 'training' && s.isRestDay) return false;
+      if (historyFilter === 'rest' && !s.isRestDay) return false;
+      if (selectedCalDate && s.date !== selectedCalDate) return false;
+      return true;
+    });
+  }, [sessions, historyFilter, selectedCalDate]);
+
+  // ================= 体重统计与洞察 =================
   const latestWeight = weights[0]?.weight;
   const previousWeight = weights[1]?.weight;
   const weightDiff = latestWeight && previousWeight ? (latestWeight - previousWeight).toFixed(1) : null;
+
+  // 距目标还差
+  const goalDiff = useMemo(() => {
+    if (weightGoal === null || latestWeight === undefined) return null;
+    return Math.round((latestWeight - weightGoal) * 10) / 10;
+  }, [weightGoal, latestWeight]);
+
+  // 趋势洞察：近 7 天均值 vs 再前 7 天均值
+  const trendInsight = useMemo(() => {
+    if (weights.length < 2) return null;
+    const sorted = [...weights].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const lastTs = new Date(sorted[sorted.length - 1].date).getTime();
+    const day = 86400000;
+    const recent = sorted.filter(w => new Date(w.date).getTime() > lastTs - 7 * day);
+    const prev = sorted.filter(w => {
+      const t = new Date(w.date).getTime();
+      return t <= lastTs - 7 * day && t > lastTs - 14 * day;
+    });
+    if (recent.length === 0 || prev.length === 0) return null;
+    const avg = (arr: WeightLog[]) => arr.reduce((a, b) => a + b.weight, 0) / arr.length;
+    const delta = Math.round((avg(recent) - avg(prev)) * 10) / 10;
+    if (delta < -0.05) return { text: `稳步下降中，近7天均值比之前一周低 ${Math.abs(delta)}kg，继续保持`, good: true };
+    if (delta > 0.05) return { text: `近7天均值比之前一周高 ${delta}kg，注意饮食与训练量`, good: false };
+    return { text: '体重保持平稳，波动在正常范围内', good: true };
+  }, [weights]);
+
+  // 体重打卡日历：近 6 周（42 天）
+  const weightCal = useMemo(() => {
+    const days: { date: string; day: number; isToday: boolean; logged: boolean }[] = [];
+    const dateSet = new Set(weights.map(w => w.date));
+    for (let i = 41; i >= 0; i--) {
+      const date = shiftLocalDate(todayStr, -i);
+      days.push({
+        date,
+        day: Number(date.slice(8, 10)),
+        isToday: i === 0,
+        logged: dateSet.has(date),
+      });
+    }
+    return days;
+  }, [weights, todayStr]);
+
+  // 时段过滤 + 打卡日历日期过滤后的体重列表
+  const visibleWeights = useMemo(() => {
+    return weights.filter(w => {
+      if (slotFilter !== 'all' && (w.timeSlot || 'morning') !== slotFilter) return false;
+      if (selectedWeightDate && w.date !== selectedWeightDate) return false;
+      return true;
+    });
+  }, [weights, slotFilter, selectedWeightDate]);
 
   // 根据当前视图筛选体重数据并按日期升序排列供画曲线
   const filteredChartWeights = useMemo(() => {
     if (weights.length === 0) return [];
     const sorted = [...weights].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    
+
     if (chartViewSpan === 'all') {
       return sorted;
     }
-    
+
     // 周视图取近 7 天，月视图取近 30 天
     const daysLimit = chartViewSpan === 'week' ? 7 : 30;
     // 取最新记录的日期作为基准时间（防止历史预置日期距今天数过大导致过滤为空）
     const latestTimestamp = new Date(sorted[sorted.length - 1].date).getTime();
     const cutoffTime = latestTimestamp - (daysLimit - 1) * 24 * 60 * 60 * 1000;
-    
+
     const inRange = sorted.filter(w => new Date(w.date).getTime() >= cutoffTime);
     if (inRange.length > 0) return inRange;
     return sorted.slice(-daysLimit);
@@ -239,7 +372,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     return { min, max, avg, netChange: parseFloat(netChange) };
   }, [filteredChartWeights]);
 
-  // 生成高保真 SVG 平滑贝塞尔曲线路径（周视图/月视图动态适配不同时间轴跨度）
+  // 生成高保真 SVG 平滑贝塞尔曲线路径（含目标体重虚线）
   const svgData = useMemo(() => {
     const list = filteredChartWeights;
     const width = 360;
@@ -257,6 +390,11 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     const vals = list.map(d => d.weight);
     let minVal = Math.min(...vals);
     let maxVal = Math.max(...vals);
+    // 目标线纳入纵轴范围
+    if (weightGoal !== null) {
+      minVal = Math.min(minVal, weightGoal);
+      maxVal = Math.max(maxVal, weightGoal);
+    }
     if (maxVal === minVal) {
       minVal -= 1;
       maxVal += 1;
@@ -265,31 +403,28 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       minVal -= margin;
       maxVal += margin;
     }
+    const yOf = (v: number) => padT + chartH - ((v - minVal) / (maxVal - minVal)) * chartH;
 
-    // 各点坐标映射：周视图下铺满近7天刻度；月视图下呈现30天宽幅全景走势
     const points = list.map((item, idx) => {
       let x: number;
       if (list.length === 1) {
         x = padL + chartW / 2;
       } else if (chartViewSpan === 'month') {
-        // 月视图下点间距更加紧凑平缓，展示全月趋势全貌
         const startOffset = padL + chartW * 0.2;
         const availableW = chartW * 0.75;
         x = startOffset + (idx / (list.length - 1)) * availableW;
       } else {
-        // 周视图与全部视图：均匀舒展排布
         x = padL + (idx / (list.length - 1)) * chartW;
       }
-      const y = padT + chartH - ((item.weight - minVal) / (maxVal - minVal)) * chartH;
-      return { x, y, weight: item.weight, date: item.date.slice(5) };
+      return { x, y: yOf(item.weight), weight: item.weight, date: item.date.slice(5) };
     });
+
+    const goalY = weightGoal !== null ? yOf(weightGoal) : null;
 
     if (points.length === 1) {
       const p = points[0];
       return {
-        width,
-        height,
-        points,
+        width, height, points, goalY,
         linePath: `M ${padL} ${p.y} L ${width - padR} ${p.y}`,
         areaPath: `M ${padL} ${p.y} L ${width - padR} ${p.y} L ${width - padR} ${height - padB} L ${padL} ${height - padB} Z`,
         midVal: ((minVal + maxVal) / 2).toFixed(1),
@@ -298,7 +433,6 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       };
     }
 
-    // 三次贝塞尔平滑曲线算法
     let linePath = `M ${points[0].x} ${points[0].y}`;
     for (let i = 0; i < points.length - 1; i++) {
       const p0 = points[i];
@@ -311,22 +445,119 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       linePath += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p1.x} ${p1.y}`;
     }
 
-    // 面积闭合路径
     const lastP = points[points.length - 1];
     const firstP = points[0];
     const areaPath = `${linePath} L ${lastP.x} ${height - padB} L ${firstP.x} ${height - padB} Z`;
 
     return {
-      width,
-      height,
-      points,
-      linePath,
-      areaPath,
+      width, height, points, goalY,
+      linePath, areaPath,
       midVal: ((minVal + maxVal) / 2).toFixed(1),
       minVal: minVal.toFixed(1),
       maxVal: maxVal.toFixed(1),
     };
-  }, [filteredChartWeights, chartViewSpan]);
+  }, [filteredChartWeights, chartViewSpan, weightGoal]);
+
+  // 日历格子渲染（训练活动）
+  const renderActivityCal = () => (
+    <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="text-xs font-black text-slate-900 flex items-center gap-1">
+          <CalendarDays className="w-3.5 h-3.5 text-blue-600" /> 近8周活动
+        </span>
+        <div className="flex items-center gap-2 text-[10px] text-slate-400">
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-blue-500 inline-block" />训练</span>
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-amber-400 inline-block" />休息</span>
+          {selectedCalDate && (
+            <button
+              type="button"
+              onClick={() => setSelectedCalDate(null)}
+              className="text-blue-600 font-bold underline"
+            >
+              清除{selectedCalDate.slice(5)}
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {['日', '一', '二', '三', '四', '五', '六'].map((w, i) => (
+          <div key={i} className="text-center text-[10px] text-slate-300 font-bold">{w}</div>
+        ))}
+        {/* 首格按星期补齐 */}
+        {Array.from({ length: weekdayOf(activityCal[0]?.date || todayStr) }).map((_, i) => (
+          <div key={`pad-${i}`} />
+        ))}
+        {activityCal.map(d => (
+          <button
+            key={d.date}
+            type="button"
+            onClick={() => setSelectedCalDate(prev => (prev === d.date ? null : d.date))}
+            className={`aspect-square rounded-lg text-[10px] font-bold flex items-center justify-center transition-all active:scale-95 ${
+              selectedCalDate === d.date
+                ? 'ring-2 ring-blue-600 ring-offset-1'
+                : ''
+            } ${
+              d.hasTraining
+                ? 'bg-blue-500 text-white'
+                : d.hasRest
+                  ? 'bg-amber-300 text-amber-900'
+                  : d.isToday
+                    ? 'bg-slate-200 text-slate-700 ring-1 ring-slate-400'
+                    : 'bg-slate-100 text-slate-300'
+            }`}
+          >
+            {d.day}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  // 体重打卡日历
+  const renderWeightCal = () => (
+    <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="text-xs font-black text-slate-900 flex items-center gap-1">
+          <CalendarDays className="w-3.5 h-3.5 text-emerald-600" /> 近6周打卡
+        </span>
+        {selectedWeightDate && (
+          <button
+            type="button"
+            onClick={() => setSelectedWeightDate(null)}
+            className="text-[11px] text-emerald-600 font-bold underline"
+          >
+            清除{selectedWeightDate.slice(5)}
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {['日', '一', '二', '三', '四', '五', '六'].map((w, i) => (
+          <div key={i} className="text-center text-[10px] text-slate-300 font-bold">{w}</div>
+        ))}
+        {Array.from({ length: weekdayOf(weightCal[0]?.date || todayStr) }).map((_, i) => (
+          <div key={`wpad-${i}`} />
+        ))}
+        {weightCal.map(d => (
+          <button
+            key={d.date}
+            type="button"
+            onClick={() => setSelectedWeightDate(prev => (prev === d.date ? null : d.date))}
+            className={`aspect-square rounded-lg text-[10px] font-bold flex items-center justify-center transition-all active:scale-95 ${
+              selectedWeightDate === d.date ? 'ring-2 ring-emerald-600 ring-offset-1' : ''
+            } ${
+              d.logged
+                ? 'bg-emerald-500 text-white'
+                : d.isToday
+                  ? 'bg-slate-200 text-slate-700 ring-1 ring-slate-400'
+                  : 'bg-slate-100 text-slate-300'
+            }`}
+          >
+            {d.day}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div className="pb-24 pt-2 space-y-4">
@@ -336,7 +567,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         <p className="text-xs text-slate-500 mt-0.5">历史打卡归档、日常体重走势与身体状态记录</p>
       </div>
 
-      {/* 顶部子标签分段控制器 (iOS / 现代原生风格磨砂分段器) */}
+      {/* 顶部子标签分段控制器 */}
       <div className="bg-slate-200/70 p-1.5 rounded-2xl flex items-center gap-1.5 border border-slate-300/60 shadow-inner">
         <button
           onClick={() => setActiveSubTab('training')}
@@ -369,28 +600,65 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         </div>
       )}
 
-      {/* ===================== TAB 1: 历史训练记录（需求①可点击展开折叠） ===================== */}
+      {/* ===================== TAB 1: 历史训练记录 ===================== */}
       {activeSubTab === 'training' && (
         <div className="space-y-3">
+          {/* 统计条 */}
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: '累计训练', value: `${historyStats.trainings}次`, accent: 'text-blue-700' },
+              { label: '本周训练', value: `${historyStats.weekTrainings}次`, accent: 'text-blue-700' },
+              { label: '连续打卡', value: `${historyStats.streak}天`, accent: 'text-amber-600' },
+              { label: '总完成组', value: `${historyStats.totalSets}组`, accent: 'text-emerald-600' },
+            ].map(s => (
+              <div key={s.label} className="bg-white border border-slate-200/90 rounded-2xl p-2.5 text-center shadow-sm">
+                <span className="text-[10px] text-slate-400 block">{s.label}</span>
+                <span className={`text-sm font-black font-mono ${s.accent}`}>{s.value}</span>
+              </div>
+            ))}
+          </div>
+
+          {renderActivityCal()}
+
+          {/* 筛选 + 展开控制 */}
           <div className="flex items-center justify-between px-1">
-            <span className="text-xs font-bold text-slate-500">点击卡片展开/收起具体训练组数</span>
-            {sessions.length > 0 && (
+            <div className="flex items-center gap-1 bg-slate-200/70 p-0.5 rounded-xl border border-slate-300/60 text-[11px] font-bold">
+              {([
+                { key: 'all', label: '全部' },
+                { key: 'training', label: '训练' },
+                { key: 'rest', label: '休息' },
+              ] as const).map(f => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => setHistoryFilter(f.key)}
+                  className={`px-2.5 py-1 rounded-lg transition-all ${
+                    historyFilter === f.key ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            {visibleSessions.length > 0 && (
               <button
-                onClick={toggleAllSessions}
+                onClick={() => toggleAllSessions(visibleSessions.map(s => s.id))}
                 className="text-[11px] text-blue-600 hover:text-blue-700 font-bold flex items-center gap-1"
               >
                 <Layers className="w-3 h-3" />
-                {expandedSessionIds.size === sessions.length ? '全部收起' : '全部展开'}
+                {visibleSessions.every(s => expandedSessionIds.has(s.id)) ? '全部收起' : '全部展开'}
               </button>
             )}
           </div>
 
-          {sessions.length === 0 ? (
+          {visibleSessions.length === 0 ? (
             <div className="text-center py-12 bg-white border border-slate-200 rounded-2xl text-slate-400 text-xs">
-              暂无历史训练记录，去“今日训练”开启第一次打卡吧！
+              {sessions.length === 0
+                ? '暂无历史训练记录，去“今日训练”开启第一次打卡吧！'
+                : '当前筛选下没有记录，换个条件试试'}
             </div>
           ) : (
-            sessions.map((sess) => {
+            visibleSessions.map((sess) => {
               // 专属渲染：纯粹的完全休息日卡片
               if (sess.isRestDay) {
                 return (
@@ -426,6 +694,9 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
               const totalCompletedSets = sess.exercises.reduce(
                 (sum, e) => sum + e.sets.filter(s => s.completed).length, 0
               );
+              const vols = sessionVolumes(sess);
+              const volStr = formatVolumeShort(vols.kg, vols.plates);
+              const durMin = sessionDurationMin(sess);
 
               return (
                 <div
@@ -455,9 +726,13 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                         )}
                       </div>
 
-                      {/* 折叠态摘要：展示动作名称简略列表 */}
+                      {/* 折叠态摘要：容量 + 时长 + 动作列表 */}
                       <p className="text-[11px] text-slate-500 truncate">
-                        共 {sess.exercises.length} 个动作 · {totalCompletedSets} 组完成: {' '}
+                        共 {sess.exercises.length} 个动作 · {totalCompletedSets} 组完成
+                        {volStr && <> · <span className="font-bold text-slate-700">容量 {volStr}</span></>}
+                        {durMin !== null && <> · 用时 {durMin}分钟</>}
+                      </p>
+                      <p className="text-[11px] text-slate-400 truncate mt-0.5">
                         {sess.exercises.map(e => e.exerciseName).join('、')}
                       </p>
                     </div>
@@ -573,6 +848,18 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       {/* ===================== TAB 2: 体重与生活日志 ===================== */}
       {activeSubTab === 'weight' && (
         <div className="space-y-4">
+          {/* 趋势洞察横幅 */}
+          {trendInsight && (
+            <div className={`p-2.5 text-xs border rounded-xl flex items-center gap-2 ${
+              trendInsight.good
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : 'bg-amber-50 text-amber-800 border-amber-200'
+            }`}>
+              <Zap className="w-4 h-4 shrink-0" />
+              <span className="font-bold">趋势洞察：{trendInsight.text}</span>
+            </div>
+          )}
+
           {/* 打卡今日体重与饮食卡片 */}
           <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
             <div className="flex items-center justify-between mb-3">
@@ -590,6 +877,12 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 </button>
               )}
             </div>
+
+            {formError && (
+              <p className="mb-2.5 text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+                {formError}
+              </p>
+            )}
 
             <form onSubmit={handleAddLog} className="space-y-3">
               <div className="grid grid-cols-12 gap-2">
@@ -680,39 +973,104 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </form>
           </div>
 
-          {/* 体重看板最新概览 */}
+          {/* 体重看板：最新 / 变化 / 目标 */}
           {latestWeight && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-sm">
-                <span className="text-[11px] text-slate-500 font-medium">当前最新体重</span>
+            <div className="grid grid-cols-3 gap-2.5">
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
+                <span className="text-[11px] text-slate-500 font-medium">当前最新</span>
                 <div className="flex items-baseline gap-1 mt-1">
                   <span className="text-2xl font-black text-slate-900 font-mono">{latestWeight}</span>
                   <span className="text-xs text-slate-400">kg</span>
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-sm">
-                <span className="text-[11px] text-slate-500 font-medium">较上一次变化</span>
-                <div className="flex items-center gap-1.5 mt-1">
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
+                <span className="text-[11px] text-slate-500 font-medium">较上一次</span>
+                <div className="flex items-center gap-1.5 mt-1.5">
                   {weightDiff && parseFloat(weightDiff) > 0 ? (
                     <>
                       <TrendingUp className="w-4 h-4 text-amber-600" />
-                      <span className="text-base font-bold text-amber-600">+{weightDiff} kg</span>
+                      <span className="text-base font-bold text-amber-600">+{weightDiff}</span>
                     </>
                   ) : weightDiff && parseFloat(weightDiff) < 0 ? (
                     <>
                       <TrendingDown className="w-4 h-4 text-emerald-600" />
-                      <span className="text-base font-bold text-emerald-600">{weightDiff} kg</span>
+                      <span className="text-base font-bold text-emerald-600">{weightDiff}</span>
                     </>
                   ) : (
                     <span className="text-sm font-semibold text-slate-400">持平</span>
                   )}
                 </div>
               </div>
+
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
+                <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                  <Target className="w-3 h-3 text-blue-600" /> 目标体重
+                </span>
+                {weightGoal !== null ? (
+                  <div className="mt-1">
+                    <span className="text-2xl font-black text-blue-700 font-mono">{weightGoal}</span>
+                    <span className="text-xs text-slate-400">kg</span>
+                    {goalDiff !== null && (
+                      <div className={`text-[10px] font-bold mt-0.5 ${goalDiff > 0 ? 'text-amber-600' : goalDiff < 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                        {goalDiff > 0 ? `还差 ${goalDiff}kg` : goalDiff < 0 ? `已超目标 ${Math.abs(goalDiff)}kg 🎉` : '已达标 🎉'}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setGoalInput(''); setShowGoalEditor(true); }}
+                    className="mt-1.5 text-xs text-blue-600 font-bold underline"
+                  >
+                    设定目标
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
-          {/* ===================== 需求②&③: 真正的 SVG 平滑波动曲线图（支持周/月/全部视图） ===================== */}
+          {/* 目标编辑行 */}
+          {showGoalEditor && (
+            <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3 flex items-center gap-2 animate-card-in">
+              <input
+                type="number"
+                step="0.1"
+                value={goalInput}
+                onChange={(e) => setGoalInput(e.target.value)}
+                placeholder={weightGoal !== null ? `当前 ${weightGoal}` : '例如 65'}
+                className="flex-1 bg-white border border-blue-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
+              />
+              <span className="text-xs text-slate-500">kg</span>
+              <button
+                type="button"
+                onClick={handleSaveGoal}
+                className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold"
+              >
+                保存
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowGoalEditor(false)}
+                className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold"
+              >
+                取消
+              </button>
+            </div>
+          )}
+          {weightGoal !== null && !showGoalEditor && (
+            <div className="flex justify-end -mt-2">
+              <button
+                type="button"
+                onClick={() => { setGoalInput(String(weightGoal)); setShowGoalEditor(true); }}
+                className="text-[11px] text-slate-400 hover:text-blue-600 underline"
+              >
+                修改目标
+              </button>
+            </div>
+          )}
+
+          {/* 体重波动曲线图 */}
           <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm space-y-3">
             {/* 顶栏：标题与视图切换按钮 */}
             <div className="flex items-center justify-between gap-2">
@@ -720,7 +1078,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 <span className="text-xs font-black text-slate-900 flex items-center gap-1">
                   <TrendingDown className="w-3.5 h-3.5 text-emerald-600" /> 体重波动曲线
                 </span>
-                <span className="text-[10px] text-slate-400">平滑贝塞尔走势</span>
+                <span className="text-[10px] text-slate-400">平滑贝塞尔走势{weightGoal !== null ? ' · 蓝色虚线为目标' : ''}</span>
               </div>
 
               {/* 周期切换: 周视图 / 月视图 / 全部 */}
@@ -734,7 +1092,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
-                  周视图 (近7天)
+                  周
                 </button>
                 <button
                   type="button"
@@ -745,7 +1103,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
-                  月视图 (近30天)
+                  月
                 </button>
                 <button
                   type="button"
@@ -761,7 +1119,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
               </div>
             </div>
 
-            {/* 动态视图说明横幅（明确指示当前视图与数据条数） */}
+            {/* 动态视图说明横幅 */}
             <div className={`text-[11px] font-bold px-2.5 py-1 rounded-lg flex items-center justify-between border transition-all ${
               chartViewSpan === 'week'
                 ? 'bg-emerald-50/90 text-emerald-800 border-emerald-200/80'
@@ -772,13 +1130,13 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
               <div className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
                 <span>
-                  {chartViewSpan === 'week' && '周视图已激活：近7日逐日微幅走势'}
-                  {chartViewSpan === 'month' && '月视图已激活：过去30天全月跨度走势'}
-                  {chartViewSpan === 'all' && '全部历史已激活：全周期累计数据'}
+                  {chartViewSpan === 'week' && '周视图：近7日走势'}
+                  {chartViewSpan === 'month' && '月视图：过去30天走势'}
+                  {chartViewSpan === 'all' && '全部历史：全周期累计数据'}
                 </span>
               </div>
               <span className="font-mono text-[10px] opacity-80">
-                {filteredChartWeights.length} 条记录
+                {filteredChartWeights.length} 条
               </span>
             </div>
 
@@ -786,19 +1144,19 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             {chartStats && (
               <div className="grid grid-cols-4 gap-1.5 py-2 px-2.5 bg-slate-50 rounded-xl border border-slate-200/70 text-center">
                 <div>
-                  <span className="text-[10px] text-slate-400 block">区间最低</span>
+                  <span className="text-[10px] text-slate-400 block">最低</span>
                   <span className="text-xs font-bold text-emerald-600 font-mono">{chartStats.min}kg</span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 block">区间最高</span>
+                  <span className="text-[10px] text-slate-400 block">最高</span>
                   <span className="text-xs font-bold text-slate-700 font-mono">{chartStats.max}kg</span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 block">平均水平</span>
+                  <span className="text-[10px] text-slate-400 block">平均</span>
                   <span className="text-xs font-bold text-slate-700 font-mono">{chartStats.avg}kg</span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 block">区间净变</span>
+                  <span className="text-[10px] text-slate-400 block">净变</span>
                   <span className={`text-xs font-bold font-mono ${
                     chartStats.netChange > 0 ? 'text-amber-600' : chartStats.netChange < 0 ? 'text-emerald-600' : 'text-slate-500'
                   }`}>
@@ -827,6 +1185,23 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   <line x1="36" y1="75" x2="336" y2="75" stroke="#f1f5f9" strokeDasharray="3 3" strokeWidth="1" />
                   <line x1="36" y1="120" x2="336" y2="120" stroke="#f1f5f9" strokeDasharray="3 3" strokeWidth="1" />
 
+                  {/* 目标体重虚线 */}
+                  {svgData.goalY !== null && weightGoal !== null && (
+                    <g>
+                      <line
+                        x1="36" y1={svgData.goalY} x2="336" y2={svgData.goalY}
+                        stroke="#3b82f6" strokeDasharray="5 4" strokeWidth="1.5"
+                      />
+                      <text
+                        x="336" y={svgData.goalY - 5}
+                        textAnchor="end" fontSize="9" fontWeight="bold" fill="#3b82f6"
+                        className="font-mono"
+                      >
+                        目标 {weightGoal}
+                      </text>
+                    </g>
+                  )}
+
                   {/* 面积渐变填充 */}
                   <path d={svgData.areaPath} fill="url(#weightGradient)" />
 
@@ -843,11 +1218,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   {/* 节点高亮圆点与文字标注 */}
                   {svgData.points.map((p, idx) => (
                     <g key={idx}>
-                      {/* 外发光圈 */}
                       <circle cx={p.x} cy={p.y} r="5" fill="#10b981" fillOpacity="0.15" />
-                      {/* 核心圆点 */}
                       <circle cx={p.x} cy={p.y} r="3" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" />
-                      {/* 体重数值气泡 */}
                       <text
                         x={p.x}
                         y={p.y - 8}
@@ -859,7 +1231,6 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       >
                         {p.weight}
                       </text>
-                      {/* X 轴日期 */}
                       <text
                         x={p.x}
                         y={svgData.height - 8}
@@ -881,54 +1252,86 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             )}
           </div>
 
-          {/* 历史打卡日志列表（修复删除按钮） */}
+          {renderWeightCal()}
+
+          {/* 历史打卡日志列表 */}
           <div>
             <div className="flex items-center justify-between mb-2.5 px-1">
               <h3 className="text-sm font-bold text-slate-800">体重与日记记录</h3>
-              <span className="text-xs text-slate-400">共 {weights.length} 条</span>
+              <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 bg-slate-200/70 p-0.5 rounded-xl border border-slate-300/60 text-[10px] font-bold">
+                  {([
+                    { key: 'all', label: '全部' },
+                    { key: 'morning', label: '晨起' },
+                    { key: 'post-workout', label: '练后' },
+                    { key: 'evening', label: '晚间' },
+                  ] as const).map(f => (
+                    <button
+                      key={f.key}
+                      type="button"
+                      onClick={() => setSlotFilter(f.key)}
+                      className={`px-2 py-0.5 rounded-lg transition-all ${
+                        slotFilter === f.key ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-xs text-slate-400 ml-1">共 {visibleWeights.length} 条</span>
+              </div>
             </div>
 
             <div className="space-y-2">
-              {weights.map((log) => {
-                const slotMap: Record<string, string> = {
-                  'morning': '晨起空腹',
-                  'evening': '晚间',
-                  'post-workout': '练后'
-                };
-
-                return (
-                  <div
-                    key={log.id}
-                    className="bg-white border border-slate-200/90 rounded-xl p-3 shadow-sm flex items-start justify-between gap-3 hover:border-slate-300 transition-all"
-                  >
-                    <div className="space-y-1 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-base font-black text-slate-900 font-mono">{log.weight} kg</span>
-                        <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 font-medium">
-                          {slotMap[log.timeSlot || 'morning']}
-                        </span>
-                        <span className="text-xs text-slate-400 font-medium">{log.date}</span>
-                      </div>
-
-                      {log.note && (
-                        <div className="flex items-start gap-1.5 text-xs text-emerald-800 bg-emerald-50/80 px-2.5 py-1.5 rounded-lg border border-emerald-200">
-                          <MessageSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                          <span>{log.note}</span>
-                        </div>
-                      )}
+              {visibleWeights.map((log) => (
+                <div
+                  key={log.id}
+                  className="bg-white border border-slate-200/90 rounded-xl p-3 shadow-sm flex items-start justify-between gap-3 hover:border-slate-300 transition-all"
+                >
+                  <div className="space-y-1 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-black text-slate-900 font-mono">{log.weight} kg</span>
+                      <button
+                        type="button"
+                        onClick={() => setSlotFilter(log.timeSlot || 'morning')}
+                        className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 font-medium hover:bg-emerald-50 hover:text-emerald-700"
+                        title="按此时段过滤"
+                      >
+                        {SLOT_SHORT[log.timeSlot || 'morning']}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInputDate(log.date)}
+                        className="text-xs text-slate-400 font-medium hover:text-blue-600 hover:underline"
+                        title="跳到该日期打卡"
+                      >
+                        {log.date}
+                      </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => promptDeleteWeight(log.id, log.date, log.weight)}
-                      className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
-                      title="删除此条记录"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {log.note && (
+                      <div className="flex items-start gap-1.5 text-xs text-emerald-800 bg-emerald-50/80 px-2.5 py-1.5 rounded-lg border border-emerald-200">
+                        <MessageSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                        <span>{log.note}</span>
+                      </div>
+                    )}
                   </div>
-                );
-              })}
+
+                  <button
+                    type="button"
+                    onClick={() => promptDeleteWeight(log.id, log.date, log.weight)}
+                    className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                    title="删除此条记录"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              {visibleWeights.length === 0 && (
+                <div className="text-center py-8 bg-white border border-slate-200 rounded-xl text-slate-400 text-xs">
+                  当前筛选下没有记录
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -968,39 +1371,16 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         </div>
       </div>
 
-      {/* ===================== 应用内置通用确认弹窗 (解决安卓 WebView confirm 拦截) ===================== */}
-      {confirmModal.isOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-sm p-5 shadow-2xl space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center shrink-0 border border-red-100">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div className="flex-1">
-                <h3 className="font-bold text-slate-900 text-sm">{confirmModal.title}</h3>
-                <p className="text-xs text-slate-500 mt-1 leading-relaxed">{confirmModal.description}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl transition-all"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={confirmModal.onConfirm}
-                className="px-5 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl shadow-md shadow-red-500/20 active:scale-95 transition-all"
-              >
-                确认删除
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 统一确认抽屉 */}
+      <ConfirmSheet
+        open={confirmState.open}
+        title={confirmState.title}
+        description={confirmState.description}
+        confirmText={confirmState.confirmText}
+        danger
+        onCancel={() => setConfirmState(prev => ({ ...prev, open: false }))}
+        onConfirm={confirmState.onConfirm}
+      />
     </div>
   );
 };

@@ -1,25 +1,62 @@
 import { useState, useEffect, useMemo } from 'react';
-import { 
-  Play, Plus, Check, Trash2, 
-  Dumbbell, Flame, 
-  CheckCircle2, Sparkles, Award, Coffee
+import {
+  Play, Plus, Check, Trash2,
+  Dumbbell, Flame,
+  Sparkles, Award, Coffee,
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
 } from 'lucide-react';
-import { 
-  WorkoutPlan, WorkoutSession, ExerciseLog, WorkoutSet, 
-  ResistanceUnit, PulleyRatio, CATEGORY_LABELS, UNIT_LABELS, Exercise 
+import {
+  WorkoutPlan, WorkoutSession, ExerciseLog, WorkoutSet,
+  ResistanceUnit, PulleyRatio, CATEGORY_LABELS, UNIT_LABELS, Exercise
 } from '../types';
 import { StorageService } from '../utils/storage';
 import { buildSessionFromPlan } from '../utils/sessionBuilder';
 import { todayLocalDate, yesterdayLocalDate } from '../utils/date';
+import { ConfirmSheet } from './ConfirmSheet';
 
 interface WorkoutViewProps {
   onOpenPlansTab: () => void;
   allExercises: Exercise[];
+  onFocusModeChange?: (inFocus: boolean) => void;
 }
+
+// 分化罗盘定义：胸 → 背 → 肩 → 腿 → 休
+const CYCLE_ORDER = ['chest', 'back', 'shoulder', 'leg', 'rest'] as const;
+type CycleKey = (typeof CYCLE_ORDER)[number];
+const CYCLE_LABEL: Record<CycleKey, string> = {
+  chest: '胸',
+  back: '背',
+  shoulder: '肩',
+  leg: '腿',
+  rest: '休',
+};
+
+// 从计划名/会话名推断所属分化
+function classifySession(planName: string, isRestDay?: boolean): CycleKey {
+  if (isRestDay) return 'rest';
+  if (planName.includes('胸')) return 'chest';
+  if (planName.includes('背')) return 'back';
+  if (planName.includes('肩')) return 'shoulder';
+  if (planName.includes('腿')) return 'leg';
+  return 'chest';
+}
+
+const UNIT_SHORT: Record<ResistanceUnit, string> = {
+  plates: '插销',
+  kg: '重量',
+  assisted: '助力',
+  bodyweight: '自重',
+};
+const PULLEY_SHORT: Record<PulleyRatio, string> = {
+  none: '普通器械',
+  '1:1': '单滑轮',
+  '2:1': '双滑轮',
+};
 
 export const WorkoutView: React.FC<WorkoutViewProps> = ({
   onOpenPlansTab,
-  allExercises
+  allExercises,
+  onFocusModeChange,
 }) => {
   const [plans, setPlans] = useState<WorkoutPlan[]>([]);
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
@@ -29,6 +66,19 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [backfillDate, setBackfillDate] = useState(() => yesterdayLocalDate());
   const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
+  // 今日状态卡三段切换：开练 / 休息 / 补签
+  const [statusCardTab, setStatusCardTab] = useState<'train' | 'rest' | 'backfill'>('train');
+
+  // ---- 专注模式状态 ----
+  const [focusIdx, setFocusIdx] = useState(0);            // 当前聚焦第几个动作
+  const [specExIdx, setSpecExIdx] = useState<number | null>(null); // 规格抽屉作用于哪个动作
+  const [expandedDropSets, setExpandedDropSets] = useState<Set<string>>(new Set()); // 展开的大组 id
+  const [showCardio, setShowCardio] = useState(false);    // 有氧折叠
+  const [showNotes, setShowNotes] = useState(false);      // 备注折叠
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean; title: string; description: string; confirmText: string; danger: boolean;
+    onConfirm: () => void;
+  }>({ open: false, title: '', description: '', confirmText: '确定', danger: true, onConfirm: () => {} });
 
   useEffect(() => {
     setPlans(StorageService.getPlans());
@@ -39,6 +89,11 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     }
   }, []);
 
+  // 通知 App 是否进入专注模式（隐藏/显示底部导航）
+  useEffect(() => {
+    if (onFocusModeChange) onFocusModeChange(Boolean(activeSession));
+  }, [activeSession, onFocusModeChange]);
+
   // 同步活动状态到本地缓存
   const updateActiveSession = (updated: WorkoutSession | null) => {
     setActiveSession(updated);
@@ -48,6 +103,10 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   // 启动某个计划（统一走 sessionBuilder，与计划页一键开练共用同一构造逻辑，
   // 保证超级组阶梯预设在两条入口都不会丢失）
   const startPlan = (plan: WorkoutPlan) => {
+    setFocusIdx(0);
+    setExpandedDropSets(new Set());
+    setShowCardio(false);
+    setShowNotes(false);
     updateActiveSession(buildSessionFromPlan(plan, allExercises));
   };
 
@@ -63,6 +122,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       cardioCompleted: false,
       cardioType: '跑步机坡度快走',
     };
+    setFocusIdx(0);
     updateActiveSession(newSession);
   };
 
@@ -102,6 +162,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     };
     updateActiveSession(updated);
     setShowAddExModal(false);
+    // 聚焦到新加入的动作
+    setFocusIdx(updated.exercises.length - 1);
   };
 
   // 勾选/取消完成某一组
@@ -235,6 +297,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const exercises = [...activeSession.exercises];
     exercises.splice(exIndex, 1);
     updateActiveSession({ ...activeSession, exercises });
+    setFocusIdx(prev => Math.max(0, Math.min(prev, exercises.length - 1)));
   };
 
   // 完成结算
@@ -249,6 +312,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     setActiveSession(null);
     setSessions(StorageService.getSessions());
     setShowFinishModal(false);
+    setFocusIdx(0);
   };
 
   // 一键打卡今日完全休息
@@ -270,12 +334,36 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     setSessions(StorageService.getSessions());
   };
 
-  // 取消今日休息日打卡
+  // 取消今日休息日打卡（自建抽屉确认）
   const handleCancelRestDay = (sessionId: string) => {
-    if (window.confirm('确定取消今日休息日打卡，重新开启训练吗？')) {
-      StorageService.deleteSession(sessionId);
-      setSessions(StorageService.getSessions());
-    }
+    setConfirmState({
+      open: true,
+      title: '取消今日休息日',
+      description: '确定取消今日休息日打卡，重新开启训练吗？',
+      confirmText: '取消打卡',
+      danger: false,
+      onConfirm: () => {
+        StorageService.deleteSession(sessionId);
+        setSessions(StorageService.getSessions());
+        setConfirmState(prev => ({ ...prev, open: false }));
+      },
+    });
+  };
+
+  // 放弃本次训练（自建抽屉确认）
+  const handleAbandonSession = () => {
+    setConfirmState({
+      open: true,
+      title: '放弃本次训练',
+      description: '确定放弃并清空当前正在记录的训练吗？未归档的数据将丢失。',
+      confirmText: '放弃训练',
+      danger: true,
+      onConfirm: () => {
+        updateActiveSession(null);
+        setFocusIdx(0);
+        setConfirmState(prev => ({ ...prev, open: false }));
+      },
+    });
   };
 
   // 补签过去某一天的休息日（只能补今天之前的日期，且当天无任何记录）
@@ -309,6 +397,16 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     setBackfillMsg(`已补签 ${backfillDate} 的休息`);
   };
 
+  // 切换大组展开/折叠
+  const toggleDropSetExpanded = (setId: string) => {
+    setExpandedDropSets(prev => {
+      const next = new Set(prev);
+      if (next.has(setId)) next.delete(setId);
+      else next.add(setId);
+      return next;
+    });
+  };
+
   // 计算已完成总组数与总计划组数
   const totalCompletedSets = activeSession?.exercises.reduce(
     (acc, ex) => acc + ex.sets.filter(s => s.completed).length, 0
@@ -335,65 +433,430 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     return map;
   }, [sessions]);
 
+  // 分化罗盘：从历史记录推断上次分化与建议下次
+  const compass = useMemo(() => {
+    const nonFree = sessions.filter(s => !s.isRestDay && s.planName !== '自由训练');
+    const lastSession = sessions.find(s => s.isRestDay || !s.isRestDay);
+    if (!lastSession) return { lastKey: null as CycleKey | null, suggestKey: 'chest' as CycleKey, daysAgo: null as number | null };
+    const lastKey = s_isRestCheck(lastSession);
+    const lastIdx = CYCLE_ORDER.indexOf(lastKey);
+    const suggestKey = CYCLE_ORDER[(lastIdx + 1) % CYCLE_ORDER.length];
+    // 距今天数
+    const today = new Date(todayDateStr + 'T00:00:00');
+    const last = new Date(lastSession.date + 'T00:00:00');
+    const daysAgo = Math.max(0, Math.round((today.getTime() - last.getTime()) / 86400000));
+    void nonFree;
+    return { lastKey, suggestKey, daysAgo };
+    function s_isRestCheck(sess: WorkoutSession): CycleKey {
+      return classifySession(sess.planName, sess.isRestDay);
+    }
+  }, [sessions, todayDateStr]);
+
+  // 分化罗盘条
+  const renderCompass = () => (
+    <div className="flex items-center gap-1 mt-2 overflow-x-auto scrollbar-none text-[10px] font-bold">
+      {CYCLE_ORDER.map((key, i) => {
+        const isLast = compass.lastKey === key;
+        const isSuggest = compass.suggestKey === key;
+        return (
+          <span key={key} className="flex items-center gap-1 shrink-0">
+            {i > 0 && <span className="text-slate-300">➔</span>}
+            <span
+              className={`px-2 py-1 rounded-lg whitespace-nowrap ${
+                isSuggest
+                  ? 'bg-blue-600 text-white shadow'
+                  : isLast
+                    ? 'bg-slate-600 text-white'
+                    : key === 'rest'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-slate-100 text-slate-400'
+              }`}
+            >
+              {CYCLE_LABEL[key]}
+              {isLast && compass.daysAgo !== null && compass.daysAgo > 0 && `·${compass.daysAgo}天前`}
+              {isLast && compass.daysAgo === 0 && '·今天'}
+              {isSuggest && '·建议下次'}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+
+  // 上次参考一行摘要
+  const lastLogSummary = (lastLog: ExerciseLog | null): string | null => {
+    if (!lastLog) return null;
+    const done = lastLog.sets.filter(s => s.completed);
+    if (done.length === 0) return null;
+    return done
+      .map(s => `${s.weightOrPlates}${s.unit === 'plates' ? '片' : s.unit === 'assisted' ? '助力' : s.unit === 'bodyweight' ? '自重' : 'kg'}×${s.reps}`)
+      .join(' / ');
+  };
+
+  // 一键带入上次数据
+  const applyLastLog = (exIdx: number, lastLog: ExerciseLog) => {
+    if (!activeSession) return;
+    const exercises = [...activeSession.exercises];
+    exercises[exIdx].sets.forEach((s, idx) => {
+      const lastSet = lastLog.sets[idx];
+      if (lastSet) {
+        s.weightOrPlates = lastSet.weightOrPlates;
+        s.reps = lastSet.reps;
+        s.unit = lastSet.unit;
+      }
+    });
+    updateActiveSession({ ...activeSession, exercises });
+  };
+
+  // 聚焦动作索引钳制
+  const safeFocusIdx = activeSession && activeSession.exercises.length > 0
+    ? Math.max(0, Math.min(focusIdx, activeSession.exercises.length - 1))
+    : 0;
+  const focusEx = activeSession?.exercises[safeFocusIdx];
+  const focusCat = focusEx ? (CATEGORY_LABELS[focusEx.category] || CATEGORY_LABELS.chest) : null;
+  const focusLastLog = focusEx ? (lastLogMap.get(focusEx.exerciseId) || null) : null;
+  const progressPct = totalAllSets > 0 ? Math.round((totalCompletedSets / totalAllSets) * 100) : 0;
+
+  // 普通组行（整行可点，44px 大触控）
+  const renderSetRow = (exIdx: number, set: WorkoutSet, setIdx: number) => {
+    const isPlates = set.unit === 'plates';
+    return (
+      <div
+        key={set.id}
+        onClick={() => toggleSetComplete(exIdx, setIdx)}
+        className={`grid grid-cols-12 gap-2 items-center rounded-2xl p-2.5 cursor-pointer border-2 transition-all active:scale-[0.99] ${
+          set.completed ? 'bg-emerald-50/70 border-emerald-300' : 'bg-slate-50 border-slate-200'
+        }`}
+      >
+        <div className="col-span-2 flex items-center justify-center">
+          <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-black ${
+            set.completed ? 'bg-emerald-600 text-white animate-check-pop' : 'bg-slate-200 text-slate-700'
+          }`}>
+            {set.setNumber}
+          </span>
+        </div>
+        <div
+          className="col-span-6 flex items-center justify-center gap-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? -1 : -2.5)}
+            className="w-11 h-11 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200 text-slate-700 rounded-xl flex items-center justify-center font-black text-lg shadow-xs"
+          >
+            −
+          </button>
+          <div className="text-center min-w-[3.5rem]">
+            <input
+              type="number"
+              value={set.weightOrPlates || ''}
+              onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
+              className="w-16 text-center bg-transparent font-black text-xl text-slate-900 focus:outline-none"
+            />
+            <div className="text-[10px] text-slate-400 font-semibold -mt-0.5">
+              {isPlates ? '片' : set.unit === 'assisted' ? '助力kg' : set.unit === 'bodyweight' ? '自重' : 'kg'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? 1 : 2.5)}
+            className="w-11 h-11 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200 text-slate-700 rounded-xl flex items-center justify-center font-black text-lg shadow-xs"
+          >
+            ＋
+          </button>
+        </div>
+        <div
+          className="col-span-2 flex items-center justify-center gap-0.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="number"
+            value={set.reps || ''}
+            onChange={(e) => setDirectVal(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
+            className="w-12 text-center bg-white border border-slate-200 rounded-xl py-2 font-black text-lg text-slate-900 focus:outline-none focus:border-blue-500"
+          />
+        </div>
+        <div className="col-span-2 flex items-center justify-center">
+          <span className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all ${
+            set.completed
+              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 animate-check-pop'
+              : 'bg-white text-slate-300 border-2 border-slate-200'
+          }`}>
+            <Check className="w-5 h-5 stroke-[3]" />
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  // 超级组大组（默认折叠一行摘要）
+  const renderDropBigSet = (exIdx: number, bigSet: WorkoutSet, setIdx: number) => {
+    const stages = bigSet.dropStages || [];
+    const expanded = expandedDropSets.has(bigSet.id);
+    const summary = stages.map(st => `${st.weightOrPlates}×${st.reps}`).join(' ➔ ');
+    return (
+      <div
+        key={bigSet.id}
+        className={`rounded-2xl border-2 transition-all ${
+          bigSet.completed ? 'bg-emerald-50/70 border-emerald-300' : 'bg-slate-50 border-slate-200'
+        }`}
+      >
+        {/* 折叠态：一行摘要，可点展开 */}
+        <div
+          onClick={() => toggleDropSetExpanded(bigSet.id)}
+          className="p-3 flex items-center justify-between gap-2 cursor-pointer select-none"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={`text-xs font-black px-2 py-1 rounded-lg border shrink-0 ${
+              bigSet.completed ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white border-slate-200'
+            }`}>
+              第 {bigSet.setNumber} 大组
+            </span>
+            <span className="text-[11px] text-slate-500 truncate font-mono">{summary || '暂无阶梯'}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); toggleSetComplete(exIdx, setIdx); }}
+              className={`w-11 h-11 rounded-2xl flex items-center justify-center active:scale-95 transition-all ${
+                bigSet.completed
+                  ? 'bg-emerald-600 text-white shadow-md animate-check-pop'
+                  : 'bg-white text-slate-300 border-2 border-slate-200'
+              }`}
+            >
+              <Check className="w-5 h-5 stroke-[3]" />
+            </button>
+            {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </div>
+        </div>
+
+        {/* 展开态：阶梯调整 */}
+        {expanded && (
+          <div className="px-3 pb-3 pt-1 border-t border-slate-200/70 space-y-1.5 animate-card-in">
+            <div className="pt-2 space-y-1.5">
+              {stages.map((stage, stageIdx) => (
+                <div
+                  key={stage.id}
+                  className="bg-white p-2 rounded-xl border border-slate-200/90 flex items-center justify-between text-xs gap-2"
+                >
+                  <span className="text-slate-400 font-mono text-[11px] font-bold shrink-0">#{stageIdx + 1}</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'weightOrPlates', -2.5)}
+                      className="w-9 h-9 bg-slate-100 hover:bg-slate-200 rounded-xl font-black active:scale-95 text-slate-700"
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={stage.weightOrPlates || ''}
+                      onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
+                      className="w-14 text-center bg-slate-50 border border-slate-200 rounded-lg py-1.5 font-black text-slate-900"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'weightOrPlates', 2.5)}
+                      className="w-9 h-9 bg-slate-100 hover:bg-slate-200 rounded-xl font-black active:scale-95 text-slate-700"
+                    >
+                      ＋
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'reps', -1)}
+                      className="w-9 h-9 bg-slate-100 hover:bg-slate-200 rounded-xl font-black active:scale-95 text-slate-700"
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      value={stage.reps || ''}
+                      onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'reps', parseInt(e.target.value) || 0)}
+                      className="w-12 text-center bg-slate-50 border border-slate-200 rounded-lg py-1.5 font-black text-slate-900"
+                    />
+                    <span className="text-[10px] text-slate-400 font-semibold">次</span>
+                    <button
+                      type="button"
+                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'reps', 1)}
+                      className="w-9 h-9 bg-slate-100 hover:bg-slate-200 rounded-xl font-black active:scale-95 text-slate-700"
+                    >
+                      ＋
+                    </button>
+                  </div>
+                  {stages.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeDropStageFromSet(exIdx, setIdx, stageIdx)}
+                      className="text-slate-300 hover:text-red-500 p-1.5 shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => addDropStageToSet(exIdx, setIdx)}
+              className="text-[11px] text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 hover:underline"
+            >
+              <Plus className="w-3 h-3" /> 加一个递减重量
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // 聚焦动作卡片
+  const renderFocusCard = () => {
+    if (!activeSession || !focusEx || !focusCat) {
+      return (
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-8 text-center shadow-sm">
+          <p className="text-sm text-slate-500">还没有动作，从动作库添加第一个动作开始</p>
+          <button
+            onClick={() => setShowAddExModal(true)}
+            className="mt-3 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold"
+          >
+            <Plus className="w-4 h-4 inline mr-1" /> 添加动作
+          </button>
+        </div>
+      );
+    }
+    const exIdx = safeFocusIdx;
+    const isDrop = focusEx.sets.some(s => s.isDropSet);
+    const summary = lastLogSummary(focusLastLog);
+    return (
+      <div key={focusEx.exerciseId + '-' + exIdx} className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-sm animate-card-in">
+        {/* 头部：动作名 + 类别 + 规格胶囊 */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-extrabold text-slate-900 tracking-tight">{focusEx.exerciseName}</h3>
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${focusCat.bg} ${focusCat.color}`}>
+                {focusCat.label}
+              </span>
+              {isDrop && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">🔥超级组</span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setSpecExIdx(exIdx)}
+              className="mt-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 flex items-center gap-1"
+            >
+              {UNIT_SHORT[focusEx.currentUnit]} · {PULLEY_SHORT[focusEx.pulleyRatio]} <ChevronDown className="w-3 h-3" />
+            </button>
+          </div>
+          <button
+            onClick={() => removeExercise(exIdx)}
+            className="p-2 text-slate-400 hover:text-red-600 rounded-lg hover:bg-slate-100 shrink-0"
+            title="移除动作"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* 上次参考一行 */}
+        {summary && focusLastLog && (
+          <div className="mt-2.5 px-2.5 py-1.5 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between text-xs text-blue-700 gap-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Sparkles className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span className="truncate">上次：{summary}</span>
+            </div>
+            <button
+              onClick={() => applyLastLog(exIdx, focusLastLog)}
+              className="text-[11px] underline font-bold shrink-0"
+            >
+              一键带入
+            </button>
+          </div>
+        )}
+
+        {/* 组列表 */}
+        <div className="mt-2.5 space-y-2">
+          {isDrop
+            ? focusEx.sets.map((bigSet, setIdx) => renderDropBigSet(exIdx, bigSet, setIdx))
+            : (
+              <>
+                <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-slate-400 px-1">
+                  <div className="col-span-2 text-center">组</div>
+                  <div className="col-span-6 text-center">{UNIT_LABELS[focusEx.currentUnit] || '负荷'}</div>
+                  <div className="col-span-2 text-center">次</div>
+                  <div className="col-span-2 text-center">✓</div>
+                </div>
+                {focusEx.sets.map((set, setIdx) => renderSetRow(exIdx, set, setIdx))}
+              </>
+            )}
+        </div>
+
+        {/* 加组 / 删组 */}
+        <div className="mt-3 flex items-center justify-between">
+          <button
+            onClick={() => addSetToExercise(exIdx)}
+            className="py-2 px-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1 border border-slate-200 active:scale-95"
+          >
+            <Plus className="w-3.5 h-3.5" /> {isDrop ? '加一大组' : '加一组'}
+          </button>
+          {focusEx.sets.length > 1 && (
+            <button
+              onClick={() => removeSet(exIdx, focusEx.sets.length - 1)}
+              className="text-xs text-slate-400 hover:text-red-600 px-2 py-2"
+            >
+              {isDrop ? '删除末尾大组' : '删除末尾组'}
+            </button>
+          )}
+        </div>
+
+        {/* 动作切换 */}
+        <div className="mt-2 pt-2.5 border-t border-slate-100 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => setFocusIdx(i => Math.max(0, i - 1))}
+            disabled={exIdx === 0}
+            className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-blue-600 disabled:text-slate-300"
+          >
+            <ChevronLeft className="w-4 h-4" /> 上一个
+          </button>
+          <span className="text-[11px] text-slate-400 font-bold">‹ {exIdx + 1}/{activeSession.exercises.length} ›</span>
+          <button
+            type="button"
+            onClick={() => setFocusIdx(i => Math.min(activeSession.exercises.length - 1, i + 1))}
+            disabled={exIdx === activeSession.exercises.length - 1}
+            className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-blue-600 disabled:text-slate-300"
+          >
+            下一个 <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="pb-24 pt-2">
-      {/* 头部状态条 */}
       {!activeSession ? (
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span className="text-xs uppercase tracking-widest text-slate-400 font-semibold">FitCustom Pro</span>
-            </div>
-            <span className="text-xs text-slate-500 font-medium">
-              {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' })}
-            </span>
-          </div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">今日训练</h1>
-          <p className="text-xs text-slate-500 mt-0.5">记录每组重量与片数，自动累积力量进展</p>
-        </div>
-      ) : (
-        /* 进行中训练常驻顶部看板（无倒计时，清爽记录） */
-        <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md pb-3 pt-1 border-b border-slate-200/90 mb-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-black text-slate-900 tracking-tight">{activeSession.planName}</h2>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <div className="bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
-                <span className="font-mono text-xs font-bold text-blue-700">
-                  {totalCompletedSets} / {totalAllSets} 组
-                </span>
+        <>
+          {/* 头部 */}
+          <div className="mb-5">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-xs uppercase tracking-widest text-slate-400 font-semibold">FitCustom Pro</span>
               </div>
-
-              <button
-                onClick={() => setShowFinishModal(true)}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-md shadow-emerald-600/20 flex items-center gap-1 transition-all active:scale-95"
-              >
-                <CheckCircle2 className="w-4 h-4" /> 完成训练
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4 mt-2.5 text-xs text-slate-500">
-            <span>动作数: <strong className="text-slate-800">{activeSession.exercises.length}</strong></span>
-            <span>已完成: <strong className="text-emerald-600 font-bold">{totalCompletedSets}</strong> 组</span>
-            {activeSession.cardioMinutes > 0 && (
-              <span className="text-pink-600 font-medium flex items-center gap-1">
-                <Flame className="w-3 h-3" /> 有氧目标 {activeSession.cardioMinutes} 分钟
+              <span className="text-xs text-slate-500 font-medium">
+                {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' })}
               </span>
-            )}
+            </div>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">今日训练</h1>
+            {renderCompass()}
           </div>
-        </div>
-      )}
 
-      {/* 尚未开始训练时的选择卡片 */}
-      {!activeSession && (
-        <div className="space-y-4">
-          {/* 今日休息日状态横幅（若已打卡休息） */}
+          {/* 今日休息日状态横幅 */}
           {todayRestSession && (
-            <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-3.5 shadow-xs flex items-center justify-between">
+            <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-3.5 shadow-xs flex items-center justify-between mb-4">
               <div className="flex items-center gap-2.5">
                 <div className="w-7 h-7 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center font-bold">
                   <Coffee className="w-4 h-4" />
@@ -410,561 +873,323 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             </div>
           )}
 
-          {/* 快捷推荐计划循环 */}
+          {/* 今日状态卡：开练 / 休息 / 补签三段切换 */}
           <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Dumbbell className="w-4 h-4 text-blue-600" />
-                <h3 className="text-sm font-bold text-slate-900">选择分化计划开练</h3>
-              </div>
-              <button
-                onClick={onOpenPlansTab}
-                className="text-xs text-blue-600 hover:text-blue-700 font-semibold"
-              >
-                管理全部计划 →
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {plans.map((p) => {
-                const isLeg = p.name.includes('腿');
-                return (
-                  <div
-                    key={p.id}
-                    onClick={() => startPlan(p)}
-                    className="group bg-slate-50 hover:bg-blue-50/40 border border-slate-200/90 hover:border-blue-400/60 rounded-xl p-3.5 transition-all cursor-pointer active:scale-[0.98] relative overflow-hidden"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <h4 className="font-extrabold text-slate-900 text-base group-hover:text-blue-600 transition-colors">
-                            {p.name}
-                          </h4>
-                          {isLeg ? (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">下肢专注</span>
-                          ) : (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-50 text-pink-700 border border-pink-200 font-medium">+20m有氧</span>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-500 mt-1 line-clamp-1">{p.description}</p>
-                      </div>
-                      <div className="p-2 rounded-lg bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all">
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                      </div>
-                    </div>
-
-                    <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-400">
-                      <span>包含 {p.exercises.length} 个动作</span>
-                      <span className="text-blue-600 font-semibold">点击一键载入 →</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <button
-              onClick={startFreeWorkout}
-              className="w-full mt-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 flex items-center justify-center gap-1.5 transition-all"
-            >
-              <Plus className="w-3.5 h-3.5 text-blue-600" /> 自由训练（不选预设计划）
-            </button>
-
-            {/* 今日完全休息一键打卡（若今日尚未打卡休息） */}
-            {!todayRestSession && (
-              <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-700">今天不练？</span>
+            <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl text-xs font-bold mb-3">
+              {([
+                { key: 'train', label: '🏋️ 开练' },
+                { key: 'rest', label: '☕ 今日休息' },
+                { key: 'backfill', label: '📝 补签' },
+              ] as const).map(t => (
                 <button
+                  key={t.key}
                   type="button"
-                  onClick={handleLogRestDay}
-                  className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/90 rounded-xl text-xs font-black flex items-center gap-1.5 active:scale-95 transition-all shadow-2xs"
+                  onClick={() => setStatusCardTab(t.key)}
+                  className={`py-2 rounded-lg transition-all ${
+                    statusCardTab === t.key
+                      ? 'bg-white shadow-sm text-blue-700 font-black'
+                      : 'text-slate-500'
+                  }`}
                 >
-                  <Coffee className="w-3.5 h-3.5 text-amber-700" /> 今日完全休息
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {statusCardTab === 'train' && (
+              <div className="animate-card-in">
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="flex items-center gap-2">
+                    <Dumbbell className="w-4 h-4 text-blue-600" />
+                    <h3 className="text-sm font-bold text-slate-900">选择分化计划开练</h3>
+                  </div>
+                  <button
+                    onClick={onOpenPlansTab}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-semibold"
+                  >
+                    管理全部计划 →
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {plans.map((p) => {
+                    const isLeg = p.name.includes('腿');
+                    return (
+                      <div
+                        key={p.id}
+                        onClick={() => startPlan(p)}
+                        className="group bg-slate-50 hover:bg-blue-50/40 border border-slate-200/90 hover:border-blue-400/60 rounded-xl p-3.5 transition-all cursor-pointer active:scale-[0.98]"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <h4 className="font-extrabold text-slate-900 text-base group-hover:text-blue-600 transition-colors">
+                                {p.name}
+                              </h4>
+                              {isLeg ? (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">下肢专注</span>
+                              ) : (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-50 text-pink-700 border border-pink-200 font-medium">+20m有氧</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1 line-clamp-1">{p.description}</p>
+                          </div>
+                          <div className="p-2 rounded-lg bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all">
+                            <Play className="w-3.5 h-3.5 fill-current" />
+                          </div>
+                        </div>
+                        <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-400">
+                          <span>包含 {p.exercises.length} 个动作</span>
+                          <span className="text-blue-600 font-semibold">点击一键载入 →</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={startFreeWorkout}
+                  className="w-full mt-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 flex items-center justify-center gap-1.5 transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5 text-blue-600" /> 自由训练（不选预设计划）
                 </button>
               </div>
             )}
-            {/* 休息日补签：忘记打卡时补过去某一天 */}
-            <div className="mt-3 pt-3 border-t border-slate-100">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-bold text-slate-700 shrink-0">之前漏打卡了？</span>
-                <input
-                  type="date"
-                  value={backfillDate}
-                  max={yesterdayLocalDate()}
-                  onChange={(e) => { setBackfillDate(e.target.value); setBackfillMsg(null); }}
-                  className="bg-slate-100 text-slate-700 text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 font-medium"
-                />
-                <button
-                  type="button"
-                  onClick={handleBackfillRestDay}
-                  className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/90 rounded-xl text-xs font-black flex items-center gap-1.5 active:scale-95 transition-all shadow-2xs shrink-0"
-                >
-                  <Coffee className="w-3.5 h-3.5 text-amber-700" /> 补签休息
-                </button>
-              </div>
-              {backfillMsg && (
-                <p className="mt-2 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200/80 rounded-lg px-2.5 py-1.5">
-                  {backfillMsg}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* 处于活动训练中：动作卡片列表 */}
-      {activeSession && (
-        <div className="space-y-4">
-          {activeSession.exercises.map((exLog, exIdx) => {
-            const catInfo = CATEGORY_LABELS[exLog.category] || CATEGORY_LABELS.chest;
-            const lastLog = lastLogMap.get(exLog.exerciseId) || null;
-
-            return (
-              <div
-                key={`${exLog.exerciseId}-${exIdx}`}
-                className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-sm relative overflow-hidden"
-              >
-                {/* 动作头部信息 */}
-                <div className="flex items-start justify-between gap-2 mb-3">
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-base font-extrabold text-slate-900 tracking-tight">{exLog.exerciseName}</h3>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${catInfo.bg} ${catInfo.color}`}>
-                        {catInfo.label}
-                      </span>
-                    </div>
-
-                    {/* 单位与滑轮切换控制栏 */}
-                    <div className="flex items-center gap-2 mt-2 flex-wrap">
-                      {/* 单位切换 */}
-                      <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 text-[11px]">
-                        {(['plates', 'kg', 'assisted', 'bodyweight'] as ResistanceUnit[]).map((u) => (
-                          <button
-                            key={u}
-                            onClick={() => changeExerciseUnit(exIdx, u)}
-                            className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
-                              exLog.currentUnit === u
-                                ? 'bg-blue-600 text-white font-bold shadow-xs'
-                                : 'text-slate-600 hover:text-slate-900'
-                            }`}
-                          >
-                            {u === 'plates' ? '插销(片)' : u === 'kg' ? '重量(kg)' : u === 'assisted' ? '助力' : '自重'}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* 滑轮比例 */}
-                      <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 text-[11px]">
-                        {(['none', '1:1', '2:1'] as PulleyRatio[]).map((p) => (
-                          <button
-                            key={p}
-                            onClick={() => changePulleyRatio(exIdx, p)}
-                            className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
-                              exLog.pulleyRatio === p
-                                ? 'bg-indigo-600 text-white font-bold'
-                                : 'text-slate-600 hover:text-slate-900'
-                            }`}
-                          >
-                            {p === 'none' ? '普通器械' : p === '1:1' ? '单滑轮 1:1' : '双滑轮 2:1'}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => removeExercise(exIdx)}
-                    className="p-1.5 text-slate-400 hover:text-red-600 transition-colors rounded-lg hover:bg-slate-100"
-                    title="移除动作"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {/* 上次历史表现浮标（若存在） */}
-                {lastLog && (
-                  <div className="mb-3 px-2.5 py-1.5 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between text-xs text-blue-700">
-                    <div className="flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                      <span>
-                        上次参考: {lastLog.sets.filter((s: WorkoutSet) => s.completed).map((s: WorkoutSet) => `${s.weightOrPlates}${s.unit === 'plates' ? '片' : s.unit === 'assisted' ? '助力' : s.unit === 'bodyweight' ? '自重' : 'kg'}×${s.reps}`).join(' / ') || '无记录'}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => {
-                        // 一键克隆上次数据到当前各组
-                        const exercises = [...activeSession.exercises];
-                        exercises[exIdx].sets.forEach((s, idx) => {
-                          const lastSet = lastLog.sets[idx];
-                          if (lastSet) {
-                            s.weightOrPlates = lastSet.weightOrPlates;
-                            s.reps = lastSet.reps;
-                            s.unit = lastSet.unit;
-                          }
-                        });
-                        updateActiveSession({ ...activeSession, exercises });
-                      }}
-                      className="text-[11px] underline font-bold text-blue-700 hover:text-blue-900"
-                    >
-                      一键带入
-                    </button>
-                  </div>
-                )}
-
-                {/* 组数列表：超级组大组递减阶梯模式 vs 普通动作模式 */}
-                {exLog.sets.some(s => s.isDropSet) ? (
-                  <div className="space-y-3">
-                    {exLog.sets.map((bigSet, setIdx) => {
-                      const stages = bigSet.dropStages || [];
-                      return (
-                        <div
-                          key={bigSet.id}
-                          className={`rounded-2xl p-3 border transition-all ${
-                            bigSet.completed
-                              ? 'bg-emerald-50/70 border-emerald-300'
-                              : 'bg-slate-50/80 border-slate-200'
-                          }`}
-                        >
-                          {/* 大组头部 */}
-                          <div className="flex items-center justify-between pb-2 border-b border-slate-200/70">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-black text-slate-900 bg-white px-2 py-0.5 rounded-lg border border-slate-200 shadow-2xs">
-                                第 {bigSet.setNumber} 大组
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-bold">
-                                {stages.length}个连续递减重量
-                              </span>
-                            </div>
-
-                            {/* 大组完成打勾 */}
-                            <button
-                              type="button"
-                              onClick={() => toggleSetComplete(exIdx, setIdx)}
-                              className={`px-3 py-1 rounded-xl text-xs font-black flex items-center gap-1 transition-all active:scale-95 ${
-                                bigSet.completed
-                                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-2 ring-emerald-500/20'
-                                  : 'bg-white text-slate-400 hover:text-slate-700 border border-slate-200/90 shadow-2xs'
-                              }`}
-                            >
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
-                              {bigSet.completed ? '已完成大组' : '完成该大组'}
-                            </button>
-                          </div>
-
-                          {/* 阶梯小组列表 (各重量与次数独立调整) */}
-                          <div className="mt-2.5 space-y-1.5">
-                            {stages.map((stage, stageIdx) => {
-                              return (
-                                <div
-                                  key={stage.id}
-                                  className="bg-white p-2 rounded-xl border border-slate-200/90 flex items-center justify-between text-xs gap-2 shadow-2xs"
-                                >
-                                  <div className="flex items-center gap-1 shrink-0 text-slate-400 font-mono text-[11px] font-bold">
-                                    <span>#{stageIdx + 1}</span>
-                                    {stageIdx > 0 && <span className="text-slate-300">➔</span>}
-                                  </div>
-
-                                  {/* 阶梯重量步进 */}
-                                  <div className="flex items-center gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'weightOrPlates', -2.5)}
-                                      className="w-6 h-6 bg-slate-100 hover:bg-slate-200 rounded text-xs font-black active:scale-95 text-slate-700"
-                                    >
-                                      -
-                                    </button>
-                                    <div className="flex items-center gap-0.5">
-                                      <input
-                                        type="number"
-                                        step="0.5"
-                                        value={stage.weightOrPlates || ''}
-                                        onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
-                                        className="w-12 text-center bg-slate-50 border border-slate-200 rounded py-0.5 text-xs font-black text-slate-900"
-                                      />
-                                      <span className="text-[10px] text-slate-400 font-semibold">{stage.unit || 'kg'}</span>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'weightOrPlates', 2.5)}
-                                      className="w-6 h-6 bg-slate-100 hover:bg-slate-200 rounded text-xs font-black active:scale-95 text-slate-700"
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-
-                                  {/* 阶梯次数步进 */}
-                                  <div className="flex items-center gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'reps', -1)}
-                                      className="w-6 h-6 bg-slate-100 hover:bg-slate-200 rounded text-xs font-black active:scale-95 text-slate-700"
-                                    >
-                                      -
-                                    </button>
-                                    <div className="flex items-center gap-0.5">
-                                      <input
-                                        type="number"
-                                        value={stage.reps || ''}
-                                        onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'reps', parseInt(e.target.value) || 0)}
-                                        className="w-10 text-center bg-slate-50 border border-slate-200 rounded py-0.5 text-xs font-black text-slate-900"
-                                      />
-                                      <span className="text-[10px] text-slate-400 font-semibold">次</span>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'reps', 1)}
-                                      className="w-6 h-6 bg-slate-100 hover:bg-slate-200 rounded text-xs font-black active:scale-95 text-slate-700"
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-
-                                  {/* 删除该阶梯 (如果超过1个) */}
-                                  {stages.length > 1 && (
-                                    <button
-                                      type="button"
-                                      onClick={() => removeDropStageFromSet(exIdx, setIdx, stageIdx)}
-                                      className="text-slate-300 hover:text-red-500 p-1"
-                                      title="删除该递减段"
-                                    >
-                                      <Trash2 className="w-3 h-3" />
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {/* 阶梯操作栏 */}
-                          <div className="mt-2 pt-1.5 flex items-center justify-between">
-                            <button
-                              type="button"
-                              onClick={() => addDropStageToSet(exIdx, setIdx)}
-                              className="text-[11px] text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 hover:underline"
-                            >
-                              <Plus className="w-3 h-3" /> 加一个递减重量
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+            {statusCardTab === 'rest' && (
+              <div className="animate-card-in text-center py-4">
+                {todayRestSession ? (
+                  <p className="text-sm text-amber-800 font-bold">今日已安排完全休息，好好恢复 💤</p>
                 ) : (
-                  /* 普通动作：单行组数列表 */
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-slate-400 px-1">
-                      <div className="col-span-2 text-center">组数</div>
-                      <div className="col-span-5 text-center">
-                        {UNIT_LABELS[exLog.currentUnit] || '负荷'}
-                      </div>
-                      <div className="col-span-3 text-center">次数</div>
-                      <div className="col-span-2 text-center">打钩</div>
-                    </div>
+                  <>
+                    <p className="text-xs text-slate-500 mb-3">今天不练？一键打卡完全休息，串联训练周期</p>
+                    <button
+                      type="button"
+                      onClick={handleLogRestDay}
+                      className="px-6 py-3 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/90 rounded-2xl text-sm font-black inline-flex items-center gap-2 active:scale-95 transition-all"
+                    >
+                      <Coffee className="w-4 h-4 text-amber-700" /> 今日完全休息
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
 
-                    {exLog.sets.map((set, setIdx) => {
-                      const isPlates = set.unit === 'plates';
-                      return (
-                        <div
-                          key={set.id}
-                          className={`grid grid-cols-12 gap-2 items-center p-2 rounded-xl border transition-all ${
-                            set.completed
-                              ? 'bg-emerald-50/70 border-emerald-300'
-                              : 'bg-slate-50 border-slate-200/90'
-                          }`}
-                        >
-                          {/* 组号 */}
-                          <div className="col-span-2 flex items-center justify-center">
-                            <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold ${
-                              set.completed ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
-                            }`}>
-                              {set.setNumber}
-                            </span>
-                          </div>
+            {statusCardTab === 'backfill' && (
+              <div className="animate-card-in">
+                <p className="text-xs text-slate-500 mb-2.5">之前漏打卡了？选择过去某天补上休息记录</p>
+                <div className="flex items-center justify-between gap-2">
+                  <input
+                    type="date"
+                    value={backfillDate}
+                    max={yesterdayLocalDate()}
+                    onChange={(e) => { setBackfillDate(e.target.value); setBackfillMsg(null); }}
+                    className="bg-slate-100 text-slate-700 text-xs px-2.5 py-2 rounded-lg border border-slate-200 font-medium flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleBackfillRestDay}
+                    className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/90 rounded-xl text-xs font-black flex items-center gap-1.5 active:scale-95 transition-all shrink-0"
+                  >
+                    <Coffee className="w-3.5 h-3.5 text-amber-700" /> 补签休息
+                  </button>
+                </div>
+                {backfillMsg && (
+                  <p className="mt-2 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200/80 rounded-lg px-2.5 py-1.5">
+                    {backfillMsg}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          {/* 专注模式顶部：细进度条 + 罗盘 */}
+          <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md px-1 pt-1 pb-2 border-b border-slate-200/90 mb-3">
+            <div className="flex items-center justify-between text-xs font-bold">
+              <span className="truncate">{activeSession.planName} · 专注模式</span>
+              <span className="text-blue-700 font-mono shrink-0 ml-2">{totalCompletedSets} / {totalAllSets} 组</span>
+            </div>
+            <div className="h-1.5 bg-slate-100 rounded-full mt-1.5 overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 rounded-full progress-fill" style={{ width: `${progressPct}%` }}></div>
+            </div>
+            {renderCompass()}
+          </div>
 
-                          {/* 重量/片数调整器 */}
-                          <div className="col-span-5 flex items-center justify-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? -1 : -2.5)}
-                              className="w-7 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
-                            >
-                              -
-                            </button>
-                            <input
-                              type="number"
-                              value={set.weightOrPlates || ''}
-                              onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
-                              className="w-14 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-black text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? 1 : 2.5)}
-                              className="w-7 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
-                            >
-                              +
-                            </button>
-                          </div>
+          <div className="space-y-3 pb-24">
+            {renderFocusCard()}
 
-                          {/* 次数调整器 */}
-                          <div className="col-span-3 flex items-center justify-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => updateSetField(exIdx, setIdx, 'reps', -1)}
-                              className="w-6 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
-                            >
-                              -
-                            </button>
-                            <input
-                              type="number"
-                              value={set.reps || ''}
-                              onChange={(e) => setDirectVal(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
-                              className="w-10 text-center bg-white border border-slate-200 rounded-lg py-1 text-sm font-black text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => updateSetField(exIdx, setIdx, 'reps', 1)}
-                              className="w-6 h-7 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200/90 text-slate-700 rounded-lg flex items-center justify-center font-bold text-sm shadow-xs transition-transform"
-                            >
-                              +
-                            </button>
-                          </div>
+            {/* 添加动作入口 */}
+            <button
+              onClick={() => setShowAddExModal(true)}
+              className="w-full py-3 bg-white hover:bg-slate-50 border-2 border-dashed border-slate-300 hover:border-blue-500/70 rounded-2xl text-slate-700 font-bold text-sm flex items-center justify-center gap-2 transition-all"
+            >
+              <Plus className="w-4 h-4 text-blue-600" /> 从动作库添加动作
+            </button>
 
-                          {/* 完成勾选按钮 */}
-                          <div className="col-span-2 flex items-center justify-center">
+            {/* 有氧折叠行（腿日自动隐藏） */}
+            {!activeSession.planName.includes('腿') && (
+              <div className="bg-white border border-pink-200 rounded-2xl shadow-sm overflow-hidden">
+                <div
+                  onClick={() => setShowCardio(v => !v)}
+                  className="p-3.5 flex items-center justify-between cursor-pointer select-none"
+                >
+                  <div className="flex items-center gap-2">
+                    <Flame className="w-4 h-4 text-pink-600" />
+                    <span className="font-bold text-sm">
+                      有氧 <span className="text-xs font-normal text-slate-400">
+                        {activeSession.cardioCompleted ? `${activeSession.cardioMinutes}分钟 · ${activeSession.cardioType || ''}` : '（点开展开）'}
+                      </span>
+                    </span>
+                  </div>
+                  {showCardio ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                </div>
+                {showCardio && (
+                  <div className="px-4 pb-4 pt-1 border-t border-slate-100 space-y-3 animate-card-in">
+                    <label className="relative inline-flex items-center cursor-pointer pt-2">
+                      <input
+                        type="checkbox"
+                        checked={activeSession.cardioCompleted}
+                        onChange={(e) => {
+                          updateActiveSession({
+                            ...activeSession,
+                            cardioCompleted: e.target.checked,
+                            cardioMinutes: e.target.checked ? (activeSession.cardioMinutes || 20) : 0
+                          });
+                        }}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-600"></div>
+                      <span className="ml-2 text-xs text-slate-600">完成有氧</span>
+                    </label>
+                    {activeSession.cardioCompleted && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">时长:</span>
+                          {[15, 20, 25, 30].map(mins => (
                             <button
-                              type="button"
-                              onClick={() => toggleSetComplete(exIdx, setIdx)}
-                              className={`w-8.5 h-8.5 rounded-xl flex items-center justify-center transition-all active:scale-95 ${
-                                set.completed
-                                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-2 ring-emerald-500/20 scale-105'
-                                  : 'bg-white hover:bg-slate-50 text-slate-300 hover:text-slate-600 border border-slate-200/90 shadow-2xs'
+                              key={mins}
+                              onClick={() => updateActiveSession({ ...activeSession, cardioMinutes: mins })}
+                              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                activeSession.cardioMinutes === mins
+                                  ? 'bg-pink-600 text-white shadow-xs'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                               }`}
                             >
-                              <Check className="w-4 h-4 stroke-[3]" />
+                              {mins}分
                             </button>
-                          </div>
+                          ))}
                         </div>
-                      );
-                    })}
+                        <input
+                          type="text"
+                          value={activeSession.cardioNotes || ''}
+                          onChange={(e) => updateActiveSession({ ...activeSession, cardioNotes: e.target.value })}
+                          placeholder="例如: 跑步机坡度 10，速度 5.0 km/h 快走"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs placeholder-slate-400 focus:outline-none focus:border-pink-500 focus:bg-white"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
-
-                {/* 增加一组 / 加一大组按钮 */}
-                <div className="mt-3 flex items-center justify-between">
-                  <button
-                    onClick={() => addSetToExercise(exIdx)}
-                    className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1 border border-slate-200 shadow-xs active:scale-95"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> {exLog.sets.some(s => s.isDropSet) ? '加一大组' : '加一组'}
-                  </button>
-
-                  {exLog.sets.length > 1 && (
-                    <button
-                      onClick={() => removeSet(exIdx, exLog.sets.length - 1)}
-                      className="text-xs text-slate-400 hover:text-red-600"
-                    >
-                      {exLog.sets.some(s => s.isDropSet) ? '删除末尾大组' : '删除末尾组'}
-                    </button>
-                  )}
-                </div>
               </div>
-            );
-          })}
+            )}
 
-          {/* 添加动作入口按钮 */}
-          <button
-            onClick={() => setShowAddExModal(true)}
-            className="w-full py-3.5 bg-white hover:bg-slate-50 border-2 border-dashed border-slate-300 hover:border-blue-500/70 rounded-2xl text-slate-700 font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-xs"
-          >
-            <Plus className="w-4 h-4 text-blue-600" /> 从动作库添加动作
-          </button>
-
-          {/* 附加有氧模块 (针对非腿日或自定义安排) */}
-          <div className="bg-white border border-pink-200 rounded-2xl p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Flame className="w-4 h-4 text-pink-600" />
-                <h4 className="font-bold text-slate-900 text-sm">练后附加有氧 (20分钟)</h4>
+            {/* 备注折叠行 */}
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+              <div
+                onClick={() => setShowNotes(v => !v)}
+                className="p-3.5 flex items-center justify-between cursor-pointer select-none"
+              >
+                <span className="font-bold text-sm text-slate-400">
+                  📝 训练备注 <span className="text-xs font-normal">{activeSession.notes ? '' : '（点开展开）'}</span>
+                </span>
+                {showNotes ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
               </div>
-
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={activeSession.cardioCompleted}
-                  onChange={(e) => {
-                    updateActiveSession({
-                      ...activeSession,
-                      cardioCompleted: e.target.checked,
-                      cardioMinutes: e.target.checked ? (activeSession.cardioMinutes || 20) : 0
-                    });
-                  }}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-600"></div>
-              </label>
-            </div>
-
-            {activeSession.cardioCompleted && (
-              <div className="space-y-3 pt-2 border-t border-slate-100">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">有氧时长:</span>
-                  {[15, 20, 25, 30].map(mins => (
-                    <button
-                      key={mins}
-                      onClick={() => updateActiveSession({ ...activeSession, cardioMinutes: mins })}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                        activeSession.cardioMinutes === mins
-                          ? 'bg-pink-600 text-white shadow-xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      {mins} 分钟
-                    </button>
-                  ))}
-                </div>
-
-                <div>
-                  <span className="text-xs text-slate-500">项目与感受:</span>
-                  <input
-                    type="text"
-                    value={activeSession.cardioNotes || ''}
-                    onChange={(e) => updateActiveSession({ ...activeSession, cardioNotes: e.target.value })}
-                    placeholder="例如: 跑步机坡度 10，速度 5.0 km/h 快走，出汗良好"
-                    className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-pink-500 focus:bg-white"
+              {showNotes && (
+                <div className="px-4 pb-4 animate-card-in">
+                  <textarea
+                    rows={2}
+                    value={activeSession.notes || ''}
+                    onChange={(e) => updateActiveSession({ ...activeSession, notes: e.target.value })}
+                    placeholder="记录今日力量状态、器械手感、酸痛度等..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
                   />
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+
+            {/* 放弃训练（文字链，不再是半幅大按钮） */}
+            <div className="text-center pt-1">
+              <button
+                onClick={handleAbandonSession}
+                className="text-xs text-slate-400 hover:text-red-600 underline"
+              >
+                放弃本次训练
+              </button>
+            </div>
           </div>
 
-          {/* 今日训练总评与感受 */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-            <h4 className="font-bold text-slate-900 text-sm mb-2">训练备注</h4>
-            <textarea
-              rows={2}
-              value={activeSession.notes || ''}
-              onChange={(e) => updateActiveSession({ ...activeSession, notes: e.target.value })}
-              placeholder="记录今日力量状态、器械手感、酸痛度等..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
-            />
-          </div>
+          {/* 悬浮结束钮 */}
+          <button
+            onClick={() => setShowFinishModal(true)}
+            className="fixed bottom-8 right-5 z-40 w-16 h-16 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-600/30 font-black text-xs leading-tight active:scale-95 transition-all"
+          >
+            结束<br />{totalCompletedSets}/{totalAllSets}
+          </button>
+        </>
+      )}
 
-          {/* 底部操作条：放弃本次训练与结束保存一人一半 */}
-          <div className="grid grid-cols-2 gap-3 pt-3 pb-3">
+      {/* 规格抽屉：单位 + 滑轮 */}
+      {specExIdx !== null && activeSession && activeSession.exercises[specExIdx] && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/40 flex items-end justify-center animate-fade-in"
+          onClick={() => setSpecExIdx(null)}
+        >
+          <div
+            className="bg-white w-full max-w-md rounded-t-3xl p-5 pb-8 shadow-2xl animate-sheet-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-black text-sm mb-1">{activeSession.exercises[specExIdx].exerciseName}</h3>
+            <p className="text-[11px] text-slate-400 mb-3">计量规格（修改后整组同步）</p>
+            <div className="text-xs font-bold text-slate-600 mb-1.5">计量单位</div>
+            <div className="grid grid-cols-4 gap-1.5 mb-4">
+              {(['plates', 'kg', 'assisted', 'bodyweight'] as ResistanceUnit[]).map(u => (
+                <button
+                  key={u}
+                  type="button"
+                  onClick={() => changeExerciseUnit(specExIdx, u)}
+                  className={`py-2.5 rounded-xl text-xs font-bold transition-all ${
+                    activeSession.exercises[specExIdx].currentUnit === u
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {u === 'plates' ? '插销(片)' : u === 'kg' ? '重量(kg)' : u === 'assisted' ? '助力' : '自重'}
+                </button>
+              ))}
+            </div>
+            <div className="text-xs font-bold text-slate-600 mb-1.5">滑轮比例</div>
+            <div className="grid grid-cols-3 gap-1.5 mb-4">
+              {(['none', '1:1', '2:1'] as PulleyRatio[]).map(p => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => changePulleyRatio(specExIdx, p)}
+                  className={`py-2.5 rounded-xl text-xs font-bold transition-all ${
+                    activeSession.exercises[specExIdx].pulleyRatio === p
+                      ? 'bg-indigo-600 text-white shadow'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {p === 'none' ? '普通器械' : p === '1:1' ? '单滑轮 1:1' : '双滑轮 2:1'}
+                </button>
+              ))}
+            </div>
             <button
-              onClick={() => {
-                if (window.confirm('确定放弃并清空当前正在记录的训练吗？')) {
-                  updateActiveSession(null);
-                }
-              }}
-              className="w-full py-3.5 bg-slate-100 hover:bg-red-50 text-slate-700 hover:text-red-600 rounded-2xl text-xs font-bold border border-slate-200 transition-all flex items-center justify-center gap-1.5 active:scale-[0.98] shadow-xs"
+              type="button"
+              onClick={() => setSpecExIdx(null)}
+              className="w-full py-3 bg-slate-900 text-white rounded-2xl text-sm font-bold"
             >
-              <Trash2 className="w-3.5 h-3.5 text-slate-400" /> 放弃本次训练
-            </button>
-            <button
-              onClick={() => setShowFinishModal(true)}
-              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-extrabold shadow-md shadow-emerald-600/25 flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]"
-            >
-              <CheckCircle2 className="w-4 h-4" /> 结束并保存记录
+              完成
             </button>
           </div>
         </div>
@@ -1058,7 +1283,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               </button>
               <button
                 onClick={finishSession}
-                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/30"
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/30"
               >
                 确认归档记录
               </button>
@@ -1066,6 +1291,17 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* 统一确认抽屉（取消休息 / 放弃训练） */}
+      <ConfirmSheet
+        open={confirmState.open}
+        title={confirmState.title}
+        description={confirmState.description}
+        confirmText={confirmState.confirmText}
+        danger={confirmState.danger}
+        onCancel={() => setConfirmState(prev => ({ ...prev, open: false }))}
+        onConfirm={confirmState.onConfirm}
+      />
     </div>
   );
 };

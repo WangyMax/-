@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { 
-  Dumbbell, CalendarCheck, BookOpen, Scale 
+import {
+  Dumbbell, CalendarCheck, BookOpen, Scale
 } from 'lucide-react';
 import { WorkoutPlan, Exercise } from './types';
 import { StorageService } from './utils/storage';
@@ -13,6 +13,8 @@ import { WeightJournalView } from './components/WeightJournalView';
 export function App() {
   const [activeTab, setActiveTab] = useState<'workout' | 'plans' | 'library' | 'journal'>('workout');
   const [allExercises, setAllExercises] = useState<Exercise[]>([]);
+  // 专注模式：训练进行中时隐藏底部导航，防组间误触
+  const [inFocusMode, setInFocusMode] = useState(false);
 
   useEffect(() => {
     setAllExercises(StorageService.getExercises());
@@ -41,6 +43,7 @@ export function App() {
           <WorkoutView
             onOpenPlansTab={() => setActiveTab('plans')}
             allExercises={allExercises}
+            onFocusModeChange={setInFocusMode}
           />
         )}
 
@@ -63,34 +66,36 @@ export function App() {
         )}
       </main>
 
-      {/* 底部导航栏 (现代原生风格磨砂玻璃 Tab Bar) */}
-      <nav className="fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur-2xl border-t border-slate-200/80 shadow-[0_-4px_24px_rgba(15,23,42,0.05)] safe-bottom">
-        <div className="max-w-md mx-auto grid grid-cols-4 h-16 px-3 items-center">
-          {[
-            { id: 'workout', label: '今日训练', icon: Dumbbell },
-            { id: 'plans', label: '计划分化', icon: CalendarCheck },
-            { id: 'library', label: '动作库', icon: BookOpen },
-            { id: 'journal', label: '日志记录', icon: Scale },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as 'workout' | 'plans' | 'library' | 'journal')}
-                className={`flex flex-col items-center justify-center gap-1 transition-all py-1.5 rounded-2xl select-none active:scale-95 ${
-                  isActive
-                    ? 'text-blue-700 font-black bg-blue-50/70 ring-1 ring-blue-500/10'
-                    : 'text-slate-400 hover:text-slate-700 font-semibold'
-                }`}
-              >
-                <Icon className={`w-5 h-5 transition-transform ${isActive ? 'scale-110 stroke-[2.3]' : 'stroke-[1.8]'}`} />
-                <span className="text-[11px] tracking-tight">{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+      {/* 底部导航栏 (现代原生风格磨砂玻璃 Tab Bar)；专注模式下隐藏 */}
+      {!inFocusMode && (
+        <nav className="fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur-2xl border-t border-slate-200/80 shadow-[0_-4px_24px_rgba(15,23,42,0.05)] safe-bottom">
+          <div className="max-w-md mx-auto grid grid-cols-4 h-16 px-3 items-center">
+            {[
+              { id: 'workout', label: '今日训练', icon: Dumbbell },
+              { id: 'plans', label: '计划分化', icon: CalendarCheck },
+              { id: 'library', label: '动作库', icon: BookOpen },
+              { id: 'journal', label: '日志记录', icon: Scale },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as 'workout' | 'plans' | 'library' | 'journal')}
+                  className={`flex flex-col items-center justify-center gap-1 transition-all py-1.5 rounded-2xl select-none active:scale-95 ${
+                    isActive
+                      ? 'text-blue-700 font-black bg-blue-50/70 ring-1 ring-blue-500/10'
+                      : 'text-slate-400 hover:text-slate-700 font-semibold'
+                  }`}
+                >
+                  <Icon className={`w-5 h-5 transition-transform ${isActive ? 'scale-110 stroke-[2.3]' : 'stroke-[1.8]'}`} />
+                  <span className="text-[11px] tracking-tight">{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
     </div>
   );
 }

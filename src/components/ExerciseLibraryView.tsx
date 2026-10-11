@@ -27,6 +27,7 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
   const [newUnit, setNewUnit] = useState<ResistanceUnit>('plates');
   const [newPulley, setNewPulley] = useState<PulleyRatio>('none');
   const [newNotes, setNewNotes] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   const categories: { key: string; label: string }[] = [
     { key: 'all', label: '全部' },
@@ -50,9 +51,10 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
 
   const handleCreateExercise = () => {
     if (!newName.trim()) {
-      alert('请输入动作名称！');
+      setFormError('请输入动作名称！');
       return;
     }
+    setFormError(null);
 
     StorageService.addCustomExercise({
       name: newName.trim(),
@@ -188,6 +190,11 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
             </div>
 
             <div className="py-4 space-y-4">
+              {formError && (
+                <p className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+                  {formError}
+                </p>
+              )}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">动作名称 *</label>
                 <input

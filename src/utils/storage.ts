@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   SESSIONS: 'fitcustom_sessions_v2',
   WEIGHTS: 'fitcustom_weights_v2',
   ACTIVE_SESSION: 'fitcustom_active_session_v2',
+  WEIGHT_GOAL: 'fitcustom_weight_goal_v2',
   // 旧版本键名，用于自动迁移
   OLD_SESSIONS: 'fitcustom_sessions_v1',
   OLD_WEIGHTS: 'fitcustom_weights_v1',
@@ -757,6 +758,22 @@ export const StorageService = {
     this.saveWeightLogs(logs);
   },
 
+  // 体重目标（单个数字，直接读写 localStorage，无需进解析缓存）
+  getWeightGoal(): number | null {
+    const raw = localStorage.getItem(STORAGE_KEYS.WEIGHT_GOAL);
+    if (!raw) return null;
+    const v = parseFloat(raw);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  },
+
+  saveWeightGoal(goal: number | null): void {
+    if (goal === null || !Number.isFinite(goal) || goal <= 0) {
+      localStorage.removeItem(STORAGE_KEYS.WEIGHT_GOAL);
+    } else {
+      localStorage.setItem(STORAGE_KEYS.WEIGHT_GOAL, String(goal));
+    }
+  },
+
   // 恢复内置官方数据（含 10.06-10.09 全部真实记录与预设重量）
   restoreOfficialData(): void {
     localStorage.setItem(STORAGE_KEYS.EXERCISES, JSON.stringify(INITIAL_EXERCISES));
@@ -764,6 +781,7 @@ export const StorageService = {
     localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(INITIAL_SESSIONS));
     localStorage.setItem(STORAGE_KEYS.WEIGHTS, JSON.stringify(INITIAL_WEIGHTS));
     localStorage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
+    localStorage.removeItem(STORAGE_KEYS.WEIGHT_GOAL);
     // 直接 setItem 绕过了 save*，这里必须同步缓存（拷贝，避免缓存与模块常量共用引用）
     cache.exercises = [...INITIAL_EXERCISES];
     cache.plans = [...INITIAL_PLANS];
@@ -780,6 +798,7 @@ export const StorageService = {
       plans: this.getPlans(),
       sessions: this.getSessions(),
       weights: this.getWeightLogs(),
+      goal: this.getWeightGoal(),
     };
     return JSON.stringify(data, null, 2);
   },
@@ -791,6 +810,7 @@ export const StorageService = {
       if (Array.isArray(data.plans)) this.savePlans(data.plans);
       if (Array.isArray(data.sessions)) this.saveSessions(data.sessions);
       if (Array.isArray(data.weights)) this.saveWeightLogs(data.weights);
+      if (typeof data.goal === 'number') this.saveWeightGoal(data.goal);
       return true;
     } catch (err) {
       console.error('Failed to import backup:', err);
@@ -804,6 +824,7 @@ export const StorageService = {
     localStorage.removeItem(STORAGE_KEYS.SESSIONS);
     localStorage.removeItem(STORAGE_KEYS.WEIGHTS);
     localStorage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
+    localStorage.removeItem(STORAGE_KEYS.WEIGHT_GOAL);
     cache.exercises = null;
     cache.plans = null;
     cache.sessions = null;
