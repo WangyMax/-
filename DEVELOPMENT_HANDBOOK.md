@@ -141,6 +141,11 @@
 - **统一确认抽屉**：`src/components/ConfirmSheet.tsx`，代替全应用 window.confirm/alert（现已清零）。新增确认场景必须用它。
 - **动效基线**：index.css 的 fade-in/sheet-up/check-pop/card-in 纯 CSS 动效，不依赖任何原生服务（手册第 3 节铁律不动）。
 
+### 13. v2.8.2 删除确认框被底部导航遮挡修复
+- **踩坑背景**：用户手机上点历史训练删除，确认抽屉弹出来但取消/确认删除按钮被底部导航盖住，只能看到标题描述。原因是底部导航与全部弹窗抽屉同为 z-50，后渲染的导航在同一层级盖住了抽屉按钮（用户截图证实）。
+- **修法**：全部底部弹窗提到 z-[70]（ConfirmSheet、PlansView 新建/编辑与挑选动作、WorkoutView 规格/加动作/完成祝贺、ExerciseLibraryView 新增动作），底部导航保持 z-50；ConfirmSheet 弹层底边加 `env(safe-area-inset-bottom)` 安全区。
+- **验证**：390×844 手机视口下删除确认框完整可见，确认删除按钮在最上层可点，点确认后记录删除；npm run build 通过。注意桌面预览点击曾受自动化后端状态影响，结论以 DOM 几何测量与截图为准。
+
 ---
 
 ## 三、 工程结构目录速查

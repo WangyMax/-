@@ -279,7 +279,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
 
       {/* 新建/编辑计划 模态框 */}
       {isModalOpen && editingPlan && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col p-4 shadow-2xl">
             {/* 模态框头部 */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -701,7 +701,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
 
       {/* 选择动作加入计划模态框 */}
       {isSelectExOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col p-4 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-black text-slate-900 text-base">挑选动作加入计划</h3>

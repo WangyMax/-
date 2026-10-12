@@ -1141,7 +1141,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       {/* 规格抽屉：单位 + 滑轮 */}
       {specExIdx !== null && activeSession && activeSession.exercises[specExIdx] && (
         <div
-          className="fixed inset-0 z-50 bg-slate-900/40 flex items-end justify-center animate-fade-in"
+          className="fixed inset-0 z-[70] bg-slate-900/40 flex items-end justify-center animate-fade-in"
           onClick={() => setSpecExIdx(null)}
         >
           <div
@@ -1197,7 +1197,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
       {/* 添加动作模态框 */}
       {showAddExModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex flex-col justify-end sm:justify-center p-0 sm:p-4">
+        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex flex-col justify-end sm:justify-center p-0 sm:p-4">
           <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col p-4 shadow-2xl mx-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-black text-slate-900 text-base">从动作库选择加入</h3>
@@ -1248,7 +1248,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
       {/* 完成训练祝贺弹窗 */}
       {showFinishModal && activeSession && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-3xl max-w-sm w-full p-6 text-center shadow-2xl">
             <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-200">
               <Award className="w-8 h-8" />
