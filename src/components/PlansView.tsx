@@ -26,6 +26,9 @@ export const PlansView: React.FC<PlansViewProps> = ({
   const [confirmState, setConfirmState] = useState<{
     open: boolean; title: string; description: string; onConfirm: () => void;
   }>({ open: false, title: '', description: '', onConfirm: () => {} });
+  // 从过往训练导入模板：挑选历史记录
+  const [isImportSessionOpen, setIsImportSessionOpen] = useState(false);
+  const [importSearch, setImportSearch] = useState('');
 
   // 加载计划列表
   const loadPlans = () => {
@@ -151,6 +154,44 @@ export const PlansView: React.FC<PlansViewProps> = ({
     const newExercises = [...editingPlan.exercises];
     newExercises.splice(index, 1);
     setEditingPlan({ ...editingPlan, exercises: newExercises });
+  };
+
+  // 从过往训练导入为模板：取该场已完成组的典型值做计划预设
+  const handleImportSession = (sessId: string) => {
+    if (!editingPlan) return;
+    const sess = StorageService.getSessions().find(s => s.id === sessId);
+    if (!sess || sess.isRestDay) return;
+    const targets: PlanExerciseTarget[] = sess.exercises.map(e => {
+      const done = e.sets.filter(s => s.completed);
+      const ref = done[done.length - 1] || e.sets[e.sets.length - 1];
+      const uni = Boolean(e.isUnilateral || ref?.unilateral);
+      const w = uni ? (ref?.left?.weight ?? ref?.weightOrPlates ?? 0) : (ref?.weightOrPlates ?? 0);
+      const r = uni ? (ref?.left?.reps ?? ref?.reps ?? 12) : (ref?.reps ?? 12);
+      const target: PlanExerciseTarget = {
+        exerciseId: e.exerciseId,
+        targetSets: Math.max(1, e.sets.length),
+        targetReps: r,
+        targetWeight: w,
+        targetUnit: ref?.unit || e.currentUnit,
+        pulleyRatio: ref?.pulleyRatio || e.pulleyRatio,
+        isUnilateral: uni || undefined,
+        notes: e.notes || '',
+      };
+      if (ref?.isDropSet && ref.dropStages && ref.dropStages.length > 0) {
+        target.isDropSet = true;
+        target.isUnilateral = undefined;
+        target.dropStages = JSON.parse(JSON.stringify(ref.dropStages));
+      }
+      return target;
+    });
+    setEditingPlan({
+      ...editingPlan,
+      name: editingPlan.name === '自定义分化计划' ? `${sess.planName}（模板）` : editingPlan.name,
+      cardioMinutes: sess.cardioMinutes,
+      cardioType: sess.cardioType,
+      exercises: targets,
+    });
+    setIsImportSessionOpen(false);
   };
 
   return (
@@ -374,6 +415,14 @@ export const PlansView: React.FC<PlansViewProps> = ({
                     </label>
                     <span className="text-[10px] text-slate-400">设置组数与重量后，一键开练将直接带入</span>
                   </div>
+                  <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => { setIsImportSessionOpen(true); setImportSearch(''); }}
+                    className="px-2.5 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white border border-emerald-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"
+                  >
+                    从过往训练导入
+                  </button>
                   <button
                     type="button"
                     onClick={() => setIsSelectExOpen(true)}
@@ -381,6 +430,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                   >
                     <Plus className="w-3.5 h-3.5" /> 挑选动作
                   </button>
+                  </div>
                 </div>
 
                 {editingPlan.exercises.length === 0 ? (
@@ -782,6 +832,68 @@ export const PlansView: React.FC<PlansViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* 从过往训练导入模板 */}
+      {isImportSessionOpen && (() => {
+        const kw = importSearch.toLowerCase();
+        const sessions = StorageService.getSessions().filter(s =>
+          !s.isRestDay && (!kw || s.planName.toLowerCase().includes(kw) || s.date.includes(kw))
+        );
+        return (
+          <div
+            className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+            onClick={() => setIsImportSessionOpen(false)}
+          >
+            <div
+              className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[80vh] flex flex-col p-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100 shrink-0">
+                <div>
+                  <h3 className="font-black text-slate-900 text-sm">从过往训练导入</h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">取该场已完成组的重量次数做计划预设，导入后会替换当前动作编排</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsImportSessionOpen(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="py-2 shrink-0">
+                <input
+                  type="text"
+                  placeholder="搜索计划名或日期..."
+                  value={importSearch}
+                  onChange={(e) => setImportSearch(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+                />
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0 pr-0.5">
+                {sessions.map(s => (
+                  <div
+                    key={s.id}
+                    onClick={() => handleImportSession(s.id)}
+                    className="p-2.5 bg-slate-50 hover:bg-emerald-50 border border-slate-200/90 rounded-xl cursor-pointer transition-all"
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-slate-900 text-xs">{s.planName}</span>
+                      <span className="text-[10px] font-mono text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200">{s.date}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                      {s.exercises.length} 个动作 · {s.exercises.map(e => e.exerciseName).join('、')}
+                    </p>
+                  </div>
+                ))}
+                {sessions.length === 0 && (
+                  <p className="text-center text-xs text-slate-400 py-6">没有匹配的训练记录</p>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 统一确认抽屉 */}
       <ConfirmSheet

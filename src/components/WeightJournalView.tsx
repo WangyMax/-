@@ -1586,10 +1586,14 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           >
             {/* 弹窗头部 */}
             <div className="p-4 border-b border-slate-100 flex items-start justify-between gap-2 shrink-0">
-              <div className="min-w-0">
-                <h3 className="font-black text-slate-900 text-sm truncate">
-                  {editingSession.isRestDay ? '编辑休息日记录' : editingSession.planName}
-                </h3>
+              <div className="min-w-0 flex-1">
+                <input
+                  type="text"
+                  value={editingSession.planName}
+                  onChange={(e) => patchEditing(d => { d.planName = e.target.value; })}
+                  placeholder="训练记录名称"
+                  className="w-full bg-transparent font-black text-slate-900 text-sm focus:outline-none focus:border-b focus:border-blue-500 min-w-0 px-0.5 -mx-0.5"
+                />
                 <p className="text-[11px] text-slate-400 font-mono mt-0.5">{editingSession.date}</p>
               </div>
               <button
