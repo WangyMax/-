@@ -1678,32 +1678,32 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                               {s.dropStages.map(st => `${st.weightOrPlates}×${st.reps}`).join(' ➔ ')}
                             </span>
                           ) : s.unilateral ? (
-                            (['left', 'right'] as const).map(side => {
+                            <div className="flex-1 min-w-0 space-y-1">
+                            {(['left', 'right'] as const).map(side => {
                               const sd: UnilateralSide = s[side] || { weight: s.weightOrPlates, reps: s.reps };
                               return (
-                                <div key={side} className="flex items-center gap-1 min-w-0">
-                                  <span className="text-[10px] font-black text-indigo-600 w-3 shrink-0">
+                                <div key={side} className="grid grid-cols-[1rem_minmax(0,1fr)_auto_minmax(0,1fr)_2rem] items-center gap-1">
+                                  <span className="text-[10px] font-black text-indigo-600 text-center shrink-0">
                                     {side === 'left' ? '左' : '右'}
                                   </span>
                                   <input
                                     type="number"
                                     value={sd.weight || ''}
                                     onChange={(ev) => editUnilateralField(exIdx, setIdx, side, 'weight', parseFloat(ev.target.value) || 0)}
-                                    className="w-14 min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                                    className="w-full min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
                                   />
                                   <span className="text-[10px] text-slate-400 shrink-0">×</span>
                                   <input
                                     type="number"
                                     value={sd.reps || ''}
                                     onChange={(ev) => editUnilateralField(exIdx, setIdx, side, 'reps', parseInt(ev.target.value) || 0)}
-                                    className="w-12 min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                                    className="w-full min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
                                   />
-                                  {side === 'left' && (
-                                    <span className="text-[10px] text-slate-400 shrink-0">{unitStr}</span>
-                                  )}
+                                  <span className="text-[10px] text-slate-400 text-center shrink-0">{unitStr}</span>
                                 </div>
                               );
-                            })
+                            })}
+                            </div>
                           ) : (
                             <>
                               <input
