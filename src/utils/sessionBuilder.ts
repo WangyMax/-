@@ -19,6 +19,8 @@ export function buildSessionFromPlan(
     const unit: ResistanceUnit = pe.targetUnit || exDetail?.defaultUnit || 'kg';
     const pulley: PulleyRatio = pe.pulleyRatio || exDetail?.defaultPulley || 'none';
     const isDropSet = Boolean(pe.isDropSet || (pe.dropStages && pe.dropStages.length > 0));
+    // 单侧（左右独立）仅用于普通组：超级组阶梯暂不支持分侧
+    const isUnilateral = !isDropSet && Boolean(pe.isUnilateral || exDetail?.isUnilateral);
 
     const baseDropStages = pe.dropStages && pe.dropStages.length > 0
       ? JSON.parse(JSON.stringify(pe.dropStages))
@@ -57,6 +59,29 @@ export function buildSessionFromPlan(
         ? pe.targetReps
         : (lastSet?.reps ?? 12);
 
+      if (isUnilateral) {
+        // 生成左右两侧数据：优先沿用上次同侧记录，否则左右均取默认值
+        const left = lastSet?.left
+          ? { weight: lastSet.left.weight, reps: lastSet.left.reps }
+          : { weight: defaultWeight, reps: defaultReps };
+        const right = lastSet?.right
+          ? { weight: lastSet.right.weight, reps: lastSet.right.reps }
+          : { weight: defaultWeight, reps: defaultReps };
+        return {
+          id: `s-${Date.now()}-${exIdx}-${i}`,
+          setNumber: i + 1,
+          unit: pe.targetUnit || lastSet?.unit || unit,
+          // 主字段为左侧副本，供不支持分侧的旧逻辑/概览读取
+          weightOrPlates: left.weight,
+          reps: left.reps,
+          completed: false,
+          pulleyRatio: pe.pulleyRatio || lastSet?.pulleyRatio || pulley,
+          unilateral: true,
+          left,
+          right,
+        };
+      }
+
       return {
         id: `s-${Date.now()}-${exIdx}-${i}`,
         setNumber: i + 1,
@@ -74,6 +99,7 @@ export function buildSessionFromPlan(
       category: exDetail?.category || 'chest',
       pulleyRatio: pulley,
       currentUnit: unit,
+      isUnilateral: isUnilateral || undefined,
       sets,
       notes: pe.notes || ''
     };

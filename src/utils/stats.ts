@@ -1,8 +1,15 @@
 import { WorkoutSession, WorkoutSet } from '../types';
 import { shiftLocalDate } from './date';
 
-// 单组 kg 系容量（kg/助力；超级组按阶梯累加）
+// 单组 kg 系容量（kg/助力；单侧组左右累加；超级组按阶梯累加）
 function setKgVolume(s: WorkoutSet): number {
+  // 单侧普通组：左右两侧分别累加（重量×次数）
+  if (s.unilateral && s.left && s.right) {
+    if (s.unit === 'kg' || s.unit === 'assisted') {
+      return s.left.weight * s.left.reps + s.right.weight * s.right.reps;
+    }
+    return 0;
+  }
   if (s.isDropSet && s.dropStages && s.dropStages.length > 0) {
     return s.dropStages.reduce(
       (acc, st) =>
@@ -13,8 +20,15 @@ function setKgVolume(s: WorkoutSet): number {
   return s.unit === 'kg' || s.unit === 'assisted' ? s.weightOrPlates * s.reps : 0;
 }
 
-// 单组插销容量（片×次）
+// 单组插销容量（片×次；单侧组左右累加）
 function setPlatesVolume(s: WorkoutSet): number {
+  // 单侧普通组：左右两侧分别累加（片数×次数）
+  if (s.unilateral && s.left && s.right) {
+    if (s.unit === 'plates') {
+      return s.left.weight * s.left.reps + s.right.weight * s.right.reps;
+    }
+    return 0;
+  }
   if (s.isDropSet && s.dropStages && s.dropStages.length > 0) {
     return s.dropStages.reduce(
       (acc, st) => acc + (st.unit === 'plates' ? st.weightOrPlates * st.reps : 0),
@@ -22,6 +36,15 @@ function setPlatesVolume(s: WorkoutSet): number {
     );
   }
   return s.unit === 'plates' ? s.weightOrPlates * s.reps : 0;
+}
+
+// 单侧组展示纯函数：返回左右两侧“重量×次数”展示串；非单侧组返回 null。
+export function formatUnilateralSides(s: WorkoutSet): { left: string; right: string } | null {
+  if (!s.unilateral || !s.left || !s.right) return null;
+  return {
+    left: `${s.left.weight}×${s.left.reps}`,
+    right: `${s.right.weight}×${s.right.reps}`,
+  };
 }
 
 // 整场训练容量（默认只统计已完成组）

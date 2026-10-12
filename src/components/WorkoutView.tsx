@@ -7,7 +7,8 @@ import {
 } from 'lucide-react';
 import {
   WorkoutPlan, WorkoutSession, ExerciseLog, WorkoutSet,
-  ResistanceUnit, PulleyRatio, CATEGORY_LABELS, UNIT_LABELS, Exercise
+  ResistanceUnit, PulleyRatio, CATEGORY_LABELS, UNIT_LABELS, Exercise,
+  UnilateralSide
 } from '../types';
 import { StorageService } from '../utils/storage';
 import { buildSessionFromPlan } from '../utils/sessionBuilder';
@@ -52,6 +53,10 @@ const PULLEY_SHORT: Record<PulleyRatio, string> = {
   '1:1': '单滑轮',
   '2:1': '双滑轮',
 };
+
+// 单侧组重量单位短标签
+const unitBadge = (u: ResistanceUnit): string =>
+  u === 'plates' ? '片' : u === 'assisted' ? '助力kg' : u === 'bodyweight' ? '自重' : 'kg';
 
 export const WorkoutView: React.FC<WorkoutViewProps> = ({
   onOpenPlansTab,
@@ -133,17 +138,28 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const unit = lastLog?.currentUnit || exercise.defaultUnit || 'plates';
     const pulley = lastLog?.pulleyRatio || exercise.defaultPulley || 'none';
 
+    const exIsUnilateral = Boolean(exercise.isUnilateral);
+
     const defaultSets: WorkoutSet[] = [1, 2, 3, 4].map((num, i) => {
       const lastSet = lastLog?.sets[i];
-      return {
+      const weight = lastSet?.weightOrPlates || (unit === 'plates' ? 8 : 40);
+      const reps = lastSet?.reps || 12;
+      const newSet: WorkoutSet = {
         id: `s-${Date.now()}-${num}`,
         setNumber: num,
         unit: lastSet?.unit || unit,
-        weightOrPlates: lastSet?.weightOrPlates || (unit === 'plates' ? 8 : 40),
-        reps: lastSet?.reps || 12,
+        weightOrPlates: weight,
+        reps,
         completed: false,
         pulleyRatio: lastSet?.pulleyRatio || pulley
       };
+      // 左右独立动作：普通组生成左右两侧默认值（优先沿用上次记录的左右值）
+      if (exIsUnilateral) {
+        newSet.unilateral = true;
+        newSet.left = { weight: lastSet?.left?.weight ?? weight, reps: lastSet?.left?.reps ?? reps };
+        newSet.right = { weight: lastSet?.right?.weight ?? weight, reps: lastSet?.right?.reps ?? reps };
+      }
+      return newSet;
     });
 
     const newExLog: ExerciseLog = {
@@ -152,6 +168,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       category: exercise.category,
       pulleyRatio: pulley,
       currentUnit: unit,
+      isUnilateral: exIsUnilateral || undefined,
       sets: defaultSets,
       notes: exercise.notes || ''
     };
@@ -191,6 +208,47 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     if (!activeSession) return;
     const exercises = [...activeSession.exercises];
     exercises[exIndex].sets[setIndex][field] = Math.max(0, val);
+    updateActiveSession({ ...activeSession, exercises });
+  };
+
+  // 左右独立普通组：修改某一侧（左/右）的重量或次数（± 微调）
+  const updateUnilateralField = (
+    exIndex: number, setIndex: number, side: 'left' | 'right',
+    field: 'weight' | 'reps', delta: number
+  ) => {
+    if (!activeSession) return;
+    const exercises = [...activeSession.exercises];
+    const targetSet = exercises[exIndex].sets[setIndex];
+    const base: UnilateralSide = targetSet[side] || { weight: targetSet.weightOrPlates, reps: targetSet.reps };
+    const next: UnilateralSide = { weight: base.weight, reps: base.reps };
+    next[field] = Math.max(0, next[field] + delta);
+    targetSet[side] = next;
+    targetSet.unilateral = true;
+    // 主字段保持左侧副本，兼容未分侧渲染与历史摘要
+    if (targetSet.left) {
+      targetSet.weightOrPlates = targetSet.left.weight;
+      targetSet.reps = targetSet.left.reps;
+    }
+    updateActiveSession({ ...activeSession, exercises });
+  };
+
+  // 左右独立普通组：直接输入某一侧的重量或次数
+  const setUnilateralDirectVal = (
+    exIndex: number, setIndex: number, side: 'left' | 'right',
+    field: 'weight' | 'reps', val: number
+  ) => {
+    if (!activeSession) return;
+    const exercises = [...activeSession.exercises];
+    const targetSet = exercises[exIndex].sets[setIndex];
+    const base: UnilateralSide = targetSet[side] || { weight: targetSet.weightOrPlates, reps: targetSet.reps };
+    const next: UnilateralSide = { weight: base.weight, reps: base.reps };
+    next[field] = Math.max(0, val);
+    targetSet[side] = next;
+    targetSet.unilateral = true;
+    if (targetSet.left) {
+      targetSet.weightOrPlates = targetSet.left.weight;
+      targetSet.reps = targetSet.left.reps;
+    }
     updateActiveSession({ ...activeSession, exercises });
   };
 
@@ -260,6 +318,18 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       isDropSet: isDrop,
       dropStages: isDrop && lastSet?.dropStages ? JSON.parse(JSON.stringify(lastSet.dropStages)) : undefined,
     };
+    // 左右独立动作（普通组）：新组沿用上一组的左右值与单位
+    if (ex.isUnilateral && !isDrop) {
+      newSet.unilateral = true;
+      newSet.left = {
+        weight: lastSet?.left?.weight ?? newSet.weightOrPlates,
+        reps: lastSet?.left?.reps ?? newSet.reps,
+      };
+      newSet.right = {
+        weight: lastSet?.right?.weight ?? newSet.weightOrPlates,
+        reps: lastSet?.right?.reps ?? newSet.reps,
+      };
+    }
     ex.sets.push(newSet);
     updateActiveSession({ ...activeSession, exercises });
   };
@@ -489,20 +559,39 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const done = lastLog.sets.filter(s => s.completed);
     if (done.length === 0) return null;
     return done
-      .map(s => `${s.weightOrPlates}${s.unit === 'plates' ? '片' : s.unit === 'assisted' ? '助力' : s.unit === 'bodyweight' ? '自重' : 'kg'}×${s.reps}`)
+      .map(s => {
+        // 左右独立：分侧展示
+        if (s.unilateral && s.left && s.right) {
+          return `左${s.left.weight}×${s.left.reps} / 右${s.right.weight}×${s.right.reps}`;
+        }
+        return `${s.weightOrPlates}${s.unit === 'plates' ? '片' : s.unit === 'assisted' ? '助力' : s.unit === 'bodyweight' ? '自重' : 'kg'}×${s.reps}`;
+      })
       .join(' / ');
   };
 
-  // 一键带入上次数据
+  // 一键带入上次数据（含左右独立的左右值与单位）
   const applyLastLog = (exIdx: number, lastLog: ExerciseLog) => {
     if (!activeSession) return;
     const exercises = [...activeSession.exercises];
-    exercises[exIdx].sets.forEach((s, idx) => {
+    const targetEx = exercises[exIdx];
+    const exIsUnilateral = Boolean(targetEx.isUnilateral);
+    targetEx.sets.forEach((s, idx) => {
       const lastSet = lastLog.sets[idx];
-      if (lastSet) {
-        s.weightOrPlates = lastSet.weightOrPlates;
-        s.reps = lastSet.reps;
-        s.unit = lastSet.unit;
+      if (!lastSet) return;
+      s.weightOrPlates = lastSet.weightOrPlates;
+      s.reps = lastSet.reps;
+      s.unit = lastSet.unit;
+      // 当前动作或上次记录为左右独立时，同步左右两侧的值与单位
+      if (exIsUnilateral || lastSet.unilateral) {
+        s.unilateral = true;
+        s.left = {
+          weight: lastSet.left?.weight ?? lastSet.weightOrPlates,
+          reps: lastSet.left?.reps ?? lastSet.reps,
+        };
+        s.right = {
+          weight: lastSet.right?.weight ?? lastSet.weightOrPlates,
+          reps: lastSet.right?.reps ?? lastSet.reps,
+        };
       }
     });
     updateActiveSession({ ...activeSession, exercises });
@@ -583,6 +672,78 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               : 'bg-white text-slate-300 border-2 border-slate-200'
           }`}>
             <Check className="w-5 h-5 stroke-[3]" />
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  // 左右独立普通组行：左右各一列，列内重量/次数上下紧凑；整行可点打勾
+  const renderUnilateralSetRow = (exIdx: number, set: WorkoutSet, setIdx: number) => {
+    const step = set.unit === 'plates' ? 1 : 2.5;
+    const sideBlock = (side: 'left' | 'right', label: string) => {
+      const data: UnilateralSide = set[side] || { weight: set.weightOrPlates, reps: set.reps };
+      return (
+        <div className="col-span-4 min-w-0" onClick={(e) => e.stopPropagation()}>
+          <div className="text-[9px] font-black text-slate-400 text-center leading-none mb-0.5">{label}</div>
+          <div className="flex items-center justify-center gap-0.5 min-w-0">
+            <button
+              type="button"
+              onClick={() => updateUnilateralField(exIdx, setIdx, side, 'weight', -step)}
+              className="w-6 h-6 shrink-0 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-black text-sm"
+            >
+              −
+            </button>
+            <div className="min-w-0 flex-1 text-center">
+              <input
+                type="number"
+                value={data.weight || ''}
+                onChange={(e) => setUnilateralDirectVal(exIdx, setIdx, side, 'weight', parseFloat(e.target.value) || 0)}
+                className="w-full min-w-0 text-center bg-transparent font-black text-sm text-slate-900 focus:outline-none"
+              />
+              <div className="text-[9px] text-slate-400 font-semibold leading-none -mt-0.5">{unitBadge(set.unit)}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => updateUnilateralField(exIdx, setIdx, side, 'weight', step)}
+              className="w-6 h-6 shrink-0 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-black text-sm"
+            >
+              ＋
+            </button>
+          </div>
+          <input
+            type="number"
+            value={data.reps || ''}
+            onChange={(e) => setUnilateralDirectVal(exIdx, setIdx, side, 'reps', parseInt(e.target.value) || 0)}
+            className="w-full min-w-0 mt-0.5 text-center bg-white border border-slate-200 rounded-lg py-1 font-black text-sm text-slate-900 focus:outline-none focus:border-blue-500"
+          />
+        </div>
+      );
+    };
+    return (
+      <div
+        key={set.id}
+        onClick={() => toggleSetComplete(exIdx, setIdx)}
+        className={`grid grid-cols-12 gap-1.5 items-center rounded-2xl p-2 cursor-pointer border-2 transition-all active:scale-[0.99] ${
+          set.completed ? 'bg-emerald-50/70 border-emerald-300' : 'bg-slate-50 border-slate-200'
+        }`}
+      >
+        <div className="col-span-2 flex items-center justify-center">
+          <span className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-sm ${
+            set.completed ? 'bg-emerald-600 text-white animate-check-pop' : 'bg-slate-200 text-slate-700'
+          }`}>
+            {set.setNumber}
+          </span>
+        </div>
+        {sideBlock('left', '左')}
+        {sideBlock('right', '右')}
+        <div className="col-span-2 flex items-center justify-center">
+          <span className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
+            set.completed
+              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 animate-check-pop'
+              : 'bg-white text-slate-300 border-2 border-slate-200'
+          }`}>
+            <Check className="w-4 h-4 stroke-[3]" />
           </span>
         </div>
       </div>
@@ -728,6 +889,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     }
     const exIdx = safeFocusIdx;
     const isDrop = focusEx.sets.some(s => s.isDropSet);
+    // 单侧仅做普通组，isDropSet 为真一律按超级组渲染
+    const isUnilateralEx = Boolean(focusEx.isUnilateral) && !isDrop;
     const summary = lastLogSummary(focusLastLog);
     return (
       <div key={focusEx.exerciseId + '-' + exIdx} className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-sm animate-card-in">
@@ -741,6 +904,9 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               </span>
               {isDrop && (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">🔥超级组</span>
+              )}
+              {isUnilateralEx && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">左右独立</span>
               )}
             </div>
             <button
@@ -780,6 +946,18 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
         <div className="mt-2.5 space-y-2">
           {isDrop
             ? focusEx.sets.map((bigSet, setIdx) => renderDropBigSet(exIdx, bigSet, setIdx))
+            : isUnilateralEx
+            ? (
+              <>
+                <div className="grid grid-cols-12 gap-1.5 text-[11px] font-bold text-slate-400 px-1">
+                  <div className="col-span-2 text-center">组</div>
+                  <div className="col-span-4 text-center">左</div>
+                  <div className="col-span-4 text-center">右</div>
+                  <div className="col-span-2 text-center">✓</div>
+                </div>
+                {focusEx.sets.map((set, setIdx) => renderUnilateralSetRow(exIdx, set, setIdx))}
+              </>
+            )
             : (
               <>
                 <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-slate-400 px-1">

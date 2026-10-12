@@ -1,6 +1,27 @@
-import { Exercise, WorkoutPlan, WorkoutSession, WeightLog, ExerciseLog } from '../types';
+import { Exercise, WorkoutPlan, WorkoutSession, WeightLog, ExerciseLog, CATEGORY_ORDER } from '../types';
 import { INITIAL_EXERCISES } from '../data/initialExercises';
 import { INITIAL_PLANS } from '../data/initialPlans';
+
+// 动作库归一化排序：按部位规范顺序分组，同部位内内置动作在前、自定义动作在后，
+// 组内保持原有相对顺序（稳定排序），等价于把自定义动作归入同类分组末尾。
+function sortExercisesByCategory(list: Exercise[]): Exercise[] {
+  const orderOf = (cat: Exercise['category']): number => {
+    const idx = CATEGORY_ORDER.indexOf(cat);
+    return idx === -1 ? CATEGORY_ORDER.length : idx;
+  };
+  return list
+    .map((ex, idx) => ({ ex, idx }))
+    .sort((a, b) => {
+      const ca = orderOf(a.ex.category);
+      const cb = orderOf(b.ex.category);
+      if (ca !== cb) return ca - cb;
+      const ua = a.ex.isCustom ? 1 : 0;
+      const ub = b.ex.isCustom ? 1 : 0;
+      if (ua !== ub) return ua - ub;
+      return a.idx - b.idx;
+    })
+    .map(item => item.ex);
+}
 
 const STORAGE_KEYS = {
   EXERCISES: 'fitcustom_exercises_v2',
@@ -450,17 +471,21 @@ export const StorageService = {
           // ignore
         }
       }
-      localStorage.setItem(STORAGE_KEYS.EXERCISES, JSON.stringify(list));
-      cache.exercises = list;
-      return list;
+      // 归一化排序后再落盘：自定义动作归入同类分组末尾
+      const normalized = sortExercisesByCategory(list);
+      localStorage.setItem(STORAGE_KEYS.EXERCISES, JSON.stringify(normalized));
+      cache.exercises = normalized;
+      return normalized;
     }
     try {
       const parsed: Exercise[] = JSON.parse(raw);
-      cache.exercises = parsed;
-      return parsed;
+      const normalized = sortExercisesByCategory(parsed);
+      cache.exercises = normalized;
+      return normalized;
     } catch {
-      cache.exercises = INITIAL_EXERCISES;
-      return INITIAL_EXERCISES;
+      const normalized = sortExercisesByCategory(INITIAL_EXERCISES);
+      cache.exercises = normalized;
+      return normalized;
     }
   },
 
@@ -497,8 +522,9 @@ export const StorageService = {
       id: `ex-custom-${Date.now()}`,
       isCustom: true,
     };
-    all.unshift(newEx);
-    this.saveExercises(all);
+    // 追加后统一归一化排序：自定义动作归入同部位分组末尾（而非原来的 unshift 置顶）
+    all.push(newEx);
+    this.saveExercises(sortExercisesByCategory(all));
     return newEx;
   },
 

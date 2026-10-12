@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { 
-  Search, Plus, X 
+  Search, Plus, X, Edit3, Trash2, ArrowLeftRight 
 } from 'lucide-react';
 import { 
   Exercise, MuscleCategory, ResistanceUnit, PulleyRatio, 
   CATEGORY_LABELS, UNIT_LABELS 
 } from '../types';
 import { StorageService } from '../utils/storage';
+import { ConfirmSheet } from './ConfirmSheet';
 
 interface ExerciseLibraryViewProps {
   exercises: Exercise[];
@@ -26,8 +27,16 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
   const [newCategory, setNewCategory] = useState<MuscleCategory>('chest');
   const [newUnit, setNewUnit] = useState<ResistanceUnit>('plates');
   const [newPulley, setNewPulley] = useState<PulleyRatio>('none');
+  const [newUnilateral, setNewUnilateral] = useState(false);
   const [newNotes, setNewNotes] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  // 编辑模式：非空表示正在编辑该自建动作，否则为新增
+  const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
+  // 删除被计划引用时的拦截提示
+  const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean; title: string; description: string; confirmText: string; onConfirm: () => void;
+  }>({ open: false, title: '', description: '', confirmText: '确认删除', onConfirm: () => {} });
 
   const categories: { key: string; label: string }[] = [
     { key: 'all', label: '全部' },
@@ -49,6 +58,52 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
     return matchCat && matchSearch;
   });
 
+  // 按部位分组：沿用筛选条顺序作为分组顺序；
+  // 组内内置动作在前、用户自建动作在后，各自保持原有相对次序（稳定排序）。
+  const groupedExercises = categories
+    .filter(c => c.key !== 'all')
+    .map(c => {
+      const items = filteredExercises
+        .filter(ex => ex.category === c.key)
+        .slice()
+        .sort((a, b) => Number(Boolean(a.isCustom)) - Number(Boolean(b.isCustom)));
+      return { key: c.key, label: c.label, items };
+    })
+    .filter(g => g.items.length > 0);
+
+  // 打开新增弹窗：清空表单并退出编辑模式
+  const openAddModal = () => {
+    setEditingExercise(null);
+    setNewName('');
+    setNewCategory('chest');
+    setNewUnit('plates');
+    setNewPulley('none');
+    setNewUnilateral(false);
+    setNewNotes('');
+    setFormError(null);
+    setLibraryNotice(null);
+    setIsAddModalOpen(true);
+  };
+
+  // 打开编辑弹窗：回填该自建动作的当前字段
+  const openEditModal = (ex: Exercise) => {
+    setEditingExercise(ex);
+    setNewName(ex.name);
+    setNewCategory(ex.category);
+    setNewUnit(ex.defaultUnit);
+    setNewPulley(ex.defaultPulley || 'none');
+    setNewUnilateral(Boolean(ex.isUnilateral));
+    setNewNotes(ex.notes || '');
+    setFormError(null);
+    setLibraryNotice(null);
+    setIsAddModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setIsAddModalOpen(false);
+    setEditingExercise(null);
+  };
+
   const handleCreateExercise = () => {
     if (!newName.trim()) {
       setFormError('请输入动作名称！');
@@ -56,19 +111,53 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
     }
     setFormError(null);
 
-    StorageService.addCustomExercise({
+    const payload = {
       name: newName.trim(),
       category: newCategory,
       defaultUnit: newUnit,
       defaultPulley: newPulley,
+      isUnilateral: newUnilateral || undefined,
       notes: newNotes.trim() || undefined,
-      isFavorite: true,
-    });
+    };
+
+    if (editingExercise) {
+      // 编辑自建动作：就地更新同 id 记录，保持其在列表中的位置
+      const list = StorageService.getExercises();
+      StorageService.saveExercises(
+        list.map(e => (e.id === editingExercise.id ? { ...e, ...payload } : e))
+      );
+    } else {
+      StorageService.addCustomExercise({ ...payload, isFavorite: true });
+    }
 
     onRefreshExercises();
-    setIsAddModalOpen(false);
-    setNewName('');
-    setNewNotes('');
+    closeModal();
+  };
+
+  // 删除自建动作：被任一计划引用时拦截，否则走统一确认抽屉
+  const handleDeleteExercise = (ex: Exercise) => {
+    setLibraryNotice(null);
+    const usedBy = StorageService.getPlans()
+      .filter(p => p.exercises.some(pe => pe.exerciseId === ex.id))
+      .map(p => p.name);
+    if (usedBy.length > 0) {
+      setLibraryNotice(
+        `无法删除 “${ex.name}”：该动作正被 ${usedBy.length} 个训练计划引用（${usedBy.join('、')}），请先在这些计划中移除后再删除。`
+      );
+      return;
+    }
+    setConfirmState({
+      open: true,
+      title: '删除自定义动作',
+      description: `确定删除自定义动作 “${ex.name}” 吗？此操作无法撤销。`,
+      confirmText: '确认删除',
+      onConfirm: () => {
+        const list = StorageService.getExercises();
+        StorageService.saveExercises(list.filter(e => e.id !== ex.id));
+        onRefreshExercises();
+        setConfirmState(prev => ({ ...prev, open: false }));
+      },
+    });
   };
 
   return (
@@ -80,7 +169,7 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
           <p className="text-xs text-slate-500 mt-0.5">内置标准动作库，支持插销片数与滑轮倍率设置</p>
         </div>
         <button
-          onClick={() => setIsAddModalOpen(true)}
+          onClick={openAddModal}
           className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-md shadow-blue-500/20 flex items-center gap-1.5 transition-all active:scale-95"
         >
           <Plus className="w-4 h-4" /> 自定义动作
@@ -124,52 +213,116 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
         ))}
       </div>
 
-      {/* 动作列表卡片 */}
-      <div className="space-y-2.5">
+      {/* 删除拦截提示 */}
+      {libraryNotice && (
+        <div className="mb-3 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+          <span className="text-[11px] font-bold text-red-700 leading-relaxed flex-1">{libraryNotice}</span>
+          <button
+            onClick={() => setLibraryNotice(null)}
+            className="text-red-400 hover:text-red-600 shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* 动作列表卡片：按部位分组 */}
+      <div className="space-y-4">
         <div className="text-[11px] text-slate-400 font-medium px-1 flex items-center justify-between">
           <span>共找到 {filteredExercises.length} 个动作</span>
-          <span>包含插销片数/滑轮比例信息</span>
+          <span>按部位分组 · 内置优先</span>
         </div>
 
-        {filteredExercises.map((ex) => {
-          const cat = CATEGORY_LABELS[ex.category] || CATEGORY_LABELS.chest;
+        {groupedExercises.length === 0 && (
+          <div className="text-center py-10 border border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs bg-white">
+            没有找到匹配的动作，换个关键词试试
+          </div>
+        )}
+
+        {groupedExercises.map((group) => {
+          const cat = CATEGORY_LABELS[group.key as MuscleCategory] || CATEGORY_LABELS.chest;
           return (
-            <div
-              key={ex.id}
-              className="bg-white border border-slate-200/90 rounded-2xl p-3.5 hover:border-slate-300 shadow-sm transition-all flex items-start justify-between gap-3"
-            >
-              <div className="space-y-1.5 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="font-extrabold text-slate-900 text-sm tracking-tight">{ex.name}</h3>
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${cat.bg} ${cat.color}`}>
-                    {cat.label}
-                  </span>
-                  {ex.isCustom && (
-                    <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200 font-medium">
-                      用户自建
-                    </span>
-                  )}
-                </div>
-
-                {/* 属性标签：默认单位、滑轮 */}
-                <div className="flex items-center gap-2 flex-wrap text-[11px]">
-                  <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200 font-medium">
-                    计量: {UNIT_LABELS[ex.defaultUnit]}
-                  </span>
-
-                  {ex.defaultPulley && ex.defaultPulley !== 'none' && (
-                    <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md border border-indigo-200 font-semibold">
-                      {ex.defaultPulley === '1:1' ? '单滑轮 (1:1)' : '双滑轮 (2:1)'}
-                    </span>
-                  )}
-                </div>
-
-                {ex.notes && (
-                  <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">
-                    💡 {ex.notes}
-                  </p>
-                )}
+            <div key={group.key} className="space-y-2.5">
+              {/* 分组头：部位名 + 计数 */}
+              <div className="flex items-center gap-2 px-1">
+                <span className={`text-[11px] font-black px-2 py-0.5 rounded-full border ${cat.bg} ${cat.color}`}>
+                  {group.label}
+                </span>
+                <span className="text-[11px] text-slate-400 font-semibold">
+                  {group.items.length} 个动作
+                </span>
+                <div className="flex-1 h-px bg-slate-200/80" />
               </div>
+
+              {group.items.map((ex) => {
+                const exCat = CATEGORY_LABELS[ex.category] || CATEGORY_LABELS.chest;
+                return (
+                  <div
+                    key={ex.id}
+                    className="bg-white border border-slate-200/90 rounded-2xl p-3.5 hover:border-slate-300 shadow-sm transition-all flex items-start justify-between gap-3"
+                  >
+                    <div className="space-y-1.5 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-extrabold text-slate-900 text-sm tracking-tight">{ex.name}</h3>
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${exCat.bg} ${exCat.color}`}>
+                          {exCat.label}
+                        </span>
+                        {ex.isCustom && (
+                          <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200 font-medium">
+                            用户自建
+                          </span>
+                        )}
+                        {ex.isUnilateral && (
+                          <span className="text-[10px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded border border-teal-200 font-semibold flex items-center gap-0.5">
+                            <ArrowLeftRight className="w-3 h-3" /> 左右独立
+                          </span>
+                        )}
+                      </div>
+
+                      {/* 属性标签：默认单位、滑轮 */}
+                      <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200 font-medium">
+                          计量: {UNIT_LABELS[ex.defaultUnit]}
+                        </span>
+
+                        {ex.defaultPulley && ex.defaultPulley !== 'none' && (
+                          <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md border border-indigo-200 font-semibold">
+                            {ex.defaultPulley === '1:1' ? '单滑轮 (1:1)' : '双滑轮 (2:1)'}
+                          </span>
+                        )}
+                      </div>
+
+                      {ex.notes && (
+                        <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">
+                          💡 {ex.notes}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* 自建动作：编辑 / 删除 */}
+                    {ex.isCustom && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(ex)}
+                          className="p-1.5 text-blue-600 hover:text-blue-700 rounded-lg hover:bg-blue-50 transition-colors"
+                          title="编辑该自定义动作"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteExercise(ex)}
+                          className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                          title="删除该自定义动作"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           );
         })}
@@ -180,9 +333,11 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
         <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg p-5 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-black text-slate-900 text-base">添加自定义健身动作</h3>
+              <h3 className="font-black text-slate-900 text-base">
+                {editingExercise ? '编辑自定义健身动作' : '添加自定义健身动作'}
+              </h3>
               <button
-                onClick={() => setIsAddModalOpen(false)}
+                onClick={closeModal}
                 className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
               >
                 <X className="w-5 h-5" />
@@ -253,6 +408,28 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                 </div>
               </div>
 
+              {/* 左右独立（单侧）开关 */}
+              <button
+                type="button"
+                onClick={() => setNewUnilateral(v => !v)}
+                className="w-full flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-left"
+              >
+                <span className="flex items-start gap-2">
+                  <ArrowLeftRight className={`w-4 h-4 mt-0.5 shrink-0 ${newUnilateral ? 'text-teal-600' : 'text-slate-400'}`} />
+                  <span>
+                    <span className="block text-xs font-bold text-slate-700">左右独立动作（单侧）</span>
+                    <span className="block text-[10px] text-slate-400 mt-0.5">开启后训练时左右分别记录重量与次数</span>
+                  </span>
+                </span>
+                <span
+                  className={`w-9 h-5 rounded-full shrink-0 relative transition-colors ${newUnilateral ? 'bg-teal-600' : 'bg-slate-300'}`}
+                >
+                  <span
+                    className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${newUnilateral ? 'left-[1.125rem]' : 'left-0.5'}`}
+                  />
+                </span>
+              </button>
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">动作要领或器械备注</label>
                 <input
@@ -268,7 +445,7 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
             <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setIsAddModalOpen(false)}
+                onClick={closeModal}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold rounded-xl"
               >
                 取消
@@ -278,12 +455,23 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                 onClick={handleCreateExercise}
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-md shadow-blue-500/20"
               >
-                保存到动作库
+                {editingExercise ? '保存修改' : '保存到动作库'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* 统一确认抽屉 */}
+      <ConfirmSheet
+        open={confirmState.open}
+        title={confirmState.title}
+        description={confirmState.description}
+        confirmText={confirmState.confirmText}
+        danger
+        onCancel={() => setConfirmState(prev => ({ ...prev, open: false }))}
+        onConfirm={confirmState.onConfirm}
+      />
     </div>
   );
 };

@@ -122,6 +122,8 @@ export const PlansView: React.FC<PlansViewProps> = ({
       targetWeight: exercise.defaultUnit === 'plates' ? 10 : 30,
       targetUnit: exercise.defaultUnit,
       pulleyRatio: exercise.defaultPulley || 'none',
+      // 左右独立动作默认带入单侧标记，开练时左右分别记录
+      isUnilateral: exercise.isUnilateral || undefined,
       notes: exercise.notes || ''
     };
     setEditingPlan({
@@ -233,6 +235,11 @@ export const PlansView: React.FC<PlansViewProps> = ({
                               {pe.targetWeight !== undefined && (
                                 <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
                                   {pe.targetWeight}{unitStr}{pulleyStr}
+                                </span>
+                              )}
+                              {pe.isUnilateral && (
+                                <span className="text-[10px] font-bold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200">
+                                  左右独立
                                 </span>
                               )}
                             </>
@@ -612,6 +619,31 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                   <option value="bodyweight">自重</option>
                                 </select>
                               </div>
+
+                              {/* 左右独立（单侧）开关：仅普通动作提供，超级组不支持分侧 */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newExs = [...editingPlan.exercises];
+                                  newExs[idx].isUnilateral = newExs[idx].isUnilateral ? undefined : true;
+                                  setEditingPlan({ ...editingPlan, exercises: newExs });
+                                }}
+                                className={`bg-white p-1.5 rounded-lg border flex items-center justify-between transition-colors ${
+                                  pe.isUnilateral ? 'border-teal-300 bg-teal-50' : 'border-slate-200'
+                                }`}
+                              >
+                                <span className={`font-medium ${pe.isUnilateral ? 'text-teal-700' : 'text-slate-500'}`}>
+                                  左右独立:
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <span className={`w-8 h-4 rounded-full relative transition-colors ${pe.isUnilateral ? 'bg-teal-600' : 'bg-slate-300'}`}>
+                                    <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-all ${pe.isUnilateral ? 'left-[1.125rem]' : 'left-0.5'}`} />
+                                  </span>
+                                  <span className={`font-bold ${pe.isUnilateral ? 'text-teal-700' : 'text-slate-400'}`}>
+                                    {pe.isUnilateral ? '开' : '关'}
+                                  </span>
+                                </span>
+                              </button>
                             </div>
                           )}
 
@@ -623,6 +655,8 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                 onClick={() => {
                                   const newExs = [...editingPlan.exercises];
                                   newExs[idx].isDropSet = true;
+                                  // 超级组不支持分侧记录，切为超级组时清除单侧标记
+                                  newExs[idx].isUnilateral = undefined;
                                   if (!newExs[idx].dropStages) {
                                     newExs[idx].dropStages = [
                                       { id: 'stg-1', weightOrPlates: 10, unit: 'kg', reps: 12 },

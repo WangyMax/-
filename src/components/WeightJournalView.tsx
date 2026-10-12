@@ -3,9 +3,9 @@ import {
   Scale, Plus, TrendingDown, TrendingUp,
   Trash2, Download, Upload, CheckCircle2, MessageSquare,
   Dumbbell, Flame, RotateCcw, Check, ChevronDown, ChevronUp,
-  Layers, Coffee, Target, CalendarDays, Zap
+  Layers, Coffee, Target, CalendarDays, Zap, Pencil
 } from 'lucide-react';
-import { WeightLog, WorkoutSession } from '../types';
+import { WeightLog, WorkoutSession, UnilateralSide } from '../types';
 import { StorageService } from '../utils/storage';
 import { todayLocalDate, shiftLocalDate, weekdayOf } from '../utils/date';
 import {
@@ -63,6 +63,9 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     open: boolean; title: string; description: string; confirmText: string;
     onConfirm: () => void;
   }>({ open: false, title: '', description: '', confirmText: '确认删除', onConfirm: () => {} });
+
+  // 历史训练编辑：正在编辑的会话深拷贝（同 id 写回，休息日仅可改备注）
+  const [editingSession, setEditingSession] = useState<WorkoutSession | null>(null);
 
   useEffect(() => {
     refreshData();
@@ -190,6 +193,67 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       },
     });
   };
+
+  // ================= 历史训练记录编辑（同 id 写回） =================
+  const startEditSession = (sess: WorkoutSession) => {
+    // 深拷贝，避免编辑过程中污染列表中的原始对象
+    setEditingSession(JSON.parse(JSON.stringify(sess)) as WorkoutSession);
+  };
+
+  const cancelEditSession = () => setEditingSession(null);
+
+  const saveEditSession = () => {
+    if (!editingSession) return;
+    // addSession 对同 id 做原地替换，因此编辑是覆盖写回而非新增
+    StorageService.addSession(editingSession);
+    setEditingSession(null);
+    refreshData();
+    if (onDataChanged) onDataChanged();
+    setImportStatus('已保存历史记录修改');
+    setTimeout(() => setImportStatus(null), 2500);
+  };
+
+  // 在编辑草稿上做不可变更新
+  const patchEditing = (fn: (draft: WorkoutSession) => void) => {
+    setEditingSession(prev => {
+      if (!prev) return prev;
+      const draft = JSON.parse(JSON.stringify(prev)) as WorkoutSession;
+      fn(draft);
+      return draft;
+    });
+  };
+
+  const editSetField = (exIdx: number, setIdx: number, field: 'weightOrPlates' | 'reps', val: number) =>
+    patchEditing(d => { d.exercises[exIdx].sets[setIdx][field] = Math.max(0, val); });
+
+  const editUnilateralField = (
+    exIdx: number, setIdx: number, side: 'left' | 'right', field: 'weight' | 'reps', val: number
+  ) =>
+    patchEditing(d => {
+      const s = d.exercises[exIdx].sets[setIdx];
+      const base: UnilateralSide = s[side] || { weight: s.weightOrPlates, reps: s.reps };
+      const next: UnilateralSide = { weight: base.weight, reps: base.reps };
+      next[field] = Math.max(0, val);
+      s[side] = next;
+      s.unilateral = true;
+      // 主字段保持左侧副本，兼容未分侧展示与容量统计
+      if (s.left) {
+        s.weightOrPlates = s.left.weight;
+        s.reps = s.left.reps;
+      }
+    });
+
+  const editRemoveSet = (exIdx: number, setIdx: number) =>
+    patchEditing(d => {
+      const ex = d.exercises[exIdx];
+      if (ex.sets.length <= 1) return;
+      ex.sets.splice(setIdx, 1);
+      ex.sets.forEach((s, i) => { s.setNumber = i + 1; });
+    });
+
+  const editSessionNotes = (val: string) => patchEditing(d => { d.notes = val; });
+  const editExerciseNotes = (exIdx: number, val: string) =>
+    patchEditing(d => { d.exercises[exIdx].notes = val; });
 
   // 恢复内置官方数据 (10.06 - 10.09)
   const handleRestoreOfficialData = () => {
@@ -678,14 +742,24 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => promptDeleteSession(sess.id, sess.planName, sess.date)}
-                      className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-amber-100/50 transition-colors"
-                      title="删除此条记录"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => startEditSession(sess)}
+                        className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-amber-100/60 transition-colors"
+                        title="编辑休息日备注"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => promptDeleteSession(sess.id, sess.planName, sess.date)}
+                        className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-amber-100/50 transition-colors"
+                        title="删除此条记录"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 );
               }
@@ -738,6 +812,17 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEditSession(sess);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
+                        title="编辑该条训练记录"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -815,7 +900,9 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                                       key={sIdx}
                                       className="bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200 text-[11px] font-mono text-slate-700 font-medium"
                                     >
-                                      {s.weightOrPlates}{unitStr} × {s.reps}次
+                                      {s.unilateral && s.left && s.right
+                                        ? `左${s.left.weight}×${s.left.reps} / 右${s.right.weight}×${s.right.reps}${unitStr}`
+                                        : `${s.weightOrPlates}${unitStr} × ${s.reps}次`}
                                     </span>
                                   );
                                 })}
@@ -1374,6 +1461,174 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           </label>
         </div>
       </div>
+
+      {/* 历史训练编辑弹窗（z-70，同 id 写回；休息日仅备注可改） */}
+      {editingSession && (
+        <div
+          className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
+          onClick={cancelEditSession}
+        >
+          <div
+            className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[88vh] flex flex-col shadow-2xl animate-sheet-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 弹窗头部 */}
+            <div className="p-4 border-b border-slate-100 flex items-start justify-between gap-2 shrink-0">
+              <div className="min-w-0">
+                <h3 className="font-black text-slate-900 text-sm truncate">
+                  {editingSession.isRestDay ? '编辑休息日记录' : editingSession.planName}
+                </h3>
+                <p className="text-[11px] text-slate-400 font-mono mt-0.5">{editingSession.date}</p>
+              </div>
+              <button
+                type="button"
+                onClick={cancelEditSession}
+                className="text-xs text-slate-500 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg font-bold shrink-0"
+              >
+                关闭
+              </button>
+            </div>
+
+            {/* 弹窗内容（可滚动） */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
+              <div>
+                <label className="text-[11px] text-slate-500 block mb-1">训练备注</label>
+                <textarea
+                  rows={2}
+                  value={editingSession.notes || ''}
+                  onChange={(e) => editSessionNotes(e.target.value)}
+                  placeholder="记录当日状态、器械手感等..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+                />
+              </div>
+
+              {!editingSession.isRestDay && editingSession.exercises.map((e, exIdx) => {
+                const unitStr = e.currentUnit === 'plates' ? '片'
+                  : e.currentUnit === 'assisted' ? '助力'
+                  : e.currentUnit === 'bodyweight' ? '自重' : 'kg';
+                return (
+                  <div key={exIdx} className="bg-slate-50/70 border border-slate-200 rounded-xl p-2.5 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-slate-800 text-xs truncate min-w-0">
+                        {exIdx + 1}. {e.exerciseName}
+                      </span>
+                      {e.isUnilateral && (
+                        <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded shrink-0">
+                          左右独立
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {e.sets.map((s, setIdx) => (
+                        <div
+                          key={setIdx}
+                          className="bg-white rounded-lg border border-slate-200 p-2 flex flex-wrap items-center gap-1.5"
+                        >
+                          <span className="w-6 h-6 rounded-lg bg-slate-100 text-slate-600 text-[11px] font-black flex items-center justify-center shrink-0">
+                            {s.setNumber}
+                          </span>
+
+                          {s.isDropSet && s.dropStages && s.dropStages.length > 0 ? (
+                            <span className="text-[10px] text-slate-500 font-mono flex-1 min-w-0 truncate">
+                              {s.dropStages.map(st => `${st.weightOrPlates}×${st.reps}`).join(' ➔ ')}
+                            </span>
+                          ) : s.unilateral ? (
+                            (['left', 'right'] as const).map(side => {
+                              const sd: UnilateralSide = s[side] || { weight: s.weightOrPlates, reps: s.reps };
+                              return (
+                                <div key={side} className="flex items-center gap-1 min-w-0">
+                                  <span className="text-[10px] font-black text-indigo-600 w-3 shrink-0">
+                                    {side === 'left' ? '左' : '右'}
+                                  </span>
+                                  <input
+                                    type="number"
+                                    value={sd.weight || ''}
+                                    onChange={(ev) => editUnilateralField(exIdx, setIdx, side, 'weight', parseFloat(ev.target.value) || 0)}
+                                    className="w-14 min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                                  />
+                                  <span className="text-[10px] text-slate-400 shrink-0">×</span>
+                                  <input
+                                    type="number"
+                                    value={sd.reps || ''}
+                                    onChange={(ev) => editUnilateralField(exIdx, setIdx, side, 'reps', parseInt(ev.target.value) || 0)}
+                                    className="w-12 min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                                  />
+                                  {side === 'left' && (
+                                    <span className="text-[10px] text-slate-400 shrink-0">{unitStr}</span>
+                                  )}
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <>
+                              <input
+                                type="number"
+                                value={s.weightOrPlates || ''}
+                                onChange={(ev) => editSetField(exIdx, setIdx, 'weightOrPlates', parseFloat(ev.target.value) || 0)}
+                                className="w-16 min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                              />
+                              <span className="text-[10px] text-slate-400 shrink-0">{unitStr}</span>
+                              <span className="text-[10px] text-slate-400 shrink-0">×</span>
+                              <input
+                                type="number"
+                                value={s.reps || ''}
+                                onChange={(ev) => editSetField(exIdx, setIdx, 'reps', parseInt(ev.target.value) || 0)}
+                                className="w-14 min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                              />
+                            </>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => editRemoveSet(exIdx, setIdx)}
+                            disabled={e.sets.length <= 1}
+                            className="ml-auto shrink-0 p-1.5 text-slate-300 hover:text-red-600 disabled:opacity-40 disabled:hover:text-slate-300 rounded-lg"
+                            title="删除该组"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">动作备注</label>
+                      <input
+                        type="text"
+                        value={e.notes || ''}
+                        onChange={(ev) => editExerciseNotes(exIdx, ev.target.value)}
+                        placeholder="该动作备注（可留空）"
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 弹窗底部操作（两列等宽，320 下不挤出） */}
+            <div className="p-4 pt-3 border-t border-slate-100 shrink-0">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={cancelEditSession}
+                  className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={saveEditSession}
+                  className="py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95"
+                >
+                  保存修改
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 统一确认抽屉 */}
       <ConfirmSheet
