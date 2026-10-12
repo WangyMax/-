@@ -62,7 +62,7 @@ export function App() {
         )}
 
         {activeTab === 'journal' && (
-          <WeightJournalView />
+          <WeightJournalView allExercises={allExercises} />
         )}
       </main>
 

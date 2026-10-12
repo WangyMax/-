@@ -5,7 +5,7 @@ import {
   Dumbbell, Flame, RotateCcw, Check, ChevronDown, ChevronUp,
   Layers, Coffee, Target, CalendarDays, Zap, Pencil
 } from 'lucide-react';
-import { WeightLog, WorkoutSession, UnilateralSide } from '../types';
+import { WeightLog, WorkoutSession, UnilateralSide, Exercise } from '../types';
 import { StorageService } from '../utils/storage';
 import { todayLocalDate, shiftLocalDate, weekdayOf } from '../utils/date';
 import {
@@ -16,6 +16,7 @@ import { ConfirmSheet } from './ConfirmSheet';
 
 interface WeightJournalViewProps {
   onDataChanged?: () => void;
+  allExercises?: Exercise[];
 }
 
 const SLOT_SHORT: Record<string, string> = {
@@ -26,6 +27,7 @@ const SLOT_SHORT: Record<string, string> = {
 
 export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   onDataChanged,
+  allExercises,
 }) => {
   // 当前子标签: 'training' | 'weight'
   const [activeSubTab, setActiveSubTab] = useState<'training' | 'weight'>('training');
@@ -254,6 +256,116 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const editSessionNotes = (val: string) => patchEditing(d => { d.notes = val; });
   const editExerciseNotes = (exIdx: number, val: string) =>
     patchEditing(d => { d.exercises[exIdx].notes = val; });
+
+  // 历史编辑：动作改名（仅改本条记录的显示名，不动动作库）
+  const editExerciseName = (exIdx: number, val: string) =>
+    patchEditing(d => { d.exercises[exIdx].exerciseName = val; });
+
+  // 历史编辑：切换单双侧；切到单侧时左右默认取主字段值，切回双侧保留数据仅不再分侧展示
+  const editToggleUnilateral = (exIdx: number, on: boolean) =>
+    patchEditing(d => {
+      const ex = d.exercises[exIdx];
+      ex.isUnilateral = on || undefined;
+      ex.sets.forEach(s => {
+        if (s.isDropSet) return;
+        if (on) {
+          s.unilateral = true;
+          if (!s.left) s.left = { weight: s.weightOrPlates, reps: s.reps };
+          if (!s.right) s.right = { weight: s.weightOrPlates, reps: s.reps };
+        } else {
+          s.unilateral = undefined;
+        }
+      });
+    });
+
+  // 历史编辑：加一组（复制末组，单侧复制左右）
+  const editAddSet = (exIdx: number) =>
+    patchEditing(d => {
+      const ex = d.exercises[exIdx];
+      const last = ex.sets[ex.sets.length - 1];
+      if (!last) return;
+      const copy = JSON.parse(JSON.stringify(last));
+      copy.id = `s-edit-${Date.now()}`;
+      copy.setNumber = ex.sets.length + 1;
+      copy.completed = true;
+      ex.sets.push(copy);
+    });
+
+  // 历史编辑：删除整组动作
+  const editRemoveExercise = (exIdx: number) =>
+    patchEditing(d => { d.exercises.splice(exIdx, 1); });
+
+  // 历史编辑挑选替换动作：弹窗状态
+  const [replaceExIdx, setReplaceExIdx] = useState<number | null>(null);
+  const [replaceSearch, setReplaceSearch] = useState('');
+
+  // 历史编辑：换动作（保留组数与备注，重量次数沿用原组；单侧按新动作标记重建左右）
+  const editReplaceExercise = (exIdx: number, neo: { id: string; name: string; category: WorkoutSession['exercises'][number]['category']; defaultUnit: WorkoutSession['exercises'][number]['currentUnit']; defaultPulley: WorkoutSession['exercises'][number]['pulleyRatio']; isUnilateral?: boolean }) =>
+    patchEditing(d => {
+      const ex = d.exercises[exIdx];
+      const n = ex.sets.length || 1;
+      ex.exerciseId = neo.id;
+      ex.exerciseName = neo.name;
+      ex.category = neo.category;
+      ex.currentUnit = neo.defaultUnit;
+      ex.pulleyRatio = neo.defaultPulley;
+      ex.isUnilateral = neo.isUnilateral || undefined;
+      ex.sets = Array.from({ length: n }, (_, i) => {
+        const old = ex.sets[i];
+        const w = old?.weightOrPlates ?? 30;
+        const r = old?.reps ?? 12;
+        const base = {
+          id: `s-edit-${Date.now()}-${i}`,
+          setNumber: i + 1,
+          unit: neo.defaultUnit,
+          weightOrPlates: w,
+          reps: r,
+          completed: true,
+          pulleyRatio: neo.defaultPulley,
+        };
+        if (neo.isUnilateral) {
+          const lw = old?.left?.weight ?? w;
+          const lr = old?.left?.reps ?? r;
+          const rw = old?.right?.weight ?? w;
+          const rr = old?.right?.reps ?? r;
+          return { ...base, unilateral: true, left: { weight: lw, reps: lr }, right: { weight: rw, reps: rr } };
+        }
+        return base;
+      });
+    });
+
+  // 历史编辑：新增动作（从动作库挑选，默认 3 组）
+  const [addExOpen, setAddExOpen] = useState(false);
+  const [addExSearch, setAddExSearch] = useState('');
+  const editAddExercise = (neo: { id: string; name: string; category: WorkoutSession['exercises'][number]['category']; defaultUnit: WorkoutSession['exercises'][number]['currentUnit']; defaultPulley: WorkoutSession['exercises'][number]['pulleyRatio']; isUnilateral?: boolean }) =>
+    patchEditing(d => {
+      const w = neo.defaultUnit === 'plates' ? 10 : 30;
+      const sets = [1, 2, 3].map(i => {
+        const base = {
+          id: `s-edit-${Date.now()}-${i}`,
+          setNumber: i,
+          unit: neo.defaultUnit,
+          weightOrPlates: w,
+          reps: 12,
+          completed: true,
+          pulleyRatio: neo.defaultPulley,
+        };
+        if (neo.isUnilateral) {
+          return { ...base, unilateral: true, left: { weight: w, reps: 12 }, right: { weight: w, reps: 12 } };
+        }
+        return base;
+      });
+      d.exercises.push({
+        exerciseId: neo.id,
+        exerciseName: neo.name,
+        category: neo.category,
+        pulleyRatio: neo.defaultPulley,
+        currentUnit: neo.defaultUnit,
+        isUnilateral: neo.isUnilateral || undefined,
+        sets,
+        notes: '',
+      });
+    });
 
   // 恢复内置官方数据 (10.06 - 10.09)
   const handleRestoreOfficialData = () => {
@@ -1508,14 +1620,46 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   : e.currentUnit === 'bodyweight' ? '自重' : 'kg';
                 return (
                   <div key={exIdx} className="bg-slate-50/70 border border-slate-200 rounded-xl p-2.5 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-slate-800 text-xs truncate min-w-0">
-                        {exIdx + 1}. {e.exerciseName}
-                      </span>
-                      {e.isUnilateral && (
+                    {/* 动作名：可直接改名（仅改本条记录） */}
+                    <input
+                      type="text"
+                      value={e.exerciseName}
+                      onChange={(ev) => editExerciseName(exIdx, ev.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500 min-w-0"
+                    />
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {e.isUnilateral ? (
                         <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded shrink-0">
                           左右独立
                         </span>
+                      ) : (
+                        <span className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded shrink-0">
+                          双侧
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => editToggleUnilateral(exIdx, !e.isUnilateral)}
+                        className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline shrink-0"
+                      >
+                        {e.isUnilateral ? '切回双侧' : '改为单侧'}
+                      </button>
+                      <span className="flex-1" />
+                      <button
+                        type="button"
+                        onClick={() => { setReplaceExIdx(exIdx); setReplaceSearch(''); }}
+                        className="text-[10px] font-bold text-slate-500 hover:text-blue-600 underline shrink-0"
+                      >
+                        换动作
+                      </button>
+                      {editingSession.exercises.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => editRemoveExercise(exIdx)}
+                          className="text-[10px] font-bold text-slate-400 hover:text-red-600 underline shrink-0"
+                        >
+                          删动作
+                        </button>
                       )}
                     </div>
 
@@ -1590,6 +1734,13 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                           </button>
                         </div>
                       ))}
+                      <button
+                        type="button"
+                        onClick={() => editAddSet(exIdx)}
+                        className="w-full py-1.5 text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-white border border-dashed border-slate-300 rounded-lg"
+                      >
+                        + 加一组
+                      </button>
                     </div>
 
                     <div>
@@ -1605,6 +1756,15 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   </div>
                 );
               })}
+              {!editingSession.isRestDay && (
+                <button
+                  type="button"
+                  onClick={() => { setAddExOpen(true); setAddExSearch(''); }}
+                  className="w-full py-2.5 text-xs font-bold text-blue-600 hover:text-blue-800 bg-blue-50/60 border border-dashed border-blue-300 rounded-xl flex items-center justify-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" /> 新增动作
+                </button>
+              )}
             </div>
 
             {/* 弹窗底部操作（两列等宽，320 下不挤出） */}
@@ -1629,6 +1789,90 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* 历史编辑：换动作 / 新增动作挑选弹窗 */}
+      {editingSession && (replaceExIdx !== null || addExOpen) && (() => {
+        const kw = (replaceExIdx !== null ? replaceSearch : addExSearch).toLowerCase();
+        const pool = (allExercises && allExercises.length > 0 ? allExercises : StorageService.getExercises())
+          .filter(e => !kw || e.name.toLowerCase().includes(kw));
+        const close = () => { setReplaceExIdx(null); setAddExOpen(false); };
+        const pick = (ex: Exercise) => {
+          if (replaceExIdx !== null) {
+            editReplaceExercise(replaceExIdx, {
+              id: ex.id, name: ex.name, category: ex.category,
+              defaultUnit: ex.defaultUnit, defaultPulley: ex.defaultPulley || 'none',
+              isUnilateral: ex.isUnilateral,
+            });
+          } else {
+            editAddExercise({
+              id: ex.id, name: ex.name, category: ex.category,
+              defaultUnit: ex.defaultUnit, defaultPulley: ex.defaultPulley || 'none',
+              isUnilateral: ex.isUnilateral,
+            });
+          }
+          close();
+        };
+        return (
+          <div
+            className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+            onClick={close}
+          >
+            <div
+              className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[80vh] flex flex-col p-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100 shrink-0">
+                <h3 className="font-black text-slate-900 text-sm">
+                  {replaceExIdx !== null ? '更换动作' : '新增动作到本条记录'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={close}
+                  className="text-xs text-slate-500 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg font-bold"
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="py-2 shrink-0">
+                <input
+                  type="text"
+                  placeholder="搜索动作名称..."
+                  value={replaceExIdx !== null ? replaceSearch : addExSearch}
+                  onChange={(e) => replaceExIdx !== null ? setReplaceSearch(e.target.value) : setAddExSearch(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+                />
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0 pr-0.5">
+                {pool.map(ex => (
+                  <div
+                    key={ex.id}
+                    onClick={() => pick(ex)}
+                    className="p-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200/90 rounded-xl flex items-center justify-between cursor-pointer transition-all"
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-bold text-slate-900 text-xs truncate">{ex.name}</span>
+                      {ex.isUnilateral && (
+                        <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1 py-0.5 rounded shrink-0">
+                          单侧
+                        </span>
+                      )}
+                      {ex.isCustom && (
+                        <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 px-1 py-0.5 rounded shrink-0">
+                          自建
+                        </span>
+                      )}
+                    </div>
+                    <Plus className="w-4 h-4 text-blue-600 shrink-0" />
+                  </div>
+                ))}
+                {pool.length === 0 && (
+                  <p className="text-center text-xs text-slate-400 py-6">没有匹配的动作，换个关键词试试</p>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 统一确认抽屉 */}
       <ConfirmSheet
