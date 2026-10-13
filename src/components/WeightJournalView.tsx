@@ -29,6 +29,19 @@ const SLOT_SHORT: Record<string, string> = {
   'post-workout': '练后',
 };
 
+// 历史编辑：规格胶囊与抽屉的简标（与开练页 WorkoutView 保持一致）
+const EDIT_UNIT_SHORT: Record<ResistanceUnit, string> = {
+  plates: '插销',
+  kg: '重量',
+  assisted: '助力',
+  bodyweight: '自重',
+};
+const EDIT_PULLEY_SHORT: Record<PulleyRatio, string> = {
+  none: '普通器械',
+  '1:1': '单滑轮',
+  '2:1': '双滑轮',
+};
+
 export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   onDataChanged,
   allExercises,
@@ -72,9 +85,11 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
   // 历史训练编辑：正在编辑的会话深拷贝（同 id 写回，休息日仅可改备注）
   const [editingSession, setEditingSession] = useState<WorkoutSession | null>(null);
+  // 历史编辑：当前打开规格抽屉（单位 + 滑轮）的动作索引
+  const [editSpecExIdx, setEditSpecExIdx] = useState<number | null>(null);
 
   // 弹窗打开时锁住底层 body 滚动，彻底杜绝滚动穿透
-  useLockBodyScroll(editingSession !== null || confirmState.open || showGoalEditor);
+  useLockBodyScroll(editingSession !== null || editSpecExIdx !== null || confirmState.open || showGoalEditor);
 
   // 历史编辑弹窗内的自定义新动作折叠表单状态
   const [showHistoryCustomForm, setShowHistoryCustomForm] = useState(false);
@@ -277,6 +292,24 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   // 历史编辑：动作改名（仅改本条记录的显示名，不动动作库）
   const editExerciseName = (exIdx: number, val: string) =>
     patchEditing(d => { d.exercises[exIdx].exerciseName = val; });
+
+  // 历史编辑：切换计量单位（整组同步）——片 / kg / 助力 / 自重
+  const editChangeUnit = (exIdx: number, unit: ResistanceUnit) =>
+    patchEditing(d => {
+      const ex = d.exercises[exIdx];
+      if (!ex) return;
+      ex.currentUnit = unit;
+      ex.sets.forEach(s => { s.unit = unit; });
+    });
+
+  // 历史编辑：切换滑轮比例（整组同步）——普通 / 单滑轮 1:1 / 双滑轮 2:1
+  const editChangePulley = (exIdx: number, ratio: PulleyRatio) =>
+    patchEditing(d => {
+      const ex = d.exercises[exIdx];
+      if (!ex) return;
+      ex.pulleyRatio = ratio;
+      ex.sets.forEach(s => { s.pulleyRatio = ratio; });
+    });
 
   // 历史编辑：切换单双侧；切到单侧时左右默认取主字段值，切回双侧保留数据仅不再分侧展示
   const editToggleUnilateral = (exIdx: number, on: boolean) =>
@@ -1648,6 +1681,20 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       onChange={(ev) => editExerciseName(exIdx, ev.target.value)}
                       className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500 min-w-0"
                     />
+                    {/* 规格胶囊：展示当前计量单位与滑轮，点击打开规格抽屉 */}
+                    <button
+                      type="button"
+                      onClick={() => setEditSpecExIdx(exIdx)}
+                      className="w-full flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2 py-1 text-left active:scale-[0.99] transition-all"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                      <span className="text-[10px] font-bold text-slate-500 shrink-0">规格</span>
+                      <span className="text-[11px] font-bold text-indigo-700 truncate min-w-0">
+                        {EDIT_UNIT_SHORT[e.currentUnit]} · {EDIT_PULLEY_SHORT[e.pulleyRatio]}{e.pulleyRatio !== 'none' ? ` (${e.pulleyRatio})` : ''}
+                      </span>
+                      <span className="flex-1" />
+                      <Pencil className="w-3 h-3 text-slate-400 shrink-0" />
+                    </button>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {e.isUnilateral ? (
                         <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded shrink-0">
@@ -1807,6 +1854,63 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 历史编辑：规格抽屉（单位 + 滑轮），z-80 盖在编辑弹窗之上 */}
+      {editingSession && editSpecExIdx !== null && editingSession.exercises[editSpecExIdx] && (
+        <div
+          className="fixed inset-0 z-[80] bg-slate-900/40 flex items-end justify-center animate-fade-in pt-[max(env(safe-area-inset-top),46px)]"
+          onClick={() => setEditSpecExIdx(null)}
+        >
+          <div
+            className="bg-white w-full max-w-md rounded-t-3xl p-5 pb-8 shadow-2xl animate-sheet-up max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] overflow-y-auto modal-scroll overscroll-contain"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <h3 className="font-black text-sm mb-1">{editingSession.exercises[editSpecExIdx].exerciseName}</h3>
+            <p className="text-[11px] text-slate-400 mb-3">计量规格（修改后整组同步）</p>
+            <div className="text-xs font-bold text-slate-600 mb-1.5">计量单位</div>
+            <div className="grid grid-cols-4 gap-1.5 mb-4">
+              {(['plates', 'kg', 'assisted', 'bodyweight'] as ResistanceUnit[]).map(u => (
+                <button
+                  key={u}
+                  type="button"
+                  onClick={() => editChangeUnit(editSpecExIdx, u)}
+                  className={`py-2.5 rounded-xl text-xs font-bold transition-all ${
+                    editingSession.exercises[editSpecExIdx].currentUnit === u
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {u === 'plates' ? '插销(片)' : u === 'kg' ? '重量(kg)' : u === 'assisted' ? '助力' : '自重'}
+                </button>
+              ))}
+            </div>
+            <div className="text-xs font-bold text-slate-600 mb-1.5">滑轮比例</div>
+            <div className="grid grid-cols-3 gap-1.5 mb-4">
+              {(['none', '1:1', '2:1'] as PulleyRatio[]).map(p => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => editChangePulley(editSpecExIdx, p)}
+                  className={`py-2.5 rounded-xl text-xs font-bold transition-all ${
+                    editingSession.exercises[editSpecExIdx].pulleyRatio === p
+                      ? 'bg-indigo-600 text-white shadow'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {p === 'none' ? '普通器械' : p === '1:1' ? '单滑轮 1:1' : '双滑轮 2:1'}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setEditSpecExIdx(null)}
+              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold"
+            >
+              完成
+            </button>
           </div>
         </div>
       )}
