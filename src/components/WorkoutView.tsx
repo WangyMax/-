@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import {
   WorkoutPlan, WorkoutSession, ExerciseLog, WorkoutSet,
-  ResistanceUnit, PulleyRatio, CATEGORY_LABELS, UNIT_LABELS, Exercise,
+  ResistanceUnit, PulleyRatio, MuscleCategory, CATEGORY_LABELS, UNIT_LABELS, Exercise,
   UnilateralSide
 } from '../types';
 import { StorageService } from '../utils/storage';
@@ -19,6 +19,7 @@ interface WorkoutViewProps {
   onOpenPlansTab: () => void;
   allExercises: Exercise[];
   onFocusModeChange?: (inFocus: boolean) => void;
+  onRefreshExercises?: () => void;
 }
 
 // 分化罗盘定义：胸 → 背 → 肩 → 腿 → 休
@@ -62,11 +63,21 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   onOpenPlansTab,
   allExercises,
   onFocusModeChange,
+  onRefreshExercises,
 }) => {
   const [plans, setPlans] = useState<WorkoutPlan[]>([]);
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
   const [showAddExModal, setShowAddExModal] = useState(false);
+  // 添加动作弹窗内的自定义动作折叠表单
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [customName, setCustomName] = useState('');
+  const [customCategory, setCustomCategory] = useState<MuscleCategory>('chest');
+  const [customUnit, setCustomUnit] = useState<ResistanceUnit>('plates');
+  const [customPulley, setCustomPulley] = useState<PulleyRatio>('none');
+  const [customUnilateral, setCustomUnilateral] = useState(false);
+  const [customNotes, setCustomNotes] = useState('');
+  const [customError, setCustomError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [backfillDate, setBackfillDate] = useState(() => yesterdayLocalDate());
@@ -359,6 +370,59 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     exercises[exIndex].pulleyRatio = ratio;
     exercises[exIndex].sets.forEach(s => s.pulleyRatio = ratio);
     updateActiveSession({ ...activeSession, exercises });
+  };
+
+  // 切换左右手分开记录：开启时为每组补左右值，关闭时清除分侧标记但保留主字段
+  // rememberToLibrary 为真时同时写回动作库（以后该动作默认单侧）
+  const changeRecordMode = (exIndex: number, unilateral: boolean, rememberToLibrary: boolean) => {
+    if (!activeSession) return;
+    const exercises = [...activeSession.exercises];
+    const target = exercises[exIndex];
+    target.isUnilateral = unilateral || undefined;
+    target.sets.forEach(s => {
+      // 超级组阶梯不支持分侧，保持原样
+      if (s.isDropSet) return;
+      if (unilateral) {
+        s.unilateral = true;
+        if (!s.left) s.left = { weight: s.weightOrPlates, reps: s.reps };
+        if (!s.right) s.right = { weight: s.weightOrPlates, reps: s.reps };
+        s.weightOrPlates = s.left.weight;
+        s.reps = s.left.reps;
+      } else {
+        s.unilateral = undefined;
+      }
+    });
+    updateActiveSession({ ...activeSession, exercises });
+
+    if (rememberToLibrary) {
+      const all = StorageService.getExercises();
+      const ex = all.find(e => e.id === target.exerciseId);
+      if (ex) {
+        ex.isUnilateral = unilateral || undefined;
+        StorageService.saveExercises(all);
+        if (onRefreshExercises) onRefreshExercises();
+      }
+    }
+  };
+
+  // 在自由训练中新建自定义动作：写入动作库后立即加入本次训练
+  const createAndAddCustomExercise = (data: {
+    name: string; category: MuscleCategory; defaultUnit: ResistanceUnit;
+    defaultPulley: PulleyRatio; isUnilateral: boolean; notes: string;
+  }): boolean => {
+    if (!activeSession) return false;
+    const created = StorageService.addCustomExercise({
+      name: data.name.trim(),
+      category: data.category,
+      defaultUnit: data.defaultUnit,
+      defaultPulley: data.defaultPulley,
+      isUnilateral: data.isUnilateral || undefined,
+      notes: data.notes.trim() || undefined,
+      isFavorite: true,
+    });
+    if (onRefreshExercises) onRefreshExercises();
+    addExerciseToCurrent(created);
+    return true;
   };
 
   // 删除动作
@@ -1362,6 +1426,55 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 </button>
               ))}
             </div>
+
+            {/* 记录方式：双侧 / 左右手分开（超级组阶梯不支持分侧，故置灰） */}
+            {(() => {
+              const specEx = activeSession.exercises[specExIdx];
+              const isDrop = specEx.sets.some(s => s.isDropSet);
+              const isUni = Boolean(specEx.isUnilateral) && !isDrop;
+              return (
+                <>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="text-xs font-bold text-slate-600 shrink-0">记录方式</span>
+                    <div className="grid grid-cols-2 gap-1 flex-1 min-w-0">
+                      <button
+                        type="button"
+                        disabled={isDrop}
+                        onClick={() => changeRecordMode(specExIdx, false, false)}
+                        className={`py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-40 ${
+                          !isUni ? 'bg-slate-700 text-white shadow' : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        双侧
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isDrop}
+                        onClick={() => changeRecordMode(specExIdx, true, false)}
+                        className={`py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-40 ${
+                          isUni ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        左右手分开
+                      </button>
+                    </div>
+                  </div>
+                  {isDrop ? (
+                    <p className="text-[10px] text-slate-400 mb-4">递减超级组按大组记录，不支持左右分开</p>
+                  ) : (
+                    <label className="flex items-center gap-1.5 text-[10px] text-slate-500 mb-4 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(specEx.isUnilateral)}
+                        onChange={(e) => changeRecordMode(specExIdx, Boolean(specEx.isUnilateral), e.target.checked)}
+                        className="w-3.5 h-3.5 accent-indigo-600"
+                      />
+                      <span>同时记住到动作库（以后该动作默认左右分开）</span>
+                    </label>
+                  )}
+                </>
+              );
+            })()}
             <button
               type="button"
               onClick={() => setSpecExIdx(null)}
@@ -1396,6 +1509,117 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
               />
             </div>
+
+            {/* 自定义新动作：默认收起，点开才展开表单 */}
+            <button
+              type="button"
+              onClick={() => { setShowCustomForm(v => !v); setCustomError(null); }}
+              aria-expanded={showCustomForm}
+              className="w-full mb-2 px-3 py-2 border border-dashed border-indigo-300 bg-indigo-50/60 rounded-xl flex items-center gap-2 text-left active:scale-[0.99] transition-all"
+            >
+              <Plus className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span className="text-xs font-black text-indigo-800 shrink-0">自定义新动作</span>
+              <span className="text-[10px] text-slate-400 truncate flex-1 min-w-0">动作库里没有？在这里直接新增</span>
+              {showCustomForm ? <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+            </button>
+
+            {showCustomForm && (
+              <div className="mb-2 p-3 border border-slate-200 rounded-xl bg-slate-50/70 space-y-2.5 animate-card-in">
+                {customError && (
+                  <p className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">{customError}</p>
+                )}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">动作名称 *</label>
+                  <input
+                    type="text"
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    placeholder="例如: 史密斯下斜推胸"
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">目标肌肉群</label>
+                    <select
+                      value={customCategory}
+                      onChange={(e) => setCustomCategory(e.target.value as MuscleCategory)}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="chest">胸部</option>
+                      <option value="back">背部</option>
+                      <option value="shoulder">肩部</option>
+                      <option value="leg">腿部</option>
+                      <option value="biceps">肱二头</option>
+                      <option value="triceps">肱三头</option>
+                      <option value="abs">腹部核心</option>
+                      <option value="cardio">有氧训练</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">计量单位</label>
+                    <select
+                      value={customUnit}
+                      onChange={(e) => setCustomUnit(e.target.value as ResistanceUnit)}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="plates">插销 (片)</option>
+                      <option value="kg">重量 (kg)</option>
+                      <option value="assisted">助力 (kg)</option>
+                      <option value="bodyweight">自重</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">滑轮类型</label>
+                  <select
+                    value={customPulley}
+                    onChange={(e) => setCustomPulley(e.target.value as PulleyRatio)}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="none">普通固定器械/自由重量</option>
+                    <option value="1:1">单滑轮 1:1</option>
+                    <option value="2:1">双滑轮 2:1</option>
+                  </select>
+                </div>
+                <label className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-2.5 py-2 cursor-pointer">
+                  <span className="min-w-0">
+                    <span className="block text-[11px] font-bold text-slate-800">左右独立动作（单侧）</span>
+                    <span className="block text-[10px] text-slate-400">开启后训练时左右分别记录</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={customUnilateral}
+                    onChange={(e) => setCustomUnilateral(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-600 shrink-0"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setCustomName(''); setCustomNotes(''); setCustomUnilateral(false); setCustomError(null); }}
+                    className="py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold"
+                  >
+                    清空
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!customName.trim()) { setCustomError('请输入动作名称'); return; }
+                      createAndAddCustomExercise({
+                        name: customName, category: customCategory, defaultUnit: customUnit,
+                        defaultPulley: customPulley, isUnilateral: customUnilateral, notes: customNotes,
+                      });
+                      setCustomName(''); setCustomNotes(''); setCustomUnilateral(false);
+                      setCustomError(null); setShowCustomForm(false);
+                    }}
+                    className="py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-sm active:scale-95"
+                  >
+                    保存并加入本次训练
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="flex-1 overflow-y-auto space-y-2 pr-1">
               {allExercises

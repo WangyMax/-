@@ -44,6 +44,7 @@ export function App() {
             onOpenPlansTab={() => setActiveTab('plans')}
             allExercises={allExercises}
             onFocusModeChange={setInFocusMode}
+            onRefreshExercises={refreshExercises}
           />
         )}
 
