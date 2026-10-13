@@ -1,5 +1,6 @@
 import type { FC } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 
 interface ConfirmSheetProps {
   open: boolean;
@@ -22,10 +23,12 @@ export const ConfirmSheet: FC<ConfirmSheetProps> = ({
   onCancel,
   onConfirm,
 }) => {
+  useLockBodyScroll(open);
+
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-[70] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
+      className="fixed inset-0 z-[70] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)] animate-fade-in"
       onClick={onCancel}
     >
       <div

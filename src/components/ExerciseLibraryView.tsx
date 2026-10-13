@@ -7,6 +7,7 @@ import {
   CATEGORY_LABELS, UNIT_LABELS 
 } from '../types';
 import { StorageService } from '../utils/storage';
+import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 import { ConfirmSheet } from './ConfirmSheet';
 
 interface ExerciseLibraryViewProps {
@@ -37,6 +38,9 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
   const [confirmState, setConfirmState] = useState<{
     open: boolean; title: string; description: string; confirmText: string; onConfirm: () => void;
   }>({ open: false, title: '', description: '', confirmText: '确认删除', onConfirm: () => {} });
+
+  // 弹窗打开时锁定底层滚动
+  useLockBodyScroll(isAddModalOpen || confirmState.open);
 
   const categories: { key: string; label: string }[] = [
     { key: 'all', label: '全部' },
@@ -330,8 +334,8 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
 
       {/* 新增自定义动作模态框 */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg p-5 shadow-2xl">
+        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]">
+          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] overflow-y-auto modal-scroll overscroll-contain p-5 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-black text-slate-900 text-base">
                 {editingExercise ? '编辑自定义健身动作' : '添加自定义健身动作'}

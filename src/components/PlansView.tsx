@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { WorkoutPlan, Exercise, PlanExerciseTarget, CATEGORY_LABELS, ResistanceUnit, PulleyRatio } from '../types';
 import { StorageService } from '../utils/storage';
+import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 import { ConfirmSheet } from './ConfirmSheet';
 
 interface PlansViewProps {
@@ -29,6 +30,9 @@ export const PlansView: React.FC<PlansViewProps> = ({
   // 从过往训练导入模板：挑选历史记录
   const [isImportSessionOpen, setIsImportSessionOpen] = useState(false);
   const [importSearch, setImportSearch] = useState('');
+
+  // 弹窗打开时锁定底层滚动
+  useLockBodyScroll(isModalOpen || isSelectExOpen || isImportSessionOpen || confirmState.open);
 
   // 加载计划列表
   const loadPlans = () => {
@@ -327,8 +331,8 @@ export const PlansView: React.FC<PlansViewProps> = ({
 
       {/* 新建/编辑计划 模态框 */}
       {isModalOpen && editingPlan && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col p-4 shadow-2xl">
+        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]">
+          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col p-4 shadow-2xl">
             {/* 模态框头部 */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-black text-slate-900 text-base">
@@ -343,7 +347,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
             </div>
 
             {/* 表单内容 */}
-            <div className="flex-1 overflow-y-auto py-3 space-y-4 pr-1">
+            <div className="flex-1 overflow-y-auto py-3 space-y-4 pr-1 modal-scroll overscroll-contain">
               {formError && (
                 <p className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
                   {formError}
@@ -785,8 +789,8 @@ export const PlansView: React.FC<PlansViewProps> = ({
 
       {/* 选择动作加入计划模态框 */}
       {isSelectExOpen && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col p-4 shadow-2xl">
+        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]">
+          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col p-4 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-black text-slate-900 text-base">挑选动作加入计划</h3>
               <button
@@ -807,7 +811,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 modal-scroll overscroll-contain">
               {allExercises
                 .filter(e => !exerciseSearch || e.name.toLowerCase().includes(exerciseSearch.toLowerCase()))
                 .map(e => {
@@ -841,11 +845,11 @@ export const PlansView: React.FC<PlansViewProps> = ({
         );
         return (
           <div
-            className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+            className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]"
             onClick={() => setIsImportSessionOpen(false)}
           >
             <div
-              className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[80vh] flex flex-col p-4 shadow-2xl"
+              className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col p-4 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between pb-2 border-b border-slate-100 shrink-0">
@@ -870,7 +874,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
                 />
               </div>
-              <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0 pr-0.5">
+              <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0 pr-0.5 modal-scroll overscroll-contain">
                 {sessions.map(s => (
                   <div
                     key={s.id}

@@ -35,6 +35,21 @@ html {
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 16px);
 }
+.safe-top {
+  padding-top: max(env(safe-area-inset-top, 0px), 46px);
+}
+
+/* 弹窗打开时锁住底层滚动，彻底杜绝滚动穿透 */
+body.modal-open {
+  overflow: hidden !important;
+  touch-action: none;
+}
+
+/* 弹窗内部滚动容器隔离手势 */
+.modal-scroll {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
 
 /* v2.8 通用微动效：纯 CSS，不依赖任何原生服务 */
 @keyframes fade-in {

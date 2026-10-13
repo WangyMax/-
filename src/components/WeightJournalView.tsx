@@ -5,13 +5,17 @@ import {
   Dumbbell, Flame, RotateCcw, Check, ChevronDown, ChevronUp,
   Layers, Coffee, Target, CalendarDays, Zap, Pencil
 } from 'lucide-react';
-import { WeightLog, WorkoutSession, UnilateralSide, Exercise } from '../types';
+import {
+  WeightLog, WorkoutSession, UnilateralSide, Exercise,
+  MuscleCategory, ResistanceUnit, PulleyRatio
+} from '../types';
 import { StorageService } from '../utils/storage';
 import { todayLocalDate, shiftLocalDate, weekdayOf } from '../utils/date';
 import {
   sessionVolumes, formatVolumeShort, sessionDurationMin,
   countWeekTrainings, computeStreak, totalCompletedSetsAll,
 } from '../utils/stats';
+import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 import { ConfirmSheet } from './ConfirmSheet';
 
 interface WeightJournalViewProps {
@@ -68,6 +72,19 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
   // 历史训练编辑：正在编辑的会话深拷贝（同 id 写回，休息日仅可改备注）
   const [editingSession, setEditingSession] = useState<WorkoutSession | null>(null);
+
+  // 弹窗打开时锁住底层 body 滚动，彻底杜绝滚动穿透
+  useLockBodyScroll(editingSession !== null || confirmState.open || showGoalEditor);
+
+  // 历史编辑弹窗内的自定义新动作折叠表单状态
+  const [showHistoryCustomForm, setShowHistoryCustomForm] = useState(false);
+  const [historyCustomName, setHistoryCustomName] = useState('');
+  const [historyCustomCategory, setHistoryCustomCategory] = useState<MuscleCategory>('chest');
+  const [historyCustomUnit, setHistoryCustomUnit] = useState<ResistanceUnit>('plates');
+  const [historyCustomPulley, setHistoryCustomPulley] = useState<PulleyRatio>('none');
+  const [historyCustomUnilateral, setHistoryCustomUnilateral] = useState(false);
+  const [historyCustomNotes, setHistoryCustomNotes] = useState('');
+  const [historyCustomError, setHistoryCustomError] = useState<string | null>(null);
 
   useEffect(() => {
     refreshData();
@@ -1577,11 +1594,11 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       {/* 历史训练编辑弹窗（z-70，同 id 写回；休息日仅备注可改） */}
       {editingSession && (
         <div
-          className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
+          className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)] animate-fade-in"
           onClick={cancelEditSession}
         >
           <div
-            className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[88vh] flex flex-col shadow-2xl animate-sheet-up"
+            className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col shadow-2xl animate-sheet-up"
             onClick={(e) => e.stopPropagation()}
           >
             {/* 弹窗头部 */}
@@ -1606,7 +1623,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </div>
 
             {/* 弹窗内容（可滚动） */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0 modal-scroll overscroll-contain">
               <div>
                 <label className="text-[11px] text-slate-500 block mb-1">训练备注</label>
                 <textarea
@@ -1818,11 +1835,11 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         };
         return (
           <div
-            className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+            className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]"
             onClick={close}
           >
             <div
-              className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[80vh] flex flex-col p-4 shadow-2xl"
+              className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col p-4 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between pb-2 border-b border-slate-100 shrink-0">
@@ -1846,7 +1863,128 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
                 />
               </div>
-              <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0 pr-0.5">
+
+              {/* 自定义新动作：默认收起，点开才展开表单 */}
+              <button
+                type="button"
+                onClick={() => { setShowHistoryCustomForm(v => !v); setHistoryCustomError(null); }}
+                aria-expanded={showHistoryCustomForm}
+                className="w-full mb-2 px-3 py-2 border border-dashed border-indigo-300 bg-indigo-50/60 rounded-xl flex items-center gap-2 text-left active:scale-[0.99] transition-all shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <span className="text-xs font-black text-indigo-800 shrink-0">自定义新动作</span>
+                <span className="text-[10px] text-slate-400 truncate flex-1 min-w-0">动作库里没有？在这里直接新增</span>
+                {showHistoryCustomForm ? <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+              </button>
+
+              {showHistoryCustomForm && (
+                <div className="mb-2 p-3 border border-slate-200 rounded-xl bg-slate-50/70 space-y-2.5 animate-card-in shrink-0">
+                  {historyCustomError && (
+                    <p className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">{historyCustomError}</p>
+                  )}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">动作名称 *</label>
+                    <input
+                      type="text"
+                      value={historyCustomName}
+                      onChange={(e) => setHistoryCustomName(e.target.value)}
+                      placeholder="例如: 史密斯下斜推胸"
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">目标肌肉群</label>
+                      <select
+                        value={historyCustomCategory}
+                        onChange={(e) => setHistoryCustomCategory(e.target.value as MuscleCategory)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                      >
+                        <option value="chest">胸部</option>
+                        <option value="back">背部</option>
+                        <option value="shoulder">肩部</option>
+                        <option value="leg">腿部</option>
+                        <option value="biceps">肱二头</option>
+                        <option value="triceps">肱三头</option>
+                        <option value="abs">腹部核心</option>
+                        <option value="cardio">有氧训练</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">计量单位</label>
+                      <select
+                        value={historyCustomUnit}
+                        onChange={(e) => setHistoryCustomUnit(e.target.value as ResistanceUnit)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                      >
+                        <option value="plates">插销 (片)</option>
+                        <option value="kg">重量 (kg)</option>
+                        <option value="assisted">助力 (kg)</option>
+                        <option value="bodyweight">自重</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">滑轮类型</label>
+                    <select
+                      value={historyCustomPulley}
+                      onChange={(e) => setHistoryCustomPulley(e.target.value as PulleyRatio)}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="none">普通固定器械/自由重量</option>
+                      <option value="1:1">单滑轮 1:1</option>
+                      <option value="2:1">双滑轮 2:1</option>
+                    </select>
+                  </div>
+                  <label className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-2.5 py-2 cursor-pointer">
+                    <span className="min-w-0">
+                      <span className="block text-[11px] font-bold text-slate-800">左右独立动作（单侧）</span>
+                      <span className="block text-[10px] text-slate-400">开启后左右分别记录</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={historyCustomUnilateral}
+                      onChange={(e) => setHistoryCustomUnilateral(e.target.checked)}
+                      className="w-4 h-4 accent-indigo-600 shrink-0"
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setHistoryCustomName(''); setHistoryCustomNotes(''); setHistoryCustomUnilateral(false); setHistoryCustomError(null); }}
+                      className="py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold"
+                    >
+                      清空
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!historyCustomName.trim()) { setHistoryCustomError('请输入动作名称'); return; }
+                        const created = StorageService.addCustomExercise({
+                          name: historyCustomName.trim(),
+                          category: historyCustomCategory,
+                          defaultUnit: historyCustomUnit,
+                          defaultPulley: historyCustomPulley,
+                          isUnilateral: historyCustomUnilateral || undefined,
+                          notes: historyCustomNotes.trim() || undefined,
+                          isFavorite: true,
+                        });
+                        setHistoryCustomName('');
+                        setHistoryCustomNotes('');
+                        setHistoryCustomUnilateral(false);
+                        setHistoryCustomError(null);
+                        setShowHistoryCustomForm(false);
+                        pick(created);
+                      }}
+                      className="py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-sm active:scale-95"
+                    >
+                      保存并加入本记录
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0 pr-0.5 modal-scroll overscroll-contain">
                 {pool.map(ex => (
                   <div
                     key={ex.id}

@@ -173,6 +173,21 @@
 - **接口**：`WorkoutView` 新增 `onRefreshExercises` 属性，由 `App.tsx` 传入已有的 `refreshExercises`。
 - **验证**：自由训练新建单侧动作后入库且加入训练、左右两栏正常；规格抽屉切双侧后单栏显示且数据不丢、可再切回；320px 下 scrollWidth 等于 clientWidth 无溢出；tsc 与构建通过。
 
+### 19. v2.8.8 智能分化识别 + 自由训练自拟名称 + 防滚动穿透与状态栏加固
+- **问题① 自由训练名称自拟与历史编辑自建动作**：
+  - 自由训练专注模式顶部名称改为支持直接点击内联编辑（带铅笔提示），输入后回车或点完成保存，实时更新 `activeSession.planName`。
+  - 历史记录编辑的挑选动作弹窗（`WeightJournalView`）同步补齐折叠式「自定义新动作」表单，保存后写入动作库并立即带入当前编辑的历史会话。
+- **问题② 智能分化罗盘推断（告别盲目兜底为胸）**：
+  - 重构推断算法为 `inferSessionCategory`：优先遍历会话实际完成动作的肌肉部位（`session.exercises` 的 `category`），将 `chest/triceps` 归为胸、`back/biceps` 归为背、`shoulder/abs` 归为肩、`leg` 归为腿，按完成组数最高者判定为当场实际分化日；
+  - 仅在动作列表为空时回退到计划名称关键字匹配；无法推断时绝不盲目兜底为“胸”。
+  - 自由训练练背在首页罗盘准确显示“背·今天 ➔ 肩·建议下次”。
+- **问题③ 防滚动穿透与状态栏安全避让加固**：
+  - 新增 `useLockBodyScroll` 全局 Hook（带引用计数支持多层嵌套），当模态框打开时自动为 `body` 注入 `.modal-open`（`overflow: hidden; touch-action: none`），关闭时还原；
+  - 所有模态框内部滚动列表添加 `.modal-scroll` 与 `overscroll-contain`，彻底消除滑动穿透与下层图层联动；
+  - `App.tsx` 顶部系统垫片高度从 38px 提高到 `max(env(safe-area-inset-top), 46px)`，为 Android 打孔屏留出充裕空间；
+  - 所有底部抽屉弹窗外层蒙层增加 `pt-[max(env(safe-area-inset-top),46px)]`，卡片增加 `max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)]` 约束，确保弹窗顶部绝不侵入系统状态栏。
+- **验证**：真机视口（390×844 及 320px）全流程通过；无新增存储键；tsc 与构建通过。
+
 ---
 
 ## 三、 工程结构目录速查

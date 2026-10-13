@@ -4,6 +4,7 @@ import {
   Dumbbell, Flame,
   Sparkles, Award, Coffee,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
+  Pencil,
 } from 'lucide-react';
 import {
   WorkoutPlan, WorkoutSession, ExerciseLog, WorkoutSet,
@@ -13,6 +14,7 @@ import {
 import { StorageService } from '../utils/storage';
 import { buildSessionFromPlan } from '../utils/sessionBuilder';
 import { todayLocalDate, yesterdayLocalDate } from '../utils/date';
+import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 import { ConfirmSheet } from './ConfirmSheet';
 
 interface WorkoutViewProps {
@@ -33,14 +35,53 @@ const CYCLE_LABEL: Record<CycleKey, string> = {
   rest: '休',
 };
 
-// 从计划名/会话名推断所属分化
-function classifySession(planName: string, isRestDay?: boolean): CycleKey {
-  if (isRestDay) return 'rest';
-  if (planName.includes('胸')) return 'chest';
-  if (planName.includes('背')) return 'back';
-  if (planName.includes('肩')) return 'shoulder';
-  if (planName.includes('腿')) return 'leg';
-  return 'chest';
+// 智能分化推断：优先按该场训练实际完成动作的肌肉部位统计，彻底解决自由训练与自定义名称误判
+function inferSessionCategory(session: WorkoutSession): CycleKey | null {
+  if (session.isRestDay) return 'rest';
+
+  // 1. 优先统计实际动作的肌肉部位
+  const score: Record<'chest' | 'back' | 'shoulder' | 'leg', number> = {
+    chest: 0,
+    back: 0,
+    shoulder: 0,
+    leg: 0,
+  };
+
+  for (const ex of session.exercises) {
+    const completedCount = ex.sets.filter(s => s.completed).length;
+    // 如果还没打勾任何组，按动作计划组数权重减半计入，已打勾则以完成组数计入
+    const weight = completedCount > 0 ? completedCount : ex.sets.length * 0.5;
+    if (weight <= 0) continue;
+
+    const cat = ex.category;
+    if (cat === 'chest' || cat === 'triceps') {
+      score.chest += weight;
+    } else if (cat === 'back' || cat === 'biceps') {
+      score.back += weight;
+    } else if (cat === 'shoulder' || cat === 'abs') {
+      score.shoulder += weight;
+    } else if (cat === 'leg') {
+      score.leg += weight;
+    }
+  }
+
+  const entries = (['chest', 'back', 'shoulder', 'leg'] as const)
+    .map(k => ({ key: k, count: score[k] }))
+    .sort((a, b) => b.count - a.count);
+
+  if (entries[0] && entries[0].count > 0) {
+    return entries[0].key;
+  }
+
+  // 2. 无动作或动作部位未命中时，按计划名称关键字推断
+  const name = session.planName || '';
+  if (name.includes('胸')) return 'chest';
+  if (name.includes('背')) return 'back';
+  if (name.includes('肩')) return 'shoulder';
+  if (name.includes('腿')) return 'leg';
+  if (name.includes('休')) return 'rest';
+
+  return null;
 }
 
 const UNIT_SHORT: Record<ResistanceUnit, string> = {
@@ -87,6 +128,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
   // ---- 专注模式状态 ----
   const [focusIdx, setFocusIdx] = useState(0);            // 当前聚焦第几个动作
+  const [isEditingPlanName, setIsEditingPlanName] = useState(false); // 自由训练/专注模式训练名称编辑态
   const [specExIdx, setSpecExIdx] = useState<number | null>(null); // 规格抽屉作用于哪个动作
   const [expandedDropSets, setExpandedDropSets] = useState<Set<string>>(new Set()); // 展开的大组 id
   const [showCardio, setShowCardio] = useState(false);    // 有氧折叠
@@ -95,6 +137,9 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     open: boolean; title: string; description: string; confirmText: string; danger: boolean;
     onConfirm: () => void;
   }>({ open: false, title: '', description: '', confirmText: '确定', danger: true, onConfirm: () => {} });
+
+  // 弹窗打开时锁住底层 body 滚动，彻底杜绝滚动穿透
+  useLockBodyScroll(specExIdx !== null || showAddExModal || showFinishModal || confirmState.open);
 
   useEffect(() => {
     setPlans(StorageService.getPlans());
@@ -567,24 +612,41 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     return map;
   }, [sessions]);
 
-  // 分化罗盘：从历史记录推断上次分化与建议下次
+  // 分化罗盘：优先按最近一次训练实际完成动作的肌肉部位推断（彻底告别自由训练误判为胸）
   const compass = useMemo(() => {
-    const nonFree = sessions.filter(s => !s.isRestDay && s.planName !== '自由训练');
-    const lastSession = sessions.find(s => s.isRestDay || !s.isRestDay);
-    if (!lastSession) return { lastKey: null as CycleKey | null, suggestKey: 'chest' as CycleKey, daysAgo: null as number | null };
-    const lastKey = s_isRestCheck(lastSession);
+    // 候选池：若当前正在训练且已有完成动作，将当前会话也纳入实时考量；历史会话按日期+时间倒序扫描
+    const candidates: WorkoutSession[] = [];
+    if (activeSession && activeSession.exercises.some(e => e.sets.some(s => s.completed))) {
+      candidates.push(activeSession);
+    }
+    candidates.push(...sessions);
+
+    let lastKey: CycleKey | null = null;
+    let targetSession: WorkoutSession | null = null;
+
+    for (const sess of candidates) {
+      const cat = inferSessionCategory(sess);
+      if (cat) {
+        lastKey = cat;
+        targetSession = sess;
+        break;
+      }
+    }
+
+    if (!lastKey || !targetSession) {
+      return { lastKey: null as CycleKey | null, suggestKey: 'chest' as CycleKey, daysAgo: null as number | null };
+    }
+
     const lastIdx = CYCLE_ORDER.indexOf(lastKey);
     const suggestKey = CYCLE_ORDER[(lastIdx + 1) % CYCLE_ORDER.length];
+
     // 距今天数
     const today = new Date(todayDateStr + 'T00:00:00');
-    const last = new Date(lastSession.date + 'T00:00:00');
+    const last = new Date(targetSession.date + 'T00:00:00');
     const daysAgo = Math.max(0, Math.round((today.getTime() - last.getTime()) / 86400000));
-    void nonFree;
+
     return { lastKey, suggestKey, daysAgo };
-    function s_isRestCheck(sess: WorkoutSession): CycleKey {
-      return classifySession(sess.planName, sess.isRestDay);
-    }
-  }, [sessions, todayDateStr]);
+  }, [sessions, activeSession, todayDateStr]);
 
   // 分化罗盘条
   const renderCompass = () => (
@@ -1247,9 +1309,40 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
         <>
           {/* 专注模式顶部：细进度条 + 罗盘 */}
           <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md px-1 pt-1 pb-2 border-b border-slate-200/90 mb-3">
-            <div className="flex items-center justify-between text-xs font-bold">
-              <span className="truncate">{activeSession.planName} · 专注模式</span>
-              <span className="text-blue-700 font-mono shrink-0 ml-2">{totalCompletedSets} / {totalAllSets} 组</span>
+            <div className="flex items-center justify-between text-xs font-bold gap-2">
+              {isEditingPlanName ? (
+                <div className="flex items-center gap-1 min-w-0 flex-1">
+                  <input
+                    type="text"
+                    value={activeSession.planName}
+                    onChange={(e) => updateActiveSession({ ...activeSession, planName: e.target.value })}
+                    onBlur={() => setIsEditingPlanName(false)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') setIsEditingPlanName(false); }}
+                    autoFocus
+                    placeholder="输入训练名称..."
+                    className="w-full bg-slate-100 border border-blue-500 rounded-lg px-2 py-0.5 text-xs font-bold text-slate-900 focus:outline-none min-w-0"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingPlanName(false)}
+                    className="text-[11px] font-bold text-blue-600 px-2 py-0.5 rounded bg-blue-50 hover:bg-blue-100 shrink-0"
+                  >
+                    完成
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsEditingPlanName(true)}
+                  className="flex items-center gap-1.5 min-w-0 hover:text-blue-600 transition-colors text-left group"
+                  title="点击修改本次训练名称"
+                >
+                  <span className="truncate font-black text-slate-900 group-hover:text-blue-600">{activeSession.planName}</span>
+                  <Pencil className="w-3 h-3 text-slate-400 group-hover:text-blue-500 shrink-0" />
+                  <span className="text-slate-400 text-[10px] shrink-0 font-normal">· 专注模式</span>
+                </button>
+              )}
+              <span className="text-blue-700 font-mono shrink-0">{totalCompletedSets} / {totalAllSets} 组</span>
             </div>
             <div className="h-1.5 bg-slate-100 rounded-full mt-1.5 overflow-hidden">
               <div className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 rounded-full progress-fill" style={{ width: `${progressPct}%` }}></div>
@@ -1383,11 +1476,11 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       {/* 规格抽屉：单位 + 滑轮 */}
       {specExIdx !== null && activeSession && activeSession.exercises[specExIdx] && (
         <div
-          className="fixed inset-0 z-[70] bg-slate-900/40 flex items-end justify-center animate-fade-in"
+          className="fixed inset-0 z-[70] bg-slate-900/40 flex items-end justify-center animate-fade-in pt-[max(env(safe-area-inset-top),46px)]"
           onClick={() => setSpecExIdx(null)}
         >
           <div
-            className="bg-white w-full max-w-md rounded-t-3xl p-5 pb-8 shadow-2xl animate-sheet-up"
+            className="bg-white w-full max-w-md rounded-t-3xl p-5 pb-8 shadow-2xl animate-sheet-up max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] overflow-y-auto modal-scroll overscroll-contain"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="font-black text-sm mb-1">{activeSession.exercises[specExIdx].exerciseName}</h3>
@@ -1488,8 +1581,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
       {/* 添加动作模态框 */}
       {showAddExModal && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex flex-col justify-end sm:justify-center p-0 sm:p-4">
-          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col p-4 shadow-2xl mx-auto">
+        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex flex-col justify-end sm:justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]">
+          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col p-4 shadow-2xl mx-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-black text-slate-900 text-base">从动作库选择加入</h3>
               <button
@@ -1621,7 +1714,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               </div>
             )}
 
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 modal-scroll overscroll-contain">
               {allExercises
                 .filter(e => !searchTerm || e.name.toLowerCase().includes(searchTerm.toLowerCase()))
                 .map(e => {
