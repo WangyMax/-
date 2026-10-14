@@ -6,7 +6,7 @@ import {
   Layers, Coffee, Target, CalendarDays, Zap, Pencil
 } from 'lucide-react';
 import {
-  WeightLog, WorkoutSession, UnilateralSide, Exercise,
+  WeightLog, WorkoutSession, UnilateralSide, Exercise, DropStage,
   MuscleCategory, ResistanceUnit, PulleyRatio
 } from '../types';
 import { StorageService } from '../utils/storage';
@@ -384,22 +384,37 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       });
     });
 
-  // 历史编辑：新增动作（从动作库挑选，默认 3 组）
+  // 历史编辑：新增动作（从动作库挑选，默认 4 组；带超级组标记时生成 4 个超级组大组）
   const [addExOpen, setAddExOpen] = useState(false);
   const [addExSearch, setAddExSearch] = useState('');
-  const editAddExercise = (neo: { id: string; name: string; category: WorkoutSession['exercises'][number]['category']; defaultUnit: WorkoutSession['exercises'][number]['currentUnit']; defaultPulley: WorkoutSession['exercises'][number]['pulleyRatio']; isUnilateral?: boolean }) =>
+  const editAddExercise = (neo: { id: string; name: string; category: WorkoutSession['exercises'][number]['category']; defaultUnit: WorkoutSession['exercises'][number]['currentUnit']; defaultPulley: WorkoutSession['exercises'][number]['pulleyRatio']; isUnilateral?: boolean; isDropSet?: boolean; dropStages?: DropStage[] }) =>
     patchEditing(d => {
       const w = neo.defaultUnit === 'plates' ? 10 : 30;
-      const sets = [1, 2, 3].map(i => {
+      // 动作库预设阶梯优先；无阶梯时超级组标记视为无效，回落普通组
+      const stages = neo.dropStages && neo.dropStages.length > 0 ? neo.dropStages : undefined;
+      const asDrop = Boolean(neo.isDropSet && stages);
+      const sets = Array.from({ length: 4 }, (_, i) => {
         const base = {
-          id: `s-edit-${Date.now()}-${i}`,
-          setNumber: i,
+          id: `s-edit-${Date.now()}-${i + 1}`,
+          setNumber: i + 1,
           unit: neo.defaultUnit,
           weightOrPlates: w,
           reps: 12,
           completed: true,
           pulleyRatio: neo.defaultPulley,
         };
+        if (asDrop) {
+          // 每个大组深拷贝一份阶梯，避免各大组共享同一数组引用
+          const copiedStages: DropStage[] = JSON.parse(JSON.stringify(stages));
+          return {
+            ...base,
+            unit: 'kg' as ResistanceUnit,
+            weightOrPlates: copiedStages[0]?.weightOrPlates ?? 10,
+            reps: copiedStages[0]?.reps ?? 12,
+            isDropSet: true,
+            dropStages: copiedStages,
+          };
+        }
         if (neo.isUnilateral) {
           return { ...base, unilateral: true, left: { weight: w, reps: 12 }, right: { weight: w, reps: 12 } };
         }
@@ -411,7 +426,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         category: neo.category,
         pulleyRatio: neo.defaultPulley,
         currentUnit: neo.defaultUnit,
-        isUnilateral: neo.isUnilateral || undefined,
+        // 超级组不支持分侧记录
+        isUnilateral: asDrop ? undefined : (neo.isUnilateral || undefined),
         sets,
         notes: '',
       });
@@ -1933,6 +1949,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
               id: ex.id, name: ex.name, category: ex.category,
               defaultUnit: ex.defaultUnit, defaultPulley: ex.defaultPulley || 'none',
               isUnilateral: ex.isUnilateral,
+              isDropSet: ex.isDropSet,
+              dropStages: ex.dropStages,
             });
           }
           close();

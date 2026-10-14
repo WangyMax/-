@@ -22,6 +22,10 @@ export interface Exercise {
   isCustom?: boolean;
   // 左右独立动作：双臂/双腿独立器械，训练时左右分别记录重量与次数
   isUnilateral?: boolean;
+  // 递减超级组标记：在动作库勾选后，该动作默认按超级组编排（与单侧互斥）
+  isDropSet?: boolean;
+  // 预设递减阶梯（与 PlanExerciseTarget.dropStages 同构，例如 10kg/12次 -> 7.5kg/12次 -> 5kg/10次 -> 2.5kg/12次）
+  dropStages?: DropStage[];
   notes?: string;
 }
 

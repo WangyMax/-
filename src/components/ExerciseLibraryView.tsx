@@ -3,7 +3,7 @@ import {
   Search, Plus, X, Edit3, Trash2, ArrowLeftRight 
 } from 'lucide-react';
 import { 
-  Exercise, MuscleCategory, ResistanceUnit, PulleyRatio, 
+  Exercise, MuscleCategory, ResistanceUnit, PulleyRatio, DropStage,
   CATEGORY_LABELS, UNIT_LABELS 
 } from '../types';
 import { StorageService } from '../utils/storage';
@@ -14,6 +14,18 @@ interface ExerciseLibraryViewProps {
   exercises: Exercise[];
   onRefreshExercises: () => void;
 }
+
+// 递减超级组默认阶梯：10 / 7.5 / 5 / 2.5 kg（与计划页默认一致）
+const DEFAULT_DROP_STAGES: DropStage[] = [
+  { id: 'stg-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
+  { id: 'stg-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
+  { id: 'stg-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
+  { id: 'stg-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
+];
+
+// 深拷贝默认阶梯，避免多个动作共享同一数组引用，并生成唯一 id
+const makeDefaultDropStages = (): DropStage[] =>
+  DEFAULT_DROP_STAGES.map((stg, i) => ({ ...stg, id: `stg-${Date.now()}-${i}` }));
 
 export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
   exercises,
@@ -29,6 +41,9 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
   const [newUnit, setNewUnit] = useState<ResistanceUnit>('plates');
   const [newPulley, setNewPulley] = useState<PulleyRatio>('none');
   const [newUnilateral, setNewUnilateral] = useState(false);
+  // 超级组标记与阶梯（与单侧互斥）
+  const [newDropSet, setNewDropSet] = useState(false);
+  const [newDropStages, setNewDropStages] = useState<DropStage[]>([]);
   const [newNotes, setNewNotes] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   // 编辑模式：非空表示正在编辑该自建动作，否则为新增
@@ -83,6 +98,8 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
     setNewUnit('plates');
     setNewPulley('none');
     setNewUnilateral(false);
+    setNewDropSet(false);
+    setNewDropStages([]);
     setNewNotes('');
     setFormError(null);
     setLibraryNotice(null);
@@ -97,6 +114,13 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
     setNewUnit(ex.defaultUnit);
     setNewPulley(ex.defaultPulley || 'none');
     setNewUnilateral(Boolean(ex.isUnilateral));
+    const hasDrop = Boolean(ex.isDropSet);
+    setNewDropSet(hasDrop);
+    setNewDropStages(
+      hasDrop && ex.dropStages && ex.dropStages.length > 0
+        ? JSON.parse(JSON.stringify(ex.dropStages))
+        : []
+    );
     setNewNotes(ex.notes || '');
     setFormError(null);
     setLibraryNotice(null);
@@ -115,12 +139,25 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
     }
     setFormError(null);
 
+    // 超级组分支：清洗阶梯数字，无效值回退为 0；阶梯为空时回落到默认四阶
+    const dropStages: DropStage[] | undefined = newDropSet
+      ? (newDropStages.length > 0 ? newDropStages : makeDefaultDropStages()).map(stg => ({
+          id: stg.id || `stg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          weightOrPlates: typeof stg.weightOrPlates === 'number' && stg.weightOrPlates >= 0 ? stg.weightOrPlates : 0,
+          reps: typeof stg.reps === 'number' && stg.reps >= 0 ? Math.floor(stg.reps) : 0,
+          unit: stg.unit || 'kg',
+        }))
+      : undefined;
+
     const payload = {
       name: newName.trim(),
       category: newCategory,
       defaultUnit: newUnit,
       defaultPulley: newPulley,
-      isUnilateral: newUnilateral || undefined,
+      // 超级组与单侧互斥：开启超级组时不写入单侧标记
+      isUnilateral: newDropSet ? undefined : (newUnilateral || undefined),
+      isDropSet: newDropSet || undefined,
+      dropStages,
       notes: newNotes.trim() || undefined,
     };
 
@@ -281,6 +318,11 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                             <ArrowLeftRight className="w-3 h-3" /> 左右独立
                           </span>
                         )}
+                        {ex.isDropSet && (
+                          <span className="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200 font-semibold">
+                            🔥 超级组{ex.dropStages && ex.dropStages.length > 0 ? ` · ${ex.dropStages.length}阶` : ''}
+                          </span>
+                        )}
                       </div>
 
                       {/* 属性标签：默认单位、滑轮 */}
@@ -412,10 +454,14 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                 </div>
               </div>
 
-              {/* 左右独立（单侧）开关 */}
+              {/* 左右独立（单侧）开关：开启时清除超级组标记（两者互斥） */}
               <button
                 type="button"
-                onClick={() => setNewUnilateral(v => !v)}
+                onClick={() => setNewUnilateral(v => {
+                  const next = !v;
+                  if (next) setNewDropSet(false);
+                  return next;
+                })}
                 className="w-full flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-left"
               >
                 <span className="flex items-start gap-2">
@@ -433,6 +479,113 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                   />
                 </span>
               </button>
+
+              {/* 递减超级组开关：开启时清除单侧标记（两者互斥） */}
+              <button
+                type="button"
+                onClick={() => setNewDropSet(v => {
+                  const next = !v;
+                  if (next) {
+                    setNewUnilateral(false);
+                    setNewDropStages(prev => (prev.length > 0 ? prev : makeDefaultDropStages()));
+                  }
+                  return next;
+                })}
+                className="w-full flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-left"
+              >
+                <span className="flex items-start gap-2">
+                  <span className={`text-base leading-5 ${newDropSet ? '' : 'grayscale opacity-60'}`}>🔥</span>
+                  <span>
+                    <span className="block text-xs font-bold text-slate-700">递减超级组</span>
+                    <span className="block text-[10px] text-slate-400 mt-0.5">标记后按超级组编排，可预设递减阶梯（不支持分侧）</span>
+                  </span>
+                </span>
+                <span
+                  className={`w-9 h-5 rounded-full shrink-0 relative transition-colors ${newDropSet ? 'bg-amber-500' : 'bg-slate-300'}`}
+                >
+                  <span
+                    className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${newDropSet ? 'left-[1.125rem]' : 'left-0.5'}`}
+                  />
+                </span>
+              </button>
+
+              {/* 超级组阶梯编辑器 */}
+              {newDropSet && (
+                <div className="bg-amber-50/70 border border-amber-200/90 rounded-xl p-2.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-amber-900">递减阶梯编排</span>
+                    <span className="text-[10px] text-slate-500">默认 10 / 7.5 / 5 / 2.5 kg</span>
+                  </div>
+                  <div className="space-y-1">
+                    {newDropStages.map((stg, stgIdx) => (
+                      <div
+                        key={stg.id}
+                        className="bg-white p-1.5 rounded-lg border border-amber-200/80 flex items-center justify-between text-[11px] gap-1"
+                      >
+                        <span className="font-mono text-slate-400 font-bold w-4">#{stgIdx + 1}</span>
+                        <div className="flex items-center gap-0.5">
+                          <input
+                            type="number"
+                            step="0.5"
+                            value={stg.weightOrPlates || ''}
+                            onChange={(e) => setNewDropStages(prev =>
+                              prev.map((s, i) => i === stgIdx ? { ...s, weightOrPlates: parseFloat(e.target.value) || 0 } : s)
+                            )}
+                            className="w-12 bg-slate-50 border border-slate-200 rounded py-0.5 text-center font-black text-slate-900"
+                          />
+                          <span className="text-slate-400 font-bold">kg</span>
+                        </div>
+                        <span className="text-slate-300">➔</span>
+                        <div className="flex items-center gap-0.5">
+                          <input
+                            type="number"
+                            value={stg.reps || ''}
+                            onChange={(e) => setNewDropStages(prev =>
+                              prev.map((s, i) => i === stgIdx ? { ...s, reps: parseInt(e.target.value) || 0 } : s)
+                            )}
+                            className="w-10 bg-slate-50 border border-slate-200 rounded py-0.5 text-center font-black text-slate-900"
+                          />
+                          <span className="text-slate-400 font-bold">次</span>
+                        </div>
+                        {newDropStages.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => setNewDropStages(prev => prev.filter((_, i) => i !== stgIdx))}
+                            className="text-slate-300 hover:text-red-500 p-0.5 ml-1"
+                            title="删除该阶"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setNewDropStages(prev => {
+                        const last = prev[prev.length - 1];
+                        return [...prev, {
+                          id: `stg-${Date.now()}`,
+                          weightOrPlates: last ? Math.max(0, last.weightOrPlates - 2.5) : 5,
+                          unit: 'kg',
+                          reps: 10,
+                        }];
+                      })}
+                      className="text-[11px] text-amber-800 hover:text-amber-900 font-bold flex items-center gap-1 hover:underline"
+                    >
+                      <Plus className="w-3 h-3" /> 加一阶递减
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewDropStages(makeDefaultDropStages())}
+                      className="text-[10px] text-slate-400 hover:text-slate-600 underline"
+                    >
+                      重置默认四阶
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">动作要领或器械备注</label>

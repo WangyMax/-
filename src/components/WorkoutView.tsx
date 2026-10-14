@@ -196,24 +196,23 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
     const exIsUnilateral = Boolean(exercise.isUnilateral);
 
-    const defaultSets: WorkoutSet[] = [1, 2, 3, 4].map((num, i) => {
-      const lastSet = lastLog?.sets[i];
-      const weight = lastSet?.weightOrPlates || (unit === 'plates' ? 8 : 40);
-      const reps = lastSet?.reps || 12;
+    // 新增动作：4 组一律留空待填（重量/次数写 0，输入框按可清空原则显示为空），
+    // 不复用上次记录的数值，也不推断数值；仅沿用上次记录/动作默认推断出的单位与滑轮规格。
+    const defaultSets: WorkoutSet[] = [1, 2, 3, 4].map((num) => {
       const newSet: WorkoutSet = {
         id: `s-${Date.now()}-${num}`,
         setNumber: num,
-        unit: lastSet?.unit || unit,
-        weightOrPlates: weight,
-        reps,
+        unit,
+        weightOrPlates: 0,
+        reps: 0,
         completed: false,
-        pulleyRatio: lastSet?.pulleyRatio || pulley
+        pulleyRatio: pulley
       };
-      // 左右独立动作：普通组生成左右两侧默认值（优先沿用上次记录的左右值）
+      // 左右独立动作：左右两侧同样留空待填
       if (exIsUnilateral) {
         newSet.unilateral = true;
-        newSet.left = { weight: lastSet?.left?.weight ?? weight, reps: lastSet?.left?.reps ?? reps };
-        newSet.right = { weight: lastSet?.right?.weight ?? weight, reps: lastSet?.right?.reps ?? reps };
+        newSet.left = { weight: 0, reps: 0 };
+        newSet.right = { weight: 0, reps: 0 };
       }
       return newSet;
     });
