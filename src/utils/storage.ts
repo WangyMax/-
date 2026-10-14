@@ -23,6 +23,38 @@ function sortExercisesByCategory(list: Exercise[]): Exercise[] {
     .map(item => item.ex);
 }
 
+// 内置动作补丁：旧版本落盘的内置动作可能缺少后续新增字段（如超级组标记），
+// 读取时仅在缺失时补齐并写回，保证已装旧版、本地已有缓存的设备无需清数据也能生效。
+// 当前仅涉及 ex-sho-03（超级组飞鸟）一条记录，不触碰用户自建动作与其它内置动作。
+const BUILTIN_EXERCISE_PATCHES: Record<string, { isDropSet: boolean; dropStages: Exercise['dropStages'] }> = {
+  'ex-sho-03': {
+    isDropSet: true,
+    dropStages: [
+      { id: 'stg-sho03-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
+      { id: 'stg-sho03-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
+      { id: 'stg-sho03-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
+      { id: 'stg-sho03-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
+    ],
+  },
+};
+
+// 就地补齐内置动作缺失字段；返回是否发生改动（供调用方决定是否写回 localStorage）
+function applyBuiltinExercisePatch(list: Exercise[]): boolean {
+  let changed = false;
+  list.forEach(ex => {
+    const patch = BUILTIN_EXERCISE_PATCHES[ex.id];
+    if (!patch) return;
+    if (patch.isDropSet && !ex.isDropSet) {
+      ex.isDropSet = true;
+      if (!ex.dropStages || ex.dropStages.length === 0) {
+        ex.dropStages = patch.dropStages ? JSON.parse(JSON.stringify(patch.dropStages)) : undefined;
+      }
+      changed = true;
+    }
+  });
+  return changed;
+}
+
 const STORAGE_KEYS = {
   EXERCISES: 'fitcustom_exercises_v2',
   PLANS: 'fitcustom_plans_v2',
@@ -455,7 +487,13 @@ export const INITIAL_SESSIONS: WorkoutSession[] = [
 export const StorageService = {
   // 动作库
   getExercises(): Exercise[] {
-    if (cache.exercises) return cache.exercises;
+    if (cache.exercises) {
+      // 缓存命中分支：同样过一遍内置补丁（幂等），有改动即写回，避免旧数据长期停留在内存
+      if (applyBuiltinExercisePatch(cache.exercises)) {
+        localStorage.setItem(STORAGE_KEYS.EXERCISES, JSON.stringify(cache.exercises));
+      }
+      return cache.exercises;
+    }
     const raw = localStorage.getItem(STORAGE_KEYS.EXERCISES);
     if (!raw) {
       // 检查旧版本数据
@@ -471,8 +509,9 @@ export const StorageService = {
           // ignore
         }
       }
-      // 归一化排序后再落盘：自定义动作归入同类分组末尾
+      // 无本地数据分支：归一化排序后补齐内置动作缺失字段再落盘
       const normalized = sortExercisesByCategory(list);
+      applyBuiltinExercisePatch(normalized);
       localStorage.setItem(STORAGE_KEYS.EXERCISES, JSON.stringify(normalized));
       cache.exercises = normalized;
       return normalized;
@@ -480,10 +519,15 @@ export const StorageService = {
     try {
       const parsed: Exercise[] = JSON.parse(raw);
       const normalized = sortExercisesByCategory(parsed);
+      // 有本地数据分支：旧版落盘可能缺少内置动作字段，补齐后写回（只碰 ex-sho-03 一条）
+      if (applyBuiltinExercisePatch(normalized)) {
+        localStorage.setItem(STORAGE_KEYS.EXERCISES, JSON.stringify(normalized));
+      }
       cache.exercises = normalized;
       return normalized;
     } catch {
       const normalized = sortExercisesByCategory(INITIAL_EXERCISES);
+      applyBuiltinExercisePatch(normalized);
       cache.exercises = normalized;
       return normalized;
     }

@@ -312,6 +312,14 @@ export const INITIAL_EXERCISES: Exercise[] = [
     defaultUnit: 'kg',
     defaultPulley: 'none',
     isFavorite: true,
+    // 递减超级组：默认四阶与动作库/计划页默认阶梯一致
+    isDropSet: true,
+    dropStages: [
+      { id: 'stg-sho03-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
+      { id: 'stg-sho03-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
+      { id: 'stg-sho03-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
+      { id: 'stg-sho03-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
+    ],
     notes: '三角肌中束侧平举，多重量递减超级组'
   },
   {

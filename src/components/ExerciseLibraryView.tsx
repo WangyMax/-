@@ -139,6 +139,9 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
     }
     setFormError(null);
 
+    // 编辑内置动作：名称与目标肌肉群保持原值，不允许改动
+    const isBuiltinEdit = Boolean(editingExercise && !editingExercise.isCustom);
+
     // 超级组分支：清洗阶梯数字，无效值回退为 0；阶梯为空时回落到默认四阶
     const dropStages: DropStage[] | undefined = newDropSet
       ? (newDropStages.length > 0 ? newDropStages : makeDefaultDropStages()).map(stg => ({
@@ -150,8 +153,8 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
       : undefined;
 
     const payload = {
-      name: newName.trim(),
-      category: newCategory,
+      name: isBuiltinEdit ? editingExercise!.name : newName.trim(),
+      category: isBuiltinEdit ? editingExercise!.category : newCategory,
       defaultUnit: newUnit,
       defaultPulley: newPulley,
       // 超级组与单侧互斥：开启超级组时不写入单侧标记
@@ -162,7 +165,7 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
     };
 
     if (editingExercise) {
-      // 编辑自建动作：就地更新同 id 记录，保持其在列表中的位置
+      // 编辑动作：就地更新同 id 记录，保持其在列表中的位置（内置动作不改变 isCustom 标记）
       const list = StorageService.getExercises();
       StorageService.saveExercises(
         list.map(e => (e.id === editingExercise.id ? { ...e, ...payload } : e))
@@ -345,17 +348,17 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                       )}
                     </div>
 
-                    {/* 自建动作：编辑 / 删除 */}
-                    {ex.isCustom && (
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(ex)}
-                          className="p-1.5 text-blue-600 hover:text-blue-700 rounded-lg hover:bg-blue-50 transition-colors"
-                          title="编辑该自定义动作"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
+                    {/* 编辑：全部动作可点（内置动作锁定名称与部位）；删除仅自建动作可见 */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(ex)}
+                        className="p-1.5 text-blue-600 hover:text-blue-700 rounded-lg hover:bg-blue-50 transition-colors"
+                        title={ex.isCustom ? '编辑该自定义动作' : '编辑该内置动作'}
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      {ex.isCustom && (
                         <button
                           type="button"
                           onClick={() => handleDeleteExercise(ex)}
@@ -364,8 +367,8 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -380,7 +383,9 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
           <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] overflow-y-auto modal-scroll overscroll-contain p-5 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-black text-slate-900 text-base">
-                {editingExercise ? '编辑自定义健身动作' : '添加自定义健身动作'}
+                {editingExercise
+                  ? (editingExercise.isCustom ? '编辑自定义健身动作' : '编辑内置动作（名称与部位锁定）')
+                  : '添加自定义健身动作'}
               </h3>
               <button
                 onClick={closeModal}
@@ -402,9 +407,17 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                   type="text"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
+                  readOnly={Boolean(editingExercise && !editingExercise.isCustom)}
                   placeholder="例如: 史密斯下斜推胸、六角杠深蹲..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+                  className={`w-full border rounded-xl px-3 py-2 text-sm placeholder-slate-400 focus:outline-none focus:border-blue-500 ${
+                    editingExercise && !editingExercise.isCustom
+                      ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-50 border-slate-200 text-slate-900 focus:bg-white'
+                  }`}
                 />
+                {editingExercise && !editingExercise.isCustom && (
+                  <p className="text-[10px] text-slate-400 mt-1">内置动作名称不可修改</p>
+                )}
               </div>
 
               <div>
@@ -412,7 +425,12 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                 <select
                   value={newCategory}
                   onChange={(e) => setNewCategory(e.target.value as MuscleCategory)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white"
+                  disabled={Boolean(editingExercise && !editingExercise.isCustom)}
+                  className={`w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-blue-500 ${
+                    editingExercise && !editingExercise.isCustom
+                      ? 'bg-slate-100 text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-50 text-slate-900 focus:bg-white'
+                  }`}
                 >
                   <option value="chest">胸部</option>
                   <option value="back">背部</option>
@@ -423,6 +441,9 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                   <option value="abs">腹部核心</option>
                   <option value="cardio">有氧训练</option>
                 </select>
+                {editingExercise && !editingExercise.isCustom && (
+                  <p className="text-[10px] text-slate-400 mt-1">内置动作部位不可修改</p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">

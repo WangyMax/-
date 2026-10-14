@@ -42,6 +42,18 @@ const EDIT_PULLEY_SHORT: Record<PulleyRatio, string> = {
   '2:1': '双滑轮',
 };
 
+// 历史编辑：默认递减四阶（与动作库/计划页默认阶梯一致）
+const EDIT_DEFAULT_DROP_STAGES: DropStage[] = [
+  { id: 'edit-stg-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
+  { id: 'edit-stg-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
+  { id: 'edit-stg-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
+  { id: 'edit-stg-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
+];
+
+// 深拷贝默认四阶并生成唯一 id，避免多个大组共享同一数组引用
+const makeEditDefaultDropStages = (): DropStage[] =>
+  EDIT_DEFAULT_DROP_STAGES.map((stg, i) => ({ ...stg, id: `edit-stg-${Date.now()}-${i}` }));
+
 export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   onDataChanged,
   allExercises,
@@ -312,13 +324,17 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     });
 
   // 历史编辑：切换单双侧；切到单侧时左右默认取主字段值，切回双侧保留数据仅不再分侧展示
+  // 单侧与超级组互斥：切到单侧时清除该动作各组的超级组标记与阶梯
   const editToggleUnilateral = (exIdx: number, on: boolean) =>
     patchEditing(d => {
       const ex = d.exercises[exIdx];
       ex.isUnilateral = on || undefined;
       ex.sets.forEach(s => {
-        if (s.isDropSet) return;
         if (on) {
+          if (s.isDropSet) {
+            s.isDropSet = undefined;
+            s.dropStages = undefined;
+          }
           s.unilateral = true;
           if (!s.left) s.left = { weight: s.weightOrPlates, reps: s.reps };
           if (!s.right) s.right = { weight: s.weightOrPlates, reps: s.reps };
@@ -326,6 +342,30 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           s.unilateral = undefined;
         }
       });
+    });
+
+  // 历史编辑：切换递减超级组（整组动作；开启时每组深拷贝一份默认四阶）
+  // 超级组与单侧互斥：开启超级组时清除单侧标记与左右值，组单位统一为 kg
+  const editToggleDropSet = (exIdx: number, on: boolean) =>
+    patchEditing(d => {
+      const ex = d.exercises[exIdx];
+      ex.sets.forEach(s => {
+        if (on) {
+          s.unilateral = undefined;
+          s.left = undefined;
+          s.right = undefined;
+          s.isDropSet = true;
+          const stages = makeEditDefaultDropStages();
+          s.dropStages = stages;
+          s.unit = 'kg';
+          s.weightOrPlates = stages[0].weightOrPlates;
+          s.reps = stages[0].reps;
+        } else {
+          s.isDropSet = undefined;
+          s.dropStages = undefined;
+        }
+      });
+      if (on) ex.isUnilateral = undefined;
     });
 
   // 历史编辑：加一组（复制末组，单侧复制左右）
@@ -350,16 +390,21 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const [replaceSearch, setReplaceSearch] = useState('');
 
   // 历史编辑：换动作（保留组数与备注，重量次数沿用原组；单侧按新动作标记重建左右）
-  const editReplaceExercise = (exIdx: number, neo: { id: string; name: string; category: WorkoutSession['exercises'][number]['category']; defaultUnit: WorkoutSession['exercises'][number]['currentUnit']; defaultPulley: WorkoutSession['exercises'][number]['pulleyRatio']; isUnilateral?: boolean }) =>
+  // 新动作带有效超级组阶梯时，按现有组数重建超级组大组（与新增动作的 asDrop 分支一致）
+  const editReplaceExercise = (exIdx: number, neo: { id: string; name: string; category: WorkoutSession['exercises'][number]['category']; defaultUnit: WorkoutSession['exercises'][number]['currentUnit']; defaultPulley: WorkoutSession['exercises'][number]['pulleyRatio']; isUnilateral?: boolean; isDropSet?: boolean; dropStages?: DropStage[] }) =>
     patchEditing(d => {
       const ex = d.exercises[exIdx];
       const n = ex.sets.length || 1;
+      // 动作库预设阶梯优先；无阶梯时超级组标记视为无效，回落普通或单侧分支
+      const stages = neo.dropStages && neo.dropStages.length > 0 ? neo.dropStages : undefined;
+      const asDrop = Boolean(neo.isDropSet && stages);
       ex.exerciseId = neo.id;
       ex.exerciseName = neo.name;
       ex.category = neo.category;
       ex.currentUnit = neo.defaultUnit;
       ex.pulleyRatio = neo.defaultPulley;
-      ex.isUnilateral = neo.isUnilateral || undefined;
+      // 超级组不支持分侧记录
+      ex.isUnilateral = asDrop ? undefined : (neo.isUnilateral || undefined);
       ex.sets = Array.from({ length: n }, (_, i) => {
         const old = ex.sets[i];
         const w = old?.weightOrPlates ?? 30;
@@ -373,6 +418,18 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           completed: true,
           pulleyRatio: neo.defaultPulley,
         };
+        if (asDrop) {
+          // 每个大组深拷贝一份阶梯，避免各大组共享同一数组引用
+          const copiedStages: DropStage[] = JSON.parse(JSON.stringify(stages));
+          return {
+            ...base,
+            unit: 'kg' as ResistanceUnit,
+            weightOrPlates: copiedStages[0]?.weightOrPlates ?? 10,
+            reps: copiedStages[0]?.reps ?? 12,
+            isDropSet: true,
+            dropStages: copiedStages,
+          };
+        }
         if (neo.isUnilateral) {
           const lw = old?.left?.weight ?? w;
           const lr = old?.left?.reps ?? r;
@@ -1688,6 +1745,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 const unitStr = e.currentUnit === 'plates' ? '片'
                   : e.currentUnit === 'assisted' ? '助力'
                   : e.currentUnit === 'bodyweight' ? '自重' : 'kg';
+                // 该动作是否已按超级组编排（任一组带超级组标记）
+                const isDrop = e.sets.some(s => s.isDropSet);
                 return (
                   <div key={exIdx} className="bg-slate-50/70 border border-slate-200 rounded-xl p-2.5 space-y-2">
                     {/* 动作名：可直接改名（仅改本条记录） */}
@@ -1727,6 +1786,18 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                         className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline shrink-0"
                       >
                         {e.isUnilateral ? '切回双侧' : '改为单侧'}
+                      </button>
+                      {isDrop && (
+                        <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded shrink-0">
+                          🔥 超级组
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => editToggleDropSet(exIdx, !isDrop)}
+                        className="text-[10px] font-bold text-amber-700 hover:text-amber-900 underline shrink-0"
+                      >
+                        {isDrop ? '取消超级组' : '设为超级组'}
                       </button>
                       <span className="flex-1" />
                       <button
@@ -1943,6 +2014,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
               id: ex.id, name: ex.name, category: ex.category,
               defaultUnit: ex.defaultUnit, defaultPulley: ex.defaultPulley || 'none',
               isUnilateral: ex.isUnilateral,
+              isDropSet: ex.isDropSet,
+              dropStages: ex.dropStages,
             });
           } else {
             editAddExercise({
