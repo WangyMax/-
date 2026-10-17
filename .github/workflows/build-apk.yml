@@ -37,10 +37,7 @@ jobs:
       - name: Build Web Application
         run: npm run build
 
-      - name: Sync Capacitor Android
-        run: npx cap sync android
-
-      - name: Verify Synced Web Assets
+      - name: Verify Committed Web Assets
         run: |
           grep -- "--c-canvas" android/app/src/main/assets/public/assets/*.css
           grep "bg-canvas" android/app/src/main/assets/public/index.html
@@ -77,7 +74,7 @@ jobs:
             4. 规格入口改名「自定义编辑」；全站统一「超级组」文案。
             5. 数据兼容：包名与签名不变，versionCode 33；覆盖安装保留原计划、训练、体重与生活日志。不要卸载；升级前建议导出 JSON 备份。
             6. 本版先完成今日训练相关页面；计划分化、动作库、日志页的视觉迁移在后续版本继续。
-            7. 构建修正：CI 在打包前强制同步并校验网页资源，避免版本号更新但界面未更新的问题。
+            7. 构建修正：CI 直接使用仓库中已同步的 Android 网页资源，并在打包前校验设计 token 与页面标记，避免版本号更新但界面未更新的问题。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
