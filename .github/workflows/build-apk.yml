@@ -42,8 +42,8 @@ jobs:
 
       - name: Verify Synced Web Assets
         run: |
-          grep -R "自定义编辑" android/app/src/main/assets/public/assets/*.js
-          grep -R -- "--c-canvas" android/app/src/main/assets/public/assets/*.css
+          grep -- "--c-canvas" android/app/src/main/assets/public/assets/*.css
+          grep "bg-canvas" android/app/src/main/assets/public/index.html
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
