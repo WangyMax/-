@@ -206,6 +206,13 @@
 - **验证**：单 data-code 子代理实施并按 L2 审核通过（review-v2811.json accepted）；390 视口实测超级组飞鸟带“🔥超级组·4阶”、全库 48 个编辑入口、历史编辑 5 组动作行均有切换且点开翻转为取消；tsc 与构建通过。已知限制：历史自定义新动作内联表单无超级组开关（任务明确未覆盖）；内置动作关超级组保存后冷启动会补回（取消不跨重启持久，需另立方案）。
 - **数据红线**：无新增存储键；版本号 versionCode 30 / versionName 2.8.11。
 
+### 23. v2.8.12 状态栏避让 + 移除恢复按钮 + 原生导出备份
+- **问题① 状态栏重叠（一加 ACE5 PRO）**：targetSdk 36 强制 edge-to-edge，WebView 绘制到状态栏下；部分机型 CSS env(safe-area-inset-top) 返回 0，原 46px 兜底不足。修法：MainActivity 在 onCreate 给 android.R.id.content 注册 WindowInsets 监听，取 systemBars 与 displayCutout insets 的最大值设置 left/top/right padding，bottom 保持 0；同时移除 App.tsx 的 CSS 垫片，避免原生避让后再叠加造成双倍留白。
+- **问题② 恢复按钮**：按用户要求移除「恢复 10.06-10.09 真实记录」入口与 handleRestoreOfficialData，备份区仅保留导出与导入两个按钮；StorageService.restoreOfficialData 保留未删。
+- **问题③ 真机导出无反应**：Android WebView 不支持 a.download 触发下载。修法：新增 @capacitor/filesystem 与 @capacitor/share，原生端把 exportBackupJson 写入 Directory.Cache 后调用系统分享面板；成功、用户取消、失败三类均有备份卡片内就近提示（5 秒自动消失），Web 端保留 Blob 下载。
+- **验证**：单 data-code 子代理实施并按 L2 审核通过（review-v2812.json accepted）；主模型重跑 tsc 与构建通过；cap sync 确认两个插件已注册；真机顶距与分享面板待用户覆盖安装确认。
+- **数据红线**：无新增存储键；导出 JSON 结构未变；版本号 versionCode 31 / versionName 2.8.12。
+
 ---
 
 ## 三、 工程结构目录速查

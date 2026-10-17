@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Scale, Plus, TrendingDown, TrendingUp,
-  Trash2, Download, Upload, CheckCircle2, MessageSquare,
-  Dumbbell, Flame, RotateCcw, Check, ChevronDown, ChevronUp,
+  Trash2, Download, Upload, CheckCircle2, MessageSquare, AlertCircle,
+  Dumbbell, Flame, Check, ChevronDown, ChevronUp,
   Layers, Coffee, Target, CalendarDays, Zap, Pencil
 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import {
   WeightLog, WorkoutSession, UnilateralSide, Exercise, DropStage,
   MuscleCategory, ResistanceUnit, PulleyRatio
@@ -77,6 +80,11 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const [inputNote, setInputNote] = useState('');
   const [isEditingExisting, setIsEditingExisting] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  // 备份区就近提示（导出/分享结果），5 秒后自动清空
+  const [backupStatus, setBackupStatus] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
   // 体重目标
   const [weightGoal, setWeightGoal] = useState<number | null>(null);
   const [goalInput, setGoalInput] = useState('');
@@ -490,36 +498,62 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       });
     });
 
-  // 恢复内置官方数据 (10.06 - 10.09)
-  const handleRestoreOfficialData = () => {
-    setConfirmState({
-      open: true,
-      title: '恢复 10.06 - 10.09 真实记录',
-      description: '确定重置并重新载入官方 10.06 - 10.09 四日完整真实训练与体重数据吗？',
-      confirmText: '确认恢复',
-      onConfirm: () => {
-        StorageService.restoreOfficialData();
-        setConfirmState(prev => ({ ...prev, open: false }));
-        refreshData();
-        if (onDataChanged) onDataChanged();
-        setImportStatus('已恢复 10.06 - 10.09 官方真实记录！');
-        setTimeout(() => setImportStatus(null), 3000);
-      },
-    });
+  // 备份区就近提示：5 秒后自动清空，避免只依赖页面顶部 importStatus
+  const showBackupStatus = (type: 'success' | 'error', message: string) => {
+    setBackupStatus({ type, message });
+    setTimeout(() => setBackupStatus(null), 5000);
   };
 
-  // 导出 JSON 备份
-  const handleExportBackup = () => {
+  // 导出 JSON 备份：原生端写入 Cache 后调用系统分享，Web 端保留 Blob 下载
+  const handleExportBackup = async () => {
     const jsonStr = StorageService.exportBackupJson();
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `fitcustom-backup-${todayLocalDate()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const fileName = `fitcustom-backup-${todayLocalDate()}.json`;
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const written = await Filesystem.writeFile({
+          path: fileName,
+          data: jsonStr,
+          directory: Directory.Cache,
+          encoding: Encoding.UTF8,
+        });
+        try {
+          await Share.share({
+            url: written.uri,
+            dialogTitle: '导出训练数据',
+          });
+          showBackupStatus('success', '备份已生成，可在分享面板保存或发送');
+        } catch (shareErr) {
+          const msg = shareErr instanceof Error ? shareErr.message : String(shareErr);
+          // 用户取消分享时插件会 reject，此时文件已成功写入
+          if (/cancel/i.test(msg)) {
+            showBackupStatus('success', '已取消分享，备份文件仍已生成');
+          } else {
+            showBackupStatus('error', `导出失败：${msg}`);
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        showBackupStatus('error', `导出失败：${msg}`);
+      }
+      return;
+    }
+
+    try {
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showBackupStatus('success', '备份已下载');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showBackupStatus('error', `导出失败：${msg}`);
+    }
   };
 
   // 导入 JSON 备份
@@ -1665,19 +1699,12 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
       {/* 数据安全与备份中心 */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm mt-4">
-        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">本地数据中心与官方记录</h3>
+        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">本地数据中心与备份</h3>
         <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-          所有计划、训练动作与体重日记 100% 保存在本地。可随时导出 JSON 备份或恢复 10.06 - 10.09 官方真实记录。
+          所有计划、训练动作与体重日记 100% 保存在本地。可随时导出 JSON 备份，或导入备份文件恢复数据。
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <button
-            onClick={handleRestoreOfficialData}
-            className="py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-xl border border-blue-200 flex items-center justify-center gap-1.5 transition-all"
-          >
-            <RotateCcw className="w-3.5 h-3.5" /> 恢复 10.06-10.09 真实记录
-          </button>
-
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <button
             onClick={handleExportBackup}
             className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-1.5 transition-all"
@@ -1695,6 +1722,23 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             />
           </label>
         </div>
+
+        {backupStatus && (
+          <div
+            className={`mt-2 px-3 py-2 rounded-xl border text-[11px] font-bold flex items-start gap-1.5 ${
+              backupStatus.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                : 'bg-red-50 border-red-200 text-red-700'
+            }`}
+          >
+            {backupStatus.type === 'success' ? (
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-px" />
+            ) : (
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+            )}
+            <span className="break-all">{backupStatus.message}</span>
+          </div>
+        )}
       </div>
 
       {/* 历史训练编辑弹窗（z-70，同 id 写回；休息日仅备注可改） */}
