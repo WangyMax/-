@@ -3,14 +3,37 @@
 @tailwind utilities;
 
 :root {
+  /* 唯一浅色主题的设计 token（RGB 三元组，供 Tailwind 透明度修饰使用） */
+  --c-canvas: 247 248 250;
+  --c-surface: 255 255 255;
+  --c-surface-subtle: 241 243 245;
+  --c-surface-strong: 233 236 240;
+  --c-surface-done: 251 252 253;
+  --c-line: 228 231 236;
+  --c-line-strong: 208 213 221;
+  --c-ink: 20 24 31;
+  --c-ink-2: 91 100 114;
+  --c-ink-3: 102 112 133;
+  --c-ink-disabled: 152 162 179;
+  --c-accent: 37 99 235;
+  --c-accent-soft: 239 244 255;
+  --c-accent-line: 191 211 254;
+  --c-success: 4 120 87;
+  --c-success-soft: 236 253 243;
+  --c-warning: 180 83 9;
+  --c-warning-soft: 255 250 235;
+  --c-danger: 180 35 24;
+  --c-danger-soft: 254 243 242;
   color-scheme: light;
 }
 
 body {
   margin: 0;
-  background-color: #f8fafc;
-  color: #1e293b;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background-color: rgb(var(--c-canvas));
+  color: rgb(var(--c-ink));
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI",
+    "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC", "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent;
@@ -20,6 +43,22 @@ body {
 
 html {
   overflow-x: hidden;
+}
+
+/* 数字输入去掉浏览器自带的上下箭头，避免挤占窄字段 */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--c-accent));
+  outline-offset: 2px;
 }
 
 /* 隐藏滚动条但允许滚动 */
@@ -51,7 +90,7 @@ body.modal-open {
   -webkit-overflow-scrolling: touch;
 }
 
-/* v2.8 通用微动效：纯 CSS，不依赖任何原生服务 */
+/* 通用微动效：纯 CSS，不依赖任何原生服务 */
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -70,7 +109,18 @@ body.modal-open {
   to { opacity: 1; transform: none; }
 }
 .animate-fade-in { animation: fade-in 0.18s ease-out; }
-.animate-sheet-up { animation: sheet-up 0.22s cubic-bezier(0.32, 0.72, 0.35, 1); }
-.animate-check-pop { animation: check-pop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1); }
-.animate-card-in { animation: card-in 0.22s ease-out; }
+.animate-sheet-up { animation: sheet-up 0.24s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.animate-check-pop { animation: check-pop 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.animate-card-in { animation: card-in 0.2s ease-out; }
 .progress-fill { transition: width 0.3s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

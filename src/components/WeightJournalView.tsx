@@ -1147,7 +1147,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                                         className="w-full bg-slate-50/90 p-2 rounded-xl border border-slate-200/90 text-[11px] font-mono space-y-1.5"
                                       >
                                         <div className="font-bold text-slate-800 flex items-center justify-between">
-                                          <span className="text-blue-700 font-sans font-black">第 {s.setNumber} 大组 (递减超级组)</span>
+                                          <span className="text-blue-700 font-sans font-black">第 {s.setNumber} 大组 (超级组)</span>
                                           <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 font-sans font-semibold">
                                             {s.dropStages.length}阶递减全部完成
                                           </span>

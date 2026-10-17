@@ -1,13 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Play, Plus, Check, Trash2,
-  Dumbbell, Flame,
+  Play, Plus, Check, Trash2, Flame, ArrowLeftRight,
   Sparkles, Award, Coffee,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Pencil,
 } from 'lucide-react';
 import {
-  WorkoutPlan, WorkoutSession, ExerciseLog, WorkoutSet,
+  WorkoutPlan, WorkoutSession, ExerciseLog, WorkoutSet, DropStage,
   ResistanceUnit, PulleyRatio, MuscleCategory, CATEGORY_LABELS, UNIT_LABELS, Exercise,
   UnilateralSide
 } from '../types';
@@ -16,6 +15,7 @@ import { buildSessionFromPlan } from '../utils/sessionBuilder';
 import { todayLocalDate, yesterdayLocalDate } from '../utils/date';
 import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 import { ConfirmSheet } from './ConfirmSheet';
+import { Badge, Button, Card, IconButton, NumberText, SegmentedControl, Sheet, cx } from '../ui';
 
 interface WorkoutViewProps {
   onOpenPlansTab: () => void;
@@ -84,21 +84,54 @@ function inferSessionCategory(session: WorkoutSession): CycleKey | null {
   return null;
 }
 
-const UNIT_SHORT: Record<ResistanceUnit, string> = {
-  plates: '插销',
-  kg: '重量',
-  assisted: '助力',
-  bodyweight: '自重',
-};
-const PULLEY_SHORT: Record<PulleyRatio, string> = {
-  none: '普通器械',
-  '1:1': '单滑轮',
-  '2:1': '双滑轮',
+
+const fieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
+
+const STATUS_OPTIONS = [
+  { value: 'train', label: '开练' },
+  { value: 'rest', label: '今日休息' },
+  { value: 'backfill', label: '补签' },
+] as const;
+
+const UNIT_OPTIONS = [
+  { value: 'plates', label: '插片' },
+  { value: 'kg', label: 'kg' },
+  { value: 'assisted', label: '助力' },
+  { value: 'bodyweight', label: '自重' },
+] as const;
+
+const PULLEY_OPTIONS = [
+  { value: 'none', label: '无' },
+  { value: '1:1', label: '1:1' },
+  { value: '2:1', label: '2:1' },
+] as const;
+
+const RECORD_MODE_OPTIONS = [
+  { value: 'both', label: '双侧' },
+  { value: 'unilateral', label: '左右分开' },
+] as const;
+
+const ADD_SHEET_OPTIONS = [
+  { value: 'library', label: '从动作库选择' },
+  { value: 'custom', label: '自定义新动作' },
+] as const;
+
+// 计划名里沿用了数据中的彩色 emoji，展示时统一成单色加号
+const displayPlanName = (name: string) => name.replace(/➕/g, '+');
+
+// 未预设递减阶梯时使用的默认四阶；插片用整数，其余沿用 kg 的 2.5 递减
+const makeDefaultDropStages = (unit: ResistanceUnit): DropStage[] => {
+  const weights = unit === 'plates' ? [10, 8, 6, 4] : [10, 7.5, 5, 2.5];
+  const reps = [12, 12, 10, 12];
+  return weights.map((weightOrPlates, index) => ({
+    id: `default-stage-${index + 1}`,
+    weightOrPlates,
+    unit,
+    reps: reps[index],
+  }));
 };
 
-// 单侧组重量单位短标签
-const unitBadge = (u: ResistanceUnit): string =>
-  u === 'plates' ? '片' : u === 'assisted' ? '助力kg' : u === 'bodyweight' ? '自重' : 'kg';
+// 单侧组不再在行内重复单位标签；单位统一由动作规格胶囊展示
 
 export const WorkoutView: React.FC<WorkoutViewProps> = ({
   onOpenPlansTab,
@@ -110,13 +143,14 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
   const [showAddExModal, setShowAddExModal] = useState(false);
-  // 添加动作弹窗内的自定义动作折叠表单
-  const [showCustomForm, setShowCustomForm] = useState(false);
+  // 添加动作面板：从动作库选择 / 自定义新动作两个标签页
+  const [addSheetTab, setAddSheetTab] = useState<'library' | 'custom'>('library');
   const [customName, setCustomName] = useState('');
   const [customCategory, setCustomCategory] = useState<MuscleCategory>('chest');
   const [customUnit, setCustomUnit] = useState<ResistanceUnit>('plates');
   const [customPulley, setCustomPulley] = useState<PulleyRatio>('none');
   const [customUnilateral, setCustomUnilateral] = useState(false);
+  const [customDropSet, setCustomDropSet] = useState(false);
   const [customNotes, setCustomNotes] = useState('');
   const [customError, setCustomError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -140,6 +174,13 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
 
   // 弹窗打开时锁住底层 body 滚动，彻底杜绝滚动穿透
   useLockBodyScroll(specExIdx !== null || showAddExModal || showFinishModal || confirmState.open);
+
+  // 每次打开添加面板都回到「从动作库选择」，避免上次停留在自定义标签页
+  const openAddExerciseSheet = () => {
+    setAddSheetTab('library');
+    setCustomError(null);
+    setShowAddExModal(true);
+  };
 
   useEffect(() => {
     setPlans(StorageService.getPlans());
@@ -194,7 +235,14 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const unit = lastLog?.currentUnit || exercise.defaultUnit || 'plates';
     const pulley = lastLog?.pulleyRatio || exercise.defaultPulley || 'none';
 
-    const exIsUnilateral = Boolean(exercise.isUnilateral);
+    // 优先动作库预设阶梯，其次上次训练的超级组阶梯，最后用默认四阶
+    const presetStages = exercise.dropStages?.length
+      ? exercise.dropStages
+      : lastLog?.sets.find(s => s.isDropSet && s.dropStages?.length)?.dropStages;
+    const shouldDrop = Boolean(exercise.isDropSet) || Boolean(presetStages?.length);
+    // 超级组与左右独立互斥
+    const exIsUnilateral = !shouldDrop && Boolean(exercise.isUnilateral);
+    const sourceStages = presetStages?.length ? presetStages : makeDefaultDropStages(unit);
 
     // 新增动作：4 组一律留空待填（重量/次数写 0，输入框按可清空原则显示为空），
     // 不复用上次记录的数值，也不推断数值；仅沿用上次记录/动作默认推断出的单位与滑轮规格。
@@ -208,8 +256,17 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
         completed: false,
         pulleyRatio: pulley
       };
-      // 左右独立动作：左右两侧同样留空待填
-      if (exIsUnilateral) {
+      if (shouldDrop) {
+        const firstStage = sourceStages[0];
+        newSet.isDropSet = true;
+        newSet.weightOrPlates = firstStage?.weightOrPlates ?? 0;
+        newSet.reps = firstStage?.reps ?? 0;
+        newSet.dropStages = sourceStages.map((stage, index) => ({
+          ...stage,
+          id: `${newSet.id}-stage-${index + 1}`,
+        }));
+      } else if (exIsUnilateral) {
+        // 左右独立动作：左右两侧同样留空待填
         newSet.unilateral = true;
         newSet.left = { weight: 0, reps: 0 };
         newSet.right = { weight: 0, reps: 0 };
@@ -308,16 +365,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   };
 
   // 修改超级组阶梯数值 (某个递减阶段的重量或次数)
-  const updateDropStageField = (exIndex: number, setIndex: number, stageIndex: number, field: 'weightOrPlates' | 'reps', delta: number) => {
-    if (!activeSession) return;
-    const exercises = [...activeSession.exercises];
-    const targetSet = exercises[exIndex].sets[setIndex];
-    if (!targetSet.dropStages) return;
-    const stg = targetSet.dropStages[stageIndex];
-    stg[field] = Math.max(0, stg[field] + delta);
-    updateActiveSession({ ...activeSession, exercises });
-  };
-
   const setDropStageDirectVal = (exIndex: number, setIndex: number, stageIndex: number, field: 'weightOrPlates' | 'reps', val: number) => {
     if (!activeSession) return;
     const exercises = [...activeSession.exercises];
@@ -403,7 +450,11 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     if (!activeSession) return;
     const exercises = [...activeSession.exercises];
     exercises[exIndex].currentUnit = newUnit;
-    exercises[exIndex].sets.forEach(s => s.unit = newUnit);
+    exercises[exIndex].sets.forEach(s => {
+      s.unit = newUnit;
+      // 超级组阶梯使用独立单位字段，换单位时一并同步
+      s.dropStages?.forEach(stage => { stage.unit = newUnit; });
+    });
     updateActiveSession({ ...activeSession, exercises });
   };
 
@@ -449,10 +500,61 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     }
   };
 
+  // 训练中切换递减超级组：与左右独立互斥，切换时重建当前组结构
+  const changeExerciseDropMode = (exIndex: number, enabled: boolean) => {
+    if (!activeSession) return;
+    const exercises = [...activeSession.exercises];
+    const target = exercises[exIndex];
+    if (enabled) {
+      const existingStages = target.sets.find(s => s.dropStages?.length)?.dropStages
+        || StorageService.getLastExerciseLog(target.exerciseId)?.sets.find(s => s.isDropSet && s.dropStages?.length)?.dropStages;
+      target.isUnilateral = undefined;
+      target.sets = target.sets.map((set) => {
+        const unit = set.unit;
+        const template = existingStages?.length ? existingStages : makeDefaultDropStages(unit);
+        const stages = template.map((stage, index) => ({
+          ...stage,
+          id: `${set.id}-stage-${index + 1}`,
+          unit,
+        }));
+        if ((set.weightOrPlates || set.reps) && stages[0]) {
+          stages[0] = {
+            ...stages[0],
+            weightOrPlates: set.weightOrPlates || stages[0].weightOrPlates,
+            reps: set.reps || stages[0].reps,
+          };
+        }
+        return {
+          ...set,
+          isDropSet: true,
+          dropStages: stages,
+          unilateral: undefined,
+          left: undefined,
+          right: undefined,
+          weightOrPlates: stages[0]?.weightOrPlates ?? set.weightOrPlates,
+          reps: stages[0]?.reps ?? set.reps,
+        };
+      });
+    } else {
+      target.sets = target.sets.map((set) => {
+        const firstStage = set.dropStages?.[0];
+        return {
+          ...set,
+          isDropSet: undefined,
+          dropStages: undefined,
+          weightOrPlates: firstStage?.weightOrPlates ?? set.weightOrPlates,
+          reps: firstStage?.reps ?? set.reps,
+        };
+      });
+    }
+    updateActiveSession({ ...activeSession, exercises });
+  };
+
   // 在自由训练中新建自定义动作：写入动作库后立即加入本次训练
   const createAndAddCustomExercise = (data: {
     name: string; category: MuscleCategory; defaultUnit: ResistanceUnit;
-    defaultPulley: PulleyRatio; isUnilateral: boolean; notes: string;
+    defaultPulley: PulleyRatio; isUnilateral: boolean; isDropSet: boolean;
+    dropStages?: DropStage[]; notes: string;
   }): boolean => {
     if (!activeSession) return false;
     const created = StorageService.addCustomExercise({
@@ -460,7 +562,11 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       category: data.category,
       defaultUnit: data.defaultUnit,
       defaultPulley: data.defaultPulley,
-      isUnilateral: data.isUnilateral || undefined,
+      isUnilateral: data.isDropSet ? undefined : (data.isUnilateral || undefined),
+      isDropSet: data.isDropSet || undefined,
+      dropStages: data.isDropSet
+        ? (data.dropStages?.length ? data.dropStages : makeDefaultDropStages(data.defaultUnit))
+        : undefined,
       notes: data.notes.trim() || undefined,
       isFavorite: true,
     });
@@ -647,42 +753,72 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     return { lastKey, suggestKey, daysAgo };
   }, [sessions, activeSession, todayDateStr]);
 
+  // 推荐计划：按罗盘建议部位匹配计划名称，仅作视觉提示，不改变开练逻辑
+  const suggestedPlanId = useMemo(() => {
+    if (compass.suggestKey === 'rest') return null;
+    const label = CYCLE_LABEL[compass.suggestKey];
+    return plans.find(p => p.name.includes(label))?.id ?? null;
+  }, [plans, compass.suggestKey]);
+
   // 分化罗盘条
-  const renderCompass = () => (
-    <div className="flex items-center gap-1 mt-2 overflow-x-auto scrollbar-none text-[10px] font-bold">
-      {CYCLE_ORDER.map((key, i) => {
-        const isLast = compass.lastKey === key;
-        const isSuggest = compass.suggestKey === key;
-        return (
-          <span key={key} className="flex items-center gap-1 shrink-0">
-            {i > 0 && <span className="text-slate-300">➔</span>}
-            <span
-              className={`px-2 py-1 rounded-lg whitespace-nowrap ${
-                isSuggest
-                  ? 'bg-blue-600 text-white shadow'
-                  : isLast
-                    ? 'bg-slate-600 text-white'
-                    : key === 'rest'
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-slate-100 text-slate-400'
-              }`}
-            >
-              {CYCLE_LABEL[key]}
-              {isLast && compass.daysAgo !== null && compass.daysAgo > 0 && `·${compass.daysAgo}天前`}
-              {isLast && compass.daysAgo === 0 && '·今天'}
-              {isSuggest && '·建议下次'}
-            </span>
-          </span>
-        );
-      })}
-    </div>
-  );
+  const renderCompass = (compact = false) => {
+    const lastLabel = compass.lastKey ? CYCLE_LABEL[compass.lastKey] : null;
+    return (
+      <div className="mt-2">
+        <div className="flex gap-1 rounded-ctl bg-surface-subtle p-1" role="list" aria-label="分化罗盘">
+          {CYCLE_ORDER.map((key) => {
+            const isLast = compass.lastKey === key;
+            const isSuggest = compass.suggestKey === key;
+            return (
+              <div
+                key={key}
+                role="listitem"
+                aria-current={isSuggest ? 'step' : undefined}
+                className={cx(
+                  'flex h-8 flex-1 items-center justify-center gap-1.5 rounded-[8px] text-cap font-medium',
+                  isSuggest
+                    ? 'border border-line bg-surface font-semibold text-ink'
+                    : isLast
+                      ? 'text-ink-2'
+                      : 'text-ink-3',
+                )}
+              >
+                <span
+                  aria-hidden="true"
+                  className={cx(
+                    'h-1.5 w-1.5 rounded-full',
+                    isSuggest
+                      ? compass.suggestKey === 'rest' ? 'bg-warning' : 'bg-accent'
+                      : isLast ? 'bg-success' : 'bg-line-strong',
+                  )}
+                />
+                {CYCLE_LABEL[key]}
+              </div>
+            );
+          })}
+        </div>
+        {!compact && (
+          <p className="mt-1.5 text-cap text-ink-3">
+            {lastLabel
+              ? `上次 ${lastLabel}${compass.daysAgo === null ? '' : compass.daysAgo === 0 ? ' · 今天' : ` · ${compass.daysAgo} 天前`}`
+              : '还没有训练记录'}
+            <span aria-hidden="true" className="mx-1.5 text-line-strong">|</span>
+            建议 {CYCLE_LABEL[compass.suggestKey]}
+          </p>
+        )}
+      </div>
+    );
+  };
 
   // 上次参考一行摘要
   const lastLogSummary = (lastLog: ExerciseLog | null): string | null => {
     if (!lastLog) return null;
     const done = lastLog.sets.filter(s => s.completed);
     if (done.length === 0) return null;
+    const dropSet = done.find(s => s.isDropSet && s.dropStages?.length);
+    if (dropSet?.dropStages?.length) {
+      return `超级组 ${dropSet.dropStages.map(st => `${st.weightOrPlates}×${st.reps}`).join(' → ')}`;
+    }
     return done
       .map(s => {
         // 左右独立：分侧展示
@@ -734,143 +870,195 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   // 普通组行（整行可点，44px 大触控）
   const renderSetRow = (exIdx: number, set: WorkoutSet, setIdx: number) => {
     const isPlates = set.unit === 'plates';
+    const firstOpen = activeSession?.exercises[exIdx]?.sets.findIndex(s => !s.completed) ?? -1;
+    const isCurrent = !set.completed && firstOpen === setIdx;
     return (
       <div
         key={set.id}
         onClick={() => toggleSetComplete(exIdx, setIdx)}
-        className={`grid grid-cols-12 gap-2 items-center rounded-2xl p-2.5 cursor-pointer border-2 transition-all active:scale-[0.99] ${
-          set.completed ? 'bg-emerald-50/70 border-emerald-300' : 'bg-slate-50 border-slate-200'
-        }`}
+        className={cx(
+          'relative grid h-14 grid-cols-[32px_1fr_64px_44px] items-center gap-2 rounded-ctl border px-2 transition-colors',
+          set.completed
+            ? 'border-line bg-surface-done'
+            : isCurrent
+              ? 'border-accent-line bg-accent-soft'
+              : 'border-line bg-surface',
+        )}
       >
-        <div className="col-span-2 flex items-center justify-center">
-          <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-black ${
-            set.completed ? 'bg-emerald-600 text-white animate-check-pop' : 'bg-slate-200 text-slate-700'
-          }`}>
-            {set.setNumber}
-          </span>
-        </div>
-        <div
-          className="col-span-6 flex items-center justify-center gap-2"
-          onClick={(e) => e.stopPropagation()}
+        {isCurrent && (
+          <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-accent" />
+        )}
+        <span
+          className={cx(
+            'flex h-7 w-7 items-center justify-center justify-self-center rounded-[8px] text-sm2 font-semibold tabular-nums',
+            set.completed
+              ? 'bg-success-soft text-success'
+              : isCurrent
+                ? 'bg-accent text-white'
+                : 'bg-surface-subtle text-ink-2',
+          )}
         >
+          {set.setNumber}
+        </span>
+        <div className="flex items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
+            aria-label="减少重量"
             onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? -1 : -2.5)}
-            className="w-11 h-11 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200 text-slate-700 rounded-xl flex items-center justify-center font-black text-lg shadow-xs"
+            className="flex h-11 w-10 items-center justify-center rounded-[8px] border border-line bg-surface text-[18px] font-medium text-ink active:bg-surface-strong"
           >
             −
           </button>
-          <div className="text-center min-w-0 flex-1">
-            <input
-              type="number"
-              value={set.weightOrPlates || ''}
-              onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
-              className="w-full min-w-[2.5rem] max-w-[4rem] text-center bg-transparent font-black text-xl text-slate-900 focus:outline-none"
-            />
-            <div className="text-[10px] text-slate-400 font-semibold -mt-0.5">
-              {isPlates ? '片' : set.unit === 'assisted' ? '助力kg' : set.unit === 'bodyweight' ? '自重' : 'kg'}
-            </div>
-          </div>
+          <input
+            type="number"
+            inputMode="decimal"
+            aria-label="重量"
+            value={set.weightOrPlates || ''}
+            onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
+            className={cx(
+              'w-[52px] bg-transparent text-center text-[20px] font-semibold tabular-nums text-ink focus:outline-none',
+              set.completed && 'text-ink-2',
+            )}
+          />
           <button
             type="button"
+            aria-label="增加重量"
             onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? 1 : 2.5)}
-            className="w-11 h-11 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200 text-slate-700 rounded-xl flex items-center justify-center font-black text-lg shadow-xs"
+            className="flex h-11 w-10 items-center justify-center rounded-[8px] border border-line bg-surface text-[18px] font-medium text-ink active:bg-surface-strong"
           >
             ＋
           </button>
         </div>
-        <div
-          className="col-span-2 flex items-center justify-center gap-0.5"
-          onClick={(e) => e.stopPropagation()}
-        >
+        <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
           <input
             type="number"
+            inputMode="numeric"
+            aria-label="次数"
             value={set.reps || ''}
             onChange={(e) => setDirectVal(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
-            className="w-full min-w-[2rem] max-w-[3rem] text-center bg-white border border-slate-200 rounded-xl py-2 font-black text-lg text-slate-900 focus:outline-none focus:border-blue-500"
+            className="h-11 w-full rounded-[8px] bg-surface-subtle text-center text-[17px] font-semibold tabular-nums text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-accent/30"
           />
         </div>
-        <div className="col-span-2 flex items-center justify-center">
-          <span className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all ${
+        <button
+          type="button"
+          aria-label={set.completed ? `取消完成第 ${set.setNumber} 组` : `完成第 ${set.setNumber} 组`}
+          onClick={(e) => { e.stopPropagation(); toggleSetComplete(exIdx, setIdx); }}
+          className={cx(
+            'flex h-11 w-11 items-center justify-center justify-self-center rounded-full border transition-colors',
             set.completed
-              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 animate-check-pop'
-              : 'bg-white text-slate-300 border-2 border-slate-200'
-          }`}>
-            <Check className="w-5 h-5 stroke-[3]" />
-          </span>
-        </div>
+              ? 'border-success bg-success text-white'
+              : 'border-line-strong bg-surface text-line-strong',
+          )}
+        >
+          <Check className="h-[18px] w-[18px]" strokeWidth={2.5} />
+        </button>
       </div>
     );
   };
 
-  // 左右独立普通组行：左右各一列，列内重量/次数上下紧凑；整行可点打勾
+  // 左右独立普通组行：每侧只保留重量步进，次数作为可点胶囊字段
   const renderUnilateralSetRow = (exIdx: number, set: WorkoutSet, setIdx: number) => {
     const step = set.unit === 'plates' ? 1 : 2.5;
-    const sideBlock = (side: 'left' | 'right', label: string) => {
+    const firstOpen = activeSession?.exercises[exIdx]?.sets.findIndex(s => !s.completed) ?? -1;
+    const isCurrent = !set.completed && firstOpen === setIdx;
+    const sideBlock = (side: 'left' | 'right') => {
+      const label = side === 'left' ? '左' : '右';
       const data: UnilateralSide = set[side] || { weight: set.weightOrPlates, reps: set.reps };
       return (
-        <div className="col-span-4 min-w-0" onClick={(e) => e.stopPropagation()}>
-          <div className="text-[9px] font-black text-slate-400 text-center leading-none mb-0.5">{label}</div>
-          <div className="flex items-center justify-center gap-0.5 min-w-0">
-            <button
-              type="button"
-              onClick={() => updateUnilateralField(exIdx, setIdx, side, 'weight', -step)}
-              className="w-6 h-6 shrink-0 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-black text-sm"
+        <div className="flex min-w-0 items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            aria-label={`${label}侧减少重量`}
+            onClick={() => updateUnilateralField(exIdx, setIdx, side, 'weight', -step)}
+            className="relative flex h-[38px] w-7 shrink-0 items-center justify-center rounded-[8px] border border-line bg-surface text-[16px] font-medium text-ink after:absolute after:-inset-[3px] after:content-[''] active:bg-surface-strong"
+          >
+            −
+          </button>
+          <div className="flex min-w-[44px] flex-col items-center">
+            <input
+              type="number"
+              inputMode="decimal"
+              aria-label={`${label}侧重量`}
+              value={data.weight || ''}
+              onChange={(e) => setUnilateralDirectVal(exIdx, setIdx, side, 'weight', parseFloat(e.target.value) || 0)}
+              className={cx(
+                'w-11 bg-transparent text-center text-[16px] font-semibold tabular-nums text-ink focus:outline-none',
+                set.completed && 'text-ink-2',
+              )}
+            />
+            <span
+              className={cx(
+                'mt-0.5 inline-flex items-center gap-0.5 rounded-[6px] px-1 py-0.5',
+                isCurrent ? 'bg-surface' : 'bg-surface-subtle',
+              )}
             >
-              −
-            </button>
-            <div className="min-w-0 flex-1 text-center">
               <input
                 type="number"
-                value={data.weight || ''}
-                onChange={(e) => setUnilateralDirectVal(exIdx, setIdx, side, 'weight', parseFloat(e.target.value) || 0)}
-                className="w-full min-w-0 text-center bg-transparent font-black text-sm text-slate-900 focus:outline-none"
+                inputMode="numeric"
+                aria-label={`${label}侧次数`}
+                value={data.reps || ''}
+                onChange={(e) => setUnilateralDirectVal(exIdx, setIdx, side, 'reps', parseInt(e.target.value) || 0)}
+                className="w-6 bg-transparent text-center text-cap font-medium tabular-nums text-ink-3 focus:outline-none"
               />
-              <div className="text-[9px] text-slate-400 font-semibold leading-none -mt-0.5">{unitBadge(set.unit)}</div>
-            </div>
-            <button
-              type="button"
-              onClick={() => updateUnilateralField(exIdx, setIdx, side, 'weight', step)}
-              className="w-6 h-6 shrink-0 bg-white hover:bg-slate-100 active:scale-95 border border-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-black text-sm"
-            >
-              ＋
-            </button>
+              <span className="text-cap font-medium text-ink-3">次</span>
+            </span>
           </div>
-          <input
-            type="number"
-            value={data.reps || ''}
-            onChange={(e) => setUnilateralDirectVal(exIdx, setIdx, side, 'reps', parseInt(e.target.value) || 0)}
-            className="w-full min-w-0 mt-0.5 text-center bg-white border border-slate-200 rounded-lg py-1 font-black text-sm text-slate-900 focus:outline-none focus:border-blue-500"
-          />
+          <button
+            type="button"
+            aria-label={`${label}侧增加重量`}
+            onClick={() => updateUnilateralField(exIdx, setIdx, side, 'weight', step)}
+            className="relative flex h-[38px] w-7 shrink-0 items-center justify-center rounded-[8px] border border-line bg-surface text-[16px] font-medium text-ink after:absolute after:-inset-[3px] after:content-[''] active:bg-surface-strong"
+          >
+            ＋
+          </button>
         </div>
       );
     };
+
     return (
       <div
         key={set.id}
         onClick={() => toggleSetComplete(exIdx, setIdx)}
-        className={`grid grid-cols-12 gap-1.5 items-center rounded-2xl p-2 cursor-pointer border-2 transition-all active:scale-[0.99] ${
-          set.completed ? 'bg-emerald-50/70 border-emerald-300' : 'bg-slate-50 border-slate-200'
-        }`}
+        className={cx(
+          'relative grid min-h-[58px] grid-cols-[26px_1fr_1px_1fr_44px] items-center gap-1.5 rounded-ctl border px-2 transition-colors',
+          set.completed
+            ? 'border-line bg-surface-done'
+            : isCurrent
+              ? 'border-accent-line bg-accent-soft'
+              : 'border-line bg-surface',
+        )}
       >
-        <div className="col-span-2 flex items-center justify-center">
-          <span className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-sm ${
-            set.completed ? 'bg-emerald-600 text-white animate-check-pop' : 'bg-slate-200 text-slate-700'
-          }`}>
-            {set.setNumber}
-          </span>
-        </div>
-        {sideBlock('left', '左')}
-        {sideBlock('right', '右')}
-        <div className="col-span-2 flex items-center justify-center">
-          <span className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
+        {isCurrent && (
+          <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-accent" />
+        )}
+        <span
+          className={cx(
+            'flex h-[26px] w-[26px] items-center justify-center justify-self-center rounded-[8px] text-sm2 font-semibold tabular-nums',
             set.completed
-              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 animate-check-pop'
-              : 'bg-white text-slate-300 border-2 border-slate-200'
-          }`}>
-            <Check className="w-4 h-4 stroke-[3]" />
-          </span>
-        </div>
+              ? 'bg-success-soft text-success'
+              : isCurrent
+                ? 'bg-accent text-white'
+                : 'bg-surface-subtle text-ink-2',
+          )}
+        >
+          {set.setNumber}
+        </span>
+        {sideBlock('left')}
+        <span aria-hidden="true" className="h-7 w-px justify-self-center bg-line" />
+        {sideBlock('right')}
+        <button
+          type="button"
+          aria-label={set.completed ? `取消完成第 ${set.setNumber} 组` : `完成第 ${set.setNumber} 组`}
+          onClick={(e) => { e.stopPropagation(); toggleSetComplete(exIdx, setIdx); }}
+          className={cx(
+            'flex h-11 w-11 items-center justify-center justify-self-center rounded-full border transition-colors',
+            set.completed
+              ? 'border-success bg-success text-white'
+              : 'border-line-strong bg-surface text-line-strong',
+          )}
+        >
+          <Check className="h-[18px] w-[18px]" strokeWidth={2.5} />
+        </button>
       </div>
     );
   };
@@ -879,117 +1067,101 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const renderDropBigSet = (exIdx: number, bigSet: WorkoutSet, setIdx: number) => {
     const stages = bigSet.dropStages || [];
     const expanded = expandedDropSets.has(bigSet.id);
-    const summary = stages.map(st => `${st.weightOrPlates}×${st.reps}`).join(' ➔ ');
+    const summary = stages.map(st => `${st.weightOrPlates}×${st.reps}`).join(' → ');
+    const firstOpen = activeSession?.exercises[exIdx]?.sets.findIndex(s => !s.completed) ?? -1;
+    const isCurrent = !bigSet.completed && firstOpen === setIdx;
     return (
       <div
         key={bigSet.id}
-        className={`rounded-2xl border-2 transition-all ${
-          bigSet.completed ? 'bg-emerald-50/70 border-emerald-300' : 'bg-slate-50 border-slate-200'
-        }`}
+        className={cx(
+          'overflow-hidden rounded-ctl border bg-surface',
+          bigSet.completed
+            ? 'border-line bg-surface-done'
+            : isCurrent
+              ? 'border-accent-line'
+              : 'border-line',
+        )}
       >
         {/* 折叠态：一行摘要，可点展开 */}
         <div
           onClick={() => toggleDropSetExpanded(bigSet.id)}
-          className="p-3 flex items-center justify-between gap-2 cursor-pointer select-none"
+          className={cx(
+            'flex h-14 cursor-pointer select-none items-center gap-2 px-3',
+            isCurrent && 'bg-accent-soft',
+          )}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <span className={`text-xs font-black px-2 py-1 rounded-lg border shrink-0 ${
-              bigSet.completed ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white border-slate-200'
-            }`}>
-              第 {bigSet.setNumber} 大组
-            </span>
-            <span className="text-[11px] text-slate-500 truncate font-mono">{summary || '暂无阶梯'}</span>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); toggleSetComplete(exIdx, setIdx); }}
-              className={`w-11 h-11 rounded-2xl flex items-center justify-center active:scale-95 transition-all ${
-                bigSet.completed
-                  ? 'bg-emerald-600 text-white shadow-md animate-check-pop'
-                  : 'bg-white text-slate-300 border-2 border-slate-200'
-              }`}
-            >
-              <Check className="w-5 h-5 stroke-[3]" />
-            </button>
-            {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-          </div>
+          <span className="shrink-0 text-sm font-semibold text-ink">第 {bigSet.setNumber} 大组</span>
+          {isCurrent && <Badge tone="accent">进行中</Badge>}
+          <span className="min-w-0 flex-1 truncate text-sm2 tabular-nums text-ink-2">
+            {summary || '暂无阶梯'}
+          </span>
+          <button
+            type="button"
+            aria-label={bigSet.completed ? `取消完成第 ${bigSet.setNumber} 大组` : `完成第 ${bigSet.setNumber} 大组`}
+            onClick={(e) => { e.stopPropagation(); toggleSetComplete(exIdx, setIdx); }}
+            className={cx(
+              'flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition-colors',
+              bigSet.completed
+                ? 'border-success bg-success text-white'
+                : 'border-line-strong bg-surface text-line-strong',
+            )}
+          >
+            <Check className="h-[18px] w-[18px]" strokeWidth={2.5} />
+          </button>
+          {expanded
+            ? <ChevronUp className="h-4 w-4 shrink-0 text-ink-3" />
+            : <ChevronDown className="h-4 w-4 shrink-0 text-ink-3" />}
         </div>
 
-        {/* 展开态：阶梯调整 */}
+        {/* 展开态：每个阶梯的重量与次数都是可点输入 */}
         {expanded && (
-          <div className="px-3 pb-3 pt-1 border-t border-slate-200/70 space-y-1.5 animate-card-in">
-            <div className="pt-2 space-y-1.5">
-              {stages.map((stage, stageIdx) => (
-                <div
-                  key={stage.id}
-                  className="bg-white p-2 rounded-xl border border-slate-200/90 flex items-center justify-between text-xs gap-1 flex-wrap"
-                >
-                  <span className="text-slate-400 font-mono text-[11px] font-bold shrink-0">#{stageIdx + 1}</span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'weightOrPlates', -2.5)}
-                      className="w-9 h-9 bg-slate-100 hover:bg-slate-200 rounded-xl font-black active:scale-95 text-slate-700"
-                    >
-                      −
-                    </button>
-                    <input
-                      type="number"
-                      step="0.5"
-                      value={stage.weightOrPlates || ''}
-                      onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
-                      className="w-14 text-center bg-slate-50 border border-slate-200 rounded-lg py-1.5 font-black text-slate-900"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'weightOrPlates', 2.5)}
-                      className="w-9 h-9 bg-slate-100 hover:bg-slate-200 rounded-xl font-black active:scale-95 text-slate-700"
-                    >
-                      ＋
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'reps', -1)}
-                      className="w-9 h-9 bg-slate-100 hover:bg-slate-200 rounded-xl font-black active:scale-95 text-slate-700"
-                    >
-                      −
-                    </button>
-                    <input
-                      type="number"
-                      value={stage.reps || ''}
-                      onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'reps', parseInt(e.target.value) || 0)}
-                      className="w-12 text-center bg-slate-50 border border-slate-200 rounded-lg py-1.5 font-black text-slate-900"
-                    />
-                    <span className="text-[10px] text-slate-400 font-semibold">次</span>
-                    <button
-                      type="button"
-                      onClick={() => updateDropStageField(exIdx, setIdx, stageIdx, 'reps', 1)}
-                      className="w-9 h-9 bg-slate-100 hover:bg-slate-200 rounded-xl font-black active:scale-95 text-slate-700"
-                    >
-                      ＋
-                    </button>
-                  </div>
-                  {stages.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeDropStageFromSet(exIdx, setIdx, stageIdx)}
-                      className="text-slate-300 hover:text-red-500 p-1.5 shrink-0"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
+          <div className="border-t border-line animate-card-in">
+            {stages.map((stage, stageIdx) => (
+              <div
+                key={stage.id}
+                className="flex min-h-12 items-center gap-2 border-t border-line px-3 py-1 first:border-t-0"
+              >
+                <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-surface-subtle text-cap font-semibold text-ink-3">
+                  {stageIdx + 1}
+                </span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  aria-label={`第 ${stageIdx + 1} 阶重量`}
+                  value={stage.weightOrPlates || ''}
+                  onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
+                  className="h-10 w-14 rounded-[6px] border border-line bg-surface px-1 text-center text-h2 font-semibold tabular-nums text-ink focus:border-accent focus:outline-none"
+                />
+                <span className="text-sm2 text-ink-2">
+                  {stage.unit === 'plates' ? '片' : 'kg'} ×
+                </span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  aria-label={`第 ${stageIdx + 1} 阶次数`}
+                  value={stage.reps || ''}
+                  onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'reps', parseInt(e.target.value) || 0)}
+                  className="h-10 w-10 rounded-[6px] border border-line bg-surface px-1 text-center text-sm2 font-semibold tabular-nums text-ink focus:border-accent focus:outline-none"
+                />
+                <span className="text-sm2 text-ink-2">次</span>
+                <Pencil className="ml-1 h-3.5 w-3.5 text-ink-3" aria-hidden="true" />
+                {stages.length > 1 && (
+                  <IconButton
+                    label={`删除第 ${stageIdx + 1} 阶`}
+                    onClick={() => removeDropStageFromSet(exIdx, setIdx, stageIdx)}
+                    className="ml-auto h-10 w-10 hover:text-danger"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </IconButton>
+                )}
+              </div>
+            ))}
             <button
               type="button"
               onClick={() => addDropStageToSet(exIdx, setIdx)}
-              className="text-[11px] text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 hover:underline"
+              className="flex h-11 w-full items-center gap-1 px-3 text-sm2 font-semibold text-accent"
             >
-              <Plus className="w-3 h-3" /> 加一个递减重量
+              <Plus className="h-4 w-4" /> 加一个递减重量
             </button>
           </div>
         )}
@@ -1001,15 +1173,12 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const renderFocusCard = () => {
     if (!activeSession || !focusEx || !focusCat) {
       return (
-        <div className="bg-white border border-slate-200/90 rounded-2xl p-8 text-center shadow-sm">
-          <p className="text-sm text-slate-500">还没有动作，从动作库添加第一个动作开始</p>
-          <button
-            onClick={() => setShowAddExModal(true)}
-            className="mt-3 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold"
-          >
-            <Plus className="w-4 h-4 inline mr-1" /> 添加动作
-          </button>
-        </div>
+        <Card className="mt-3 p-8 text-center">
+          <p className="text-body text-ink-2">还没有动作，从动作库添加第一个动作开始</p>
+          <Button variant="primary" size="lg" className="mt-4" onClick={openAddExerciseSheet}>
+            <Plus className="h-4 w-4" /> 添加动作
+          </Button>
+        </Card>
       );
     }
     const exIdx = safeFocusIdx;
@@ -1018,96 +1187,97 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const isUnilateralEx = Boolean(focusEx.isUnilateral) && !isDrop;
     const summary = lastLogSummary(focusLastLog);
     return (
-      <div key={focusEx.exerciseId + '-' + exIdx} className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-sm animate-card-in">
+      <Card key={focusEx.exerciseId + '-' + exIdx} className="mt-3 p-4 animate-card-in">
         {/* 头部：动作名 + 类别 + 规格胶囊 */}
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-base font-extrabold text-slate-900 tracking-tight">{focusEx.exerciseName}</h3>
-              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${focusCat.bg} ${focusCat.color}`}>
-                {focusCat.label}
-              </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-h2 font-semibold text-ink">{focusEx.exerciseName}</h3>
+              <Badge>{focusCat.label}</Badge>
               {isDrop && (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">🔥超级组</span>
+                <Badge>
+                  <Flame className="h-3 w-3" />超级组
+                </Badge>
               )}
-              {isUnilateralEx && (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">左右独立</span>
-              )}
+              {isUnilateralEx && <Badge>左右独立</Badge>}
             </div>
             <button
               type="button"
               onClick={() => setSpecExIdx(exIdx)}
-              className="mt-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 flex items-center gap-1"
+              title="编辑单位、滑轮与记录方式"
+              className="mt-2 inline-flex h-6 items-center gap-1 rounded-full bg-surface-subtle px-2 text-cap font-semibold text-ink-2"
             >
-              {UNIT_SHORT[focusEx.currentUnit]} · {PULLEY_SHORT[focusEx.pulleyRatio]} <ChevronDown className="w-3 h-3" />
+              <Pencil className="h-3 w-3" />
+              自定义编辑
+              <ChevronDown className="h-3 w-3" />
             </button>
           </div>
-          <button
-            onClick={() => removeExercise(exIdx)}
-            className="p-2 text-slate-400 hover:text-red-600 rounded-lg hover:bg-slate-100 shrink-0"
-            title="移除动作"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+          <IconButton label="移除动作" tone="danger" onClick={() => removeExercise(exIdx)}>
+            <Trash2 className="h-[18px] w-[18px]" />
+          </IconButton>
         </div>
 
         {/* 上次参考一行 */}
         {summary && focusLastLog && (
-          <div className="mt-2.5 px-2.5 py-1.5 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between text-xs text-blue-700 gap-2">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <Sparkles className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+          <div className="mt-3 flex min-h-12 items-center justify-between gap-2 rounded-ctl bg-surface-subtle px-3 py-2 text-sm2 text-ink-2">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-ink-3" />
               <span className="truncate">上次：{summary}</span>
             </div>
             <button
+              type="button"
               onClick={() => applyLastLog(exIdx, focusLastLog)}
-              className="text-[11px] underline font-bold shrink-0"
+              className="h-11 shrink-0 rounded-[6px] px-2 text-sm2 font-semibold text-accent"
             >
-              一键带入
+              带入
             </button>
           </div>
         )}
 
         {/* 组列表 */}
-        <div className="mt-2.5 space-y-2">
-          {isDrop
-            ? focusEx.sets.map((bigSet, setIdx) => renderDropBigSet(exIdx, bigSet, setIdx))
-            : isUnilateralEx
-            ? (
-              <>
-                <div className="grid grid-cols-12 gap-1.5 text-[11px] font-bold text-slate-400 px-1">
-                  <div className="col-span-2 text-center">组</div>
-                  <div className="col-span-4 text-center">左</div>
-                  <div className="col-span-4 text-center">右</div>
-                  <div className="col-span-2 text-center">✓</div>
-                </div>
+        <div className="mt-4">
+          {isDrop ? (
+            <div className="space-y-2">
+              {focusEx.sets.map((bigSet, setIdx) => renderDropBigSet(exIdx, bigSet, setIdx))}
+            </div>
+          ) : isUnilateralEx ? (
+            <>
+              <div className="mb-1.5 grid grid-cols-[26px_1fr_1px_1fr_44px] items-center gap-1.5 px-2 text-center text-cap font-semibold text-ink-3">
+                <span>组</span>
+                <span>左</span>
+                <span />
+                <span>右</span>
+                <span>✓</span>
+              </div>
+              <div className="space-y-2">
                 {focusEx.sets.map((set, setIdx) => renderUnilateralSetRow(exIdx, set, setIdx))}
-              </>
-            )
-            : (
-              <>
-                <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-slate-400 px-1">
-                  <div className="col-span-2 text-center">组</div>
-                  <div className="col-span-6 text-center">{UNIT_LABELS[focusEx.currentUnit] || '负荷'}</div>
-                  <div className="col-span-2 text-center">次</div>
-                  <div className="col-span-2 text-center">✓</div>
-                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mb-1.5 grid grid-cols-[32px_1fr_64px_44px] items-center gap-2 px-2 text-center text-cap font-semibold text-ink-3">
+                <span>组</span>
+                <span>{UNIT_LABELS[focusEx.currentUnit] || '负荷'}</span>
+                <span>次</span>
+                <span />
+              </div>
+              <div className="space-y-2">
                 {focusEx.sets.map((set, setIdx) => renderSetRow(exIdx, set, setIdx))}
-              </>
-            )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* 加组 / 删组 */}
         <div className="mt-3 flex items-center justify-between">
-          <button
-            onClick={() => addSetToExercise(exIdx)}
-            className="py-2 px-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1 border border-slate-200 active:scale-95"
-          >
-            <Plus className="w-3.5 h-3.5" /> {isDrop ? '加一大组' : '加一组'}
-          </button>
+          <Button variant="secondary" onClick={() => addSetToExercise(exIdx)}>
+            <Plus className="h-4 w-4" /> {isDrop ? '加一大组' : '加一组'}
+          </Button>
           {focusEx.sets.length > 1 && (
             <button
+              type="button"
               onClick={() => removeSet(exIdx, focusEx.sets.length - 1)}
-              className="text-xs text-slate-400 hover:text-red-600 px-2 py-2"
+              className="h-11 px-2 text-sm2 text-ink-3 hover:text-danger"
             >
               {isDrop ? '删除末尾大组' : '删除末尾组'}
             </button>
@@ -1115,216 +1285,193 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
         </div>
 
         {/* 动作切换 */}
-        <div className="mt-2 pt-2.5 border-t border-slate-100 flex items-center justify-between">
+        <div className="mt-1 flex items-center justify-between border-t border-line pt-2">
           <button
             type="button"
             onClick={() => setFocusIdx(i => Math.max(0, i - 1))}
             disabled={exIdx === 0}
-            className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-blue-600 disabled:text-slate-300"
+            className="flex h-11 items-center gap-1 px-2 text-body font-semibold text-accent disabled:text-ink-disabled"
           >
-            <ChevronLeft className="w-4 h-4" /> 上一个
+            <ChevronLeft className="h-4 w-4" /> 上一个
           </button>
-          <span className="text-[11px] text-slate-400 font-bold">‹ {exIdx + 1}/{activeSession.exercises.length} ›</span>
+          <NumberText size="sm" className="text-ink-3">
+            {exIdx + 1} / {activeSession.exercises.length}
+          </NumberText>
           <button
             type="button"
             onClick={() => setFocusIdx(i => Math.min(activeSession.exercises.length - 1, i + 1))}
             disabled={exIdx === activeSession.exercises.length - 1}
-            className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-blue-600 disabled:text-slate-300"
+            className="flex h-11 items-center gap-1 px-2 text-body font-semibold text-accent disabled:text-ink-disabled"
           >
-            下一个 <ChevronRight className="w-4 h-4" />
+            下一个 <ChevronRight className="h-4 w-4" />
           </button>
         </div>
-      </div>
+      </Card>
     );
   };
 
   return (
-    <div className="pb-24 pt-2">
+    <div className="pb-28 pt-2">
       {!activeSession ? (
         <>
           {/* 头部 */}
-          <div className="mb-5">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span className="text-xs uppercase tracking-widest text-slate-400 font-semibold">FitCustom Pro</span>
-              </div>
-              <span className="text-xs text-slate-500 font-medium">
-                {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' })}
+          <div className="mb-4">
+            <div className="flex items-center justify-between text-cap font-semibold tracking-[0.04em] text-ink-3">
+              <span>FITCUSTOM PRO</span>
+              <span>
+                {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}
+                {' '}
+                {new Date().toLocaleDateString('zh-CN', { weekday: 'short' })}
               </span>
             </div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">今日训练</h1>
+            <h1 className="mt-0.5 text-h1 font-bold tracking-tight text-ink">今日训练</h1>
             {renderCompass()}
           </div>
 
           {/* 今日休息日状态横幅 */}
           {todayRestSession && (
-            <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-3.5 shadow-xs flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center font-bold">
-                  <Coffee className="w-4 h-4" />
-                </div>
-                <span className="font-black text-amber-950 text-sm">今日已安排完全休息</span>
+            <Card className="mb-3 flex items-center justify-between gap-3 border-warning/30 p-3.5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning-soft text-warning">
+                  <Coffee className="h-4 w-4" />
+                </span>
+                <span className="text-body font-semibold text-ink">今日已安排完全休息</span>
               </div>
               <button
                 type="button"
                 onClick={() => handleCancelRestDay(todayRestSession.id)}
-                className="text-xs text-amber-800 hover:text-red-600 font-bold underline"
+                className="h-11 shrink-0 px-1 text-sm2 font-semibold text-ink-3 underline hover:text-danger"
               >
                 取消重新开练
               </button>
-            </div>
+            </Card>
           )}
 
-          {/* 今日状态卡：开练 / 休息 / 补签三段切换 */}
-          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
-            <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl text-xs font-bold mb-3">
-              {([
-                { key: 'train', label: '🏋️ 开练' },
-                { key: 'rest', label: '☕ 今日休息' },
-                { key: 'backfill', label: '📝 补签' },
-              ] as const).map(t => (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => setStatusCardTab(t.key)}
-                  className={`py-2 rounded-lg transition-all ${
-                    statusCardTab === t.key
-                      ? 'bg-white shadow-sm text-blue-700 font-black'
-                      : 'text-slate-500'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+          {/* 今日状态卡：开练 / 休息 / 补签 */}
+          <Card className="p-4">
+            <SegmentedControl
+              label="今日状态"
+              value={statusCardTab}
+              onChange={setStatusCardTab}
+              options={STATUS_OPTIONS}
+            />
 
             {statusCardTab === 'train' && (
               <div className="animate-card-in">
-                <div className="flex items-center justify-between mb-2.5">
-                  <div className="flex items-center gap-2">
-                    <Dumbbell className="w-4 h-4 text-blue-600" />
-                    <h3 className="text-sm font-bold text-slate-900">选择分化计划开练</h3>
-                  </div>
+                <div className="mt-4 flex items-center justify-between gap-2">
+                  <h2 className="text-body font-semibold text-ink">选择分化计划开练</h2>
                   <button
+                    type="button"
                     onClick={onOpenPlansTab}
-                    className="text-xs text-blue-600 hover:text-blue-700 font-semibold"
+                    className="h-8 text-sm2 font-semibold text-accent"
                   >
                     管理全部计划 →
                   </button>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {plans.map((p) => {
-                    const isLeg = p.name.includes('腿');
+                <div>
+                  {plans.map((plan) => {
+                    const suggested = suggestedPlanId === plan.id;
                     return (
-                      <div
-                        key={p.id}
-                        onClick={() => startPlan(p)}
-                        className="group bg-slate-50 hover:bg-blue-50/40 border border-slate-200/90 hover:border-blue-400/60 rounded-xl p-3.5 transition-all cursor-pointer active:scale-[0.98]"
+                      <button
+                        key={plan.id}
+                        type="button"
+                        onClick={() => startPlan(plan)}
+                        className={cx(
+                          'relative flex w-full items-center gap-3 border-t border-line py-3.5 text-left first:border-t-0',
+                          suggested && 'pl-3',
+                        )}
                       >
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <h4 className="font-extrabold text-slate-900 text-base group-hover:text-blue-600 transition-colors">
-                                {p.name}
-                              </h4>
-                              {isLeg ? (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">下肢专注</span>
-                              ) : (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-50 text-pink-700 border border-pink-200 font-medium">+20m有氧</span>
-                              )}
-                            </div>
-                            <p className="text-xs text-slate-500 mt-1 line-clamp-1">{p.description}</p>
-                          </div>
-                          <div className="p-2 rounded-lg bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all">
-                            <Play className="w-3.5 h-3.5 fill-current" />
-                          </div>
-                        </div>
-                        <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-400">
-                          <span>包含 {p.exercises.length} 个动作</span>
-                          <span className="text-blue-600 font-semibold">点击一键载入 →</span>
-                        </div>
-                      </div>
+                        {suggested && (
+                          <span aria-hidden="true" className="absolute bottom-4 left-0 top-4 w-0.5 rounded-full bg-accent" />
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span className="text-[16px] font-semibold text-ink">{displayPlanName(plan.name)}</span>
+                            {suggested && <Badge tone="accent">今日建议</Badge>}
+                            {plan.name.includes('腿') && <Badge>下肢专注</Badge>}
+                          </span>
+                          <span className="mt-0.5 block truncate text-sm2 text-ink-2">{plan.description}</span>
+                          <span className="mt-1 block text-cap text-ink-3">
+                            {plan.exercises.length} 个动作 · {plan.cardioMinutes ? `有氧 ${plan.cardioMinutes}m` : '无有氧'}
+                          </span>
+                        </span>
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface text-ink-2">
+                          <Play className="ml-0.5 h-4 w-4 fill-current" />
+                        </span>
+                      </button>
                     );
                   })}
                 </div>
                 <button
+                  type="button"
                   onClick={startFreeWorkout}
-                  className="w-full mt-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 flex items-center justify-center gap-1.5 transition-all"
+                  className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-ctl border border-dashed border-line-strong bg-transparent text-body font-medium text-ink-2 hover:bg-surface-subtle"
                 >
-                  <Plus className="w-3.5 h-3.5 text-blue-600" /> 自由训练（不选预设计划）
+                  <Plus className="h-4 w-4" /> 自由训练（不选预设计划）
                 </button>
               </div>
             )}
 
             {statusCardTab === 'rest' && (
-              <div className="animate-card-in text-center py-4">
+              <div className="animate-card-in py-5 text-center">
                 {todayRestSession ? (
-                  <p className="text-sm text-amber-800 font-bold">今日已安排完全休息，好好恢复 💤</p>
+                  <p className="text-body font-semibold text-ink">今日已安排完全休息，好好恢复</p>
                 ) : (
                   <>
-                    <p className="text-xs text-slate-500 mb-3">今天不练？一键打卡完全休息，串联训练周期</p>
-                    <button
-                      type="button"
-                      onClick={handleLogRestDay}
-                      className="px-6 py-3 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/90 rounded-2xl text-sm font-black inline-flex items-center gap-2 active:scale-95 transition-all"
-                    >
-                      <Coffee className="w-4 h-4 text-amber-700" /> 今日完全休息
-                    </button>
+                    <p className="text-sm2 text-ink-2">今天不练？一键打卡完全休息，串联训练周期</p>
+                    <Button variant="outline" className="mt-3" onClick={handleLogRestDay}>
+                      <Coffee className="h-4 w-4 text-warning" /> 今日完全休息
+                    </Button>
                   </>
                 )}
               </div>
             )}
 
             {statusCardTab === 'backfill' && (
-              <div className="animate-card-in">
-                <p className="text-xs text-slate-500 mb-2.5">之前漏打卡了？选择过去某天补上休息记录</p>
-                <div className="flex items-center justify-between gap-2">
+              <div className="animate-card-in pt-4">
+                <p className="text-sm2 text-ink-2">之前漏打卡了？选择过去某天补上休息记录</p>
+                <div className="mt-2.5 flex items-center gap-2">
                   <input
                     type="date"
                     value={backfillDate}
                     max={yesterdayLocalDate()}
                     onChange={(e) => { setBackfillDate(e.target.value); setBackfillMsg(null); }}
-                    className="bg-slate-100 text-slate-700 text-xs px-2.5 py-2 rounded-lg border border-slate-200 font-medium flex-1"
+                    className={cx(fieldCls, 'min-w-0 flex-1')}
                   />
-                  <button
-                    type="button"
-                    onClick={handleBackfillRestDay}
-                    className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/90 rounded-xl text-xs font-black flex items-center gap-1.5 active:scale-95 transition-all shrink-0"
-                  >
-                    <Coffee className="w-3.5 h-3.5 text-amber-700" /> 补签休息
-                  </button>
+                  <Button variant="outline" onClick={handleBackfillRestDay} className="shrink-0">
+                    <Coffee className="h-4 w-4 text-warning" /> 补签休息
+                  </Button>
                 </div>
                 {backfillMsg && (
-                  <p className="mt-2 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200/80 rounded-lg px-2.5 py-1.5">
+                  <p className="mt-2 rounded-ctl bg-warning-soft px-3 py-2 text-cap font-semibold text-warning">
                     {backfillMsg}
                   </p>
                 )}
               </div>
             )}
-          </div>
+          </Card>
         </>
       ) : (
         <>
           {/* 专注模式顶部：细进度条 + 罗盘 */}
-          <div className="sticky top-0 z-40 bg-white/95 backdrop-blur-md px-1 pt-1 pb-2 border-b border-slate-200/90 mb-3">
-            <div className="flex items-center justify-between text-xs font-bold gap-2">
+          <div className="sticky top-0 z-40 mb-3 border-b border-line bg-surface/95 px-1 pb-2 pt-1 backdrop-blur-md">
+            <div className="flex items-center justify-between gap-2 text-body font-semibold">
               {isEditingPlanName ? (
-                <div className="flex items-center gap-1 min-w-0 flex-1">
+                <div className="flex min-w-0 flex-1 items-center gap-1">
                   <input
                     type="text"
-                    value={activeSession.planName}
+                    value={displayPlanName(activeSession.planName)}
                     onChange={(e) => updateActiveSession({ ...activeSession, planName: e.target.value })}
                     onBlur={() => setIsEditingPlanName(false)}
                     onKeyDown={(e) => { if (e.key === 'Enter') setIsEditingPlanName(false); }}
                     autoFocus
                     placeholder="输入训练名称..."
-                    className="w-full bg-slate-100 border border-blue-500 rounded-lg px-2 py-0.5 text-xs font-bold text-slate-900 focus:outline-none min-w-0"
+                    className="h-9 w-full min-w-0 rounded-[6px] border border-accent bg-surface-subtle px-2 text-body font-semibold text-ink focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => setIsEditingPlanName(false)}
-                    className="text-[11px] font-bold text-blue-600 px-2 py-0.5 rounded bg-blue-50 hover:bg-blue-100 shrink-0"
+                    className="h-9 shrink-0 rounded-[6px] px-2 text-sm2 font-semibold text-accent"
                   >
                     完成
                   </button>
@@ -1333,53 +1480,59 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsEditingPlanName(true)}
-                  className="flex items-center gap-1.5 min-w-0 hover:text-blue-600 transition-colors text-left group"
+                  className="flex min-w-0 items-center gap-1.5 text-left"
                   title="点击修改本次训练名称"
                 >
-                  <span className="truncate font-black text-slate-900 group-hover:text-blue-600">{activeSession.planName}</span>
-                  <Pencil className="w-3 h-3 text-slate-400 group-hover:text-blue-500 shrink-0" />
-                  <span className="text-slate-400 text-[10px] shrink-0 font-normal">· 专注模式</span>
+                  <span className="truncate font-semibold text-ink">{displayPlanName(activeSession.planName)}</span>
+                  <Pencil className="h-3.5 w-3.5 shrink-0 text-ink-3" />
+                  <span className="shrink-0 text-cap font-normal text-ink-3">专注模式</span>
                 </button>
               )}
-              <span className="text-blue-700 font-mono shrink-0">{totalCompletedSets} / {totalAllSets} 组</span>
+              <NumberText size="sm" className="shrink-0 text-ink-2">
+                {totalCompletedSets} / {totalAllSets} 组
+              </NumberText>
             </div>
-            <div className="h-1.5 bg-slate-100 rounded-full mt-1.5 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 rounded-full progress-fill" style={{ width: `${progressPct}%` }}></div>
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface-strong">
+              <div className="h-full rounded-full bg-accent progress-fill" style={{ width: `${progressPct}%` }} />
             </div>
-            {renderCompass()}
+            {renderCompass(true)}
           </div>
 
-          <div className="space-y-3 pb-24">
+          <div className="space-y-3 pb-28">
             {renderFocusCard()}
 
             {/* 添加动作入口 */}
             <button
-              onClick={() => setShowAddExModal(true)}
-              className="w-full py-3 bg-white hover:bg-slate-50 border-2 border-dashed border-slate-300 hover:border-blue-500/70 rounded-2xl text-slate-700 font-bold text-sm flex items-center justify-center gap-2 transition-all"
+              type="button"
+              onClick={openAddExerciseSheet}
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-card border border-dashed border-line-strong bg-transparent text-body font-medium text-ink-2 hover:bg-surface-subtle"
             >
-              <Plus className="w-4 h-4 text-blue-600" /> 从动作库添加动作
+              <Plus className="h-4 w-4 text-ink-2" /> 从动作库添加动作
             </button>
 
             {/* 有氧折叠行（腿日自动隐藏） */}
             {!activeSession.planName.includes('腿') && (
-              <div className="bg-white border border-pink-200 rounded-2xl shadow-sm overflow-hidden">
-                <div
+              <Card className="overflow-hidden">
+                <button
+                  type="button"
                   onClick={() => setShowCardio(v => !v)}
-                  className="p-3.5 flex items-center justify-between cursor-pointer select-none"
+                  className="flex h-14 w-full items-center justify-between px-4 text-left"
                 >
-                  <div className="flex items-center gap-2">
-                    <Flame className="w-4 h-4 text-pink-600" />
-                    <span className="font-bold text-sm">
-                      有氧 <span className="text-xs font-normal text-slate-400">
-                        {activeSession.cardioCompleted ? `${activeSession.cardioMinutes}分钟 · ${activeSession.cardioType || ''}` : '（点开展开）'}
-                      </span>
+                  <span className="flex items-center gap-2 text-body font-semibold text-ink">
+                    <Flame className="h-4 w-4 text-ink-3" /> 有氧
+                    <span className="text-sm2 font-normal text-ink-3">
+                      {activeSession.cardioCompleted
+                        ? `${activeSession.cardioMinutes}分钟 · ${activeSession.cardioType || ''}`
+                        : '（点开展开）'}
                     </span>
-                  </div>
-                  {showCardio ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                </div>
+                  </span>
+                  {showCardio
+                    ? <ChevronUp className="h-4 w-4 text-ink-3" />
+                    : <ChevronDown className="h-4 w-4 text-ink-3" />}
+                </button>
                 {showCardio && (
-                  <div className="px-4 pb-4 pt-1 border-t border-slate-100 space-y-3 animate-card-in">
-                    <label className="relative inline-flex items-center cursor-pointer pt-2">
+                  <div className="space-y-3 border-t border-line px-4 pb-4 pt-3 animate-card-in">
+                    <label className="flex h-11 cursor-pointer items-center gap-2 text-sm2 text-ink-2">
                       <input
                         type="checkbox"
                         checked={activeSession.cardioCompleted}
@@ -1387,27 +1540,29 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                           updateActiveSession({
                             ...activeSession,
                             cardioCompleted: e.target.checked,
-                            cardioMinutes: e.target.checked ? (activeSession.cardioMinutes || 20) : 0
+                            cardioMinutes: e.target.checked ? (activeSession.cardioMinutes || 20) : 0,
                           });
                         }}
-                        className="sr-only peer"
+                        className="peer sr-only"
                       />
-                      <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-600"></div>
-                      <span className="ml-2 text-xs text-slate-600">完成有氧</span>
+                      <span className="relative h-6 w-11 rounded-full bg-surface-strong transition-colors peer-checked:bg-success after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-surface after:transition-transform after:content-[''] peer-checked:after:translate-x-5" />
+                      完成有氧
                     </label>
                     {activeSession.cardioCompleted && (
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500">时长:</span>
-                          {[15, 20, 25, 30].map(mins => (
+                      <>
+                        <div className="flex items-center gap-2 text-sm2 text-ink-2">
+                          时长:
+                          {[15, 20, 25, 30].map((mins) => (
                             <button
                               key={mins}
+                              type="button"
                               onClick={() => updateActiveSession({ ...activeSession, cardioMinutes: mins })}
-                              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                              className={cx(
+                                'h-11 rounded-[8px] px-2.5 text-sm2 font-semibold',
                                 activeSession.cardioMinutes === mins
-                                  ? 'bg-pink-600 text-white shadow-xs'
-                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                              }`}
+                                  ? 'bg-ink text-white'
+                                  : 'bg-surface-subtle text-ink-2',
+                              )}
                             >
                               {mins}分
                             </button>
@@ -1418,369 +1573,374 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                           value={activeSession.cardioNotes || ''}
                           onChange={(e) => updateActiveSession({ ...activeSession, cardioNotes: e.target.value })}
                           placeholder="例如: 跑步机坡度 10，速度 5.0 km/h 快走"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs placeholder-slate-400 focus:outline-none focus:border-pink-500 focus:bg-white"
+                          className={fieldCls}
                         />
-                      </div>
+                      </>
                     )}
                   </div>
                 )}
-              </div>
+              </Card>
             )}
 
             {/* 备注折叠行 */}
-            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-              <div
+            <Card className="overflow-hidden">
+              <button
+                type="button"
                 onClick={() => setShowNotes(v => !v)}
-                className="p-3.5 flex items-center justify-between cursor-pointer select-none"
+                className="flex h-14 w-full items-center justify-between px-4 text-left"
               >
-                <span className="font-bold text-sm text-slate-400">
-                  📝 训练备注 <span className="text-xs font-normal">{activeSession.notes ? '' : '（点开展开）'}</span>
+                <span className="text-body font-semibold text-ink-3">
+                  训练备注 <span className="text-sm2 font-normal">{activeSession.notes ? '' : '（点开展开）'}</span>
                 </span>
-                {showNotes ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-              </div>
+                {showNotes
+                  ? <ChevronUp className="h-4 w-4 text-ink-3" />
+                  : <ChevronDown className="h-4 w-4 text-ink-3" />}
+              </button>
               {showNotes && (
-                <div className="px-4 pb-4 animate-card-in">
+                <div className="border-t border-line px-4 pb-4 pt-3 animate-card-in">
                   <textarea
                     rows={2}
                     value={activeSession.notes || ''}
                     onChange={(e) => updateActiveSession({ ...activeSession, notes: e.target.value })}
                     placeholder="记录今日力量状态、器械手感、酸痛度等..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+                    className="w-full rounded-ctl border border-line bg-surface-subtle p-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15"
                   />
                 </div>
               )}
-            </div>
+            </Card>
 
-            {/* 放弃训练（文字链，不再是半幅大按钮） */}
-            <div className="text-center pt-1">
+            {/* 放弃训练 */}
+            <div className="pt-1 text-center">
               <button
+                type="button"
                 onClick={handleAbandonSession}
-                className="text-xs text-slate-400 hover:text-red-600 underline"
+                className="h-11 px-2 text-sm2 text-ink-3 underline hover:text-danger"
               >
                 放弃本次训练
               </button>
             </div>
           </div>
 
-          {/* 悬浮结束钮 */}
-          <button
-            onClick={() => setShowFinishModal(true)}
-            className="fixed bottom-8 right-5 z-40 w-16 h-16 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-600/30 font-black text-xs leading-tight active:scale-95 transition-all"
+          {/* 悬浮结束钮：外圈显示完成进度 */}
+          <div
+            className="fixed bottom-6 right-4 z-40 h-[70px] w-[70px] rounded-full p-[3px]"
+            style={{ background: `conic-gradient(rgb(var(--c-success)) ${progressPct}%, rgb(var(--c-surface-strong)) 0)` }}
           >
-            结束<br />{totalCompletedSets}/{totalAllSets}
-          </button>
+            <button
+              type="button"
+              aria-label="结束训练"
+              onClick={() => setShowFinishModal(true)}
+              className="flex h-16 w-16 flex-col items-center justify-center rounded-full bg-ink text-white shadow-modal active:scale-95"
+            >
+              <span className="text-cap font-semibold leading-tight">结束</span>
+              <span className="text-cap font-semibold leading-tight tabular-nums">{totalCompletedSets}/{totalAllSets}</span>
+            </button>
+          </div>
         </>
       )}
 
-      {/* 规格抽屉：单位 + 滑轮 */}
-      {specExIdx !== null && activeSession && activeSession.exercises[specExIdx] && (
-        <div
-          className="fixed inset-0 z-[70] bg-slate-900/40 flex items-end justify-center animate-fade-in pt-[max(env(safe-area-inset-top),46px)]"
-          onClick={() => setSpecExIdx(null)}
-        >
-          <div
-            className="bg-white w-full max-w-md rounded-t-3xl p-5 pb-8 shadow-2xl animate-sheet-up max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] overflow-y-auto modal-scroll overscroll-contain"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="font-black text-sm mb-1">{activeSession.exercises[specExIdx].exerciseName}</h3>
-            <p className="text-[11px] text-slate-400 mb-3">计量规格（修改后整组同步）</p>
-            <div className="text-xs font-bold text-slate-600 mb-1.5">计量单位</div>
-            <div className="grid grid-cols-4 gap-1.5 mb-4">
-              {(['plates', 'kg', 'assisted', 'bodyweight'] as ResistanceUnit[]).map(u => (
-                <button
-                  key={u}
-                  type="button"
-                  onClick={() => changeExerciseUnit(specExIdx, u)}
-                  className={`py-2.5 rounded-xl text-xs font-bold transition-all ${
-                    activeSession.exercises[specExIdx].currentUnit === u
-                      ? 'bg-blue-600 text-white shadow'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  {u === 'plates' ? '插销(片)' : u === 'kg' ? '重量(kg)' : u === 'assisted' ? '助力' : '自重'}
-                </button>
-              ))}
-            </div>
-            <div className="text-xs font-bold text-slate-600 mb-1.5">滑轮比例</div>
-            <div className="grid grid-cols-3 gap-1.5 mb-4">
-              {(['none', '1:1', '2:1'] as PulleyRatio[]).map(p => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => changePulleyRatio(specExIdx, p)}
-                  className={`py-2.5 rounded-xl text-xs font-bold transition-all ${
-                    activeSession.exercises[specExIdx].pulleyRatio === p
-                      ? 'bg-indigo-600 text-white shadow'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  {p === 'none' ? '普通器械' : p === '1:1' ? '单滑轮 1:1' : '双滑轮 2:1'}
-                </button>
-              ))}
-            </div>
-
-            {/* 记录方式：双侧 / 左右手分开（超级组阶梯不支持分侧，故置灰） */}
-            {(() => {
-              const specEx = activeSession.exercises[specExIdx];
-              const isDrop = specEx.sets.some(s => s.isDropSet);
-              const isUni = Boolean(specEx.isUnilateral) && !isDrop;
-              return (
-                <>
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <span className="text-xs font-bold text-slate-600 shrink-0">记录方式</span>
-                    <div className="grid grid-cols-2 gap-1 flex-1 min-w-0">
-                      <button
-                        type="button"
-                        disabled={isDrop}
-                        onClick={() => changeRecordMode(specExIdx, false, false)}
-                        className={`py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-40 ${
-                          !isUni ? 'bg-slate-700 text-white shadow' : 'bg-slate-100 text-slate-600'
-                        }`}
-                      >
-                        双侧
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isDrop}
-                        onClick={() => changeRecordMode(specExIdx, true, false)}
-                        className={`py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-40 ${
-                          isUni ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-600'
-                        }`}
-                      >
-                        左右手分开
-                      </button>
-                    </div>
-                  </div>
-                  {isDrop ? (
-                    <p className="text-[10px] text-slate-400 mb-4">递减超级组按大组记录，不支持左右分开</p>
-                  ) : (
-                    <label className="flex items-center gap-1.5 text-[10px] text-slate-500 mb-4 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(specEx.isUnilateral)}
-                        onChange={(e) => changeRecordMode(specExIdx, Boolean(specEx.isUnilateral), e.target.checked)}
-                        className="w-3.5 h-3.5 accent-indigo-600"
-                      />
-                      <span>同时记住到动作库（以后该动作默认左右分开）</span>
-                    </label>
-                  )}
-                </>
-              );
-            })()}
-            <button
-              type="button"
-              onClick={() => setSpecExIdx(null)}
-              className="w-full py-3 bg-slate-900 text-white rounded-2xl text-sm font-bold"
-            >
-              完成
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 添加动作模态框 */}
-      {showAddExModal && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex flex-col justify-end sm:justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]">
-          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col p-4 shadow-2xl mx-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-black text-slate-900 text-base">从动作库选择加入</h3>
-              <button
-                onClick={() => setShowAddExModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-xs px-2 py-1 rounded-lg bg-slate-100"
-              >
-                关闭
-              </button>
-            </div>
-
-            <div className="py-3">
-              <input
-                type="text"
-                placeholder="搜索动作名称（如 卧推、深蹲、夹胸）..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+      {/* 规格抽屉：单位 + 滑轮 + 记录方式 */}
+      <Sheet
+        open={specExIdx !== null}
+        onClose={() => setSpecExIdx(null)}
+        title="动作规格"
+        description={
+          specExIdx !== null && activeSession
+            ? activeSession.exercises[specExIdx]?.exerciseName
+            : undefined
+        }
+        footer={
+          <Button variant="primary" size="lg" block onClick={() => setSpecExIdx(null)}>
+            完成
+          </Button>
+        }
+      >
+        {specExIdx !== null && activeSession && activeSession.exercises[specExIdx] && (() => {
+          const specEx = activeSession.exercises[specExIdx];
+          const isDrop = specEx.sets.some(s => s.isDropSet);
+          const isUni = Boolean(specEx.isUnilateral) && !isDrop;
+          return (
+            <div>
+              <p className="mb-1.5 text-cap font-semibold text-ink-3">计量单位</p>
+              <SegmentedControl
+                label="计量单位"
+                value={specEx.currentUnit}
+                onChange={(unit) => changeExerciseUnit(specExIdx, unit)}
+                options={UNIT_OPTIONS}
               />
-            </div>
 
-            {/* 自定义新动作：默认收起，点开才展开表单 */}
-            <button
-              type="button"
-              onClick={() => { setShowCustomForm(v => !v); setCustomError(null); }}
-              aria-expanded={showCustomForm}
-              className="w-full mb-2 px-3 py-2 border border-dashed border-indigo-300 bg-indigo-50/60 rounded-xl flex items-center gap-2 text-left active:scale-[0.99] transition-all"
-            >
-              <Plus className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-              <span className="text-xs font-black text-indigo-800 shrink-0">自定义新动作</span>
-              <span className="text-[10px] text-slate-400 truncate flex-1 min-w-0">动作库里没有？在这里直接新增</span>
-              {showCustomForm ? <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
-            </button>
+              <p className="mb-1.5 mt-4 text-cap font-semibold text-ink-3">滑轮比例</p>
+              <SegmentedControl
+                label="滑轮比例"
+                value={specEx.pulleyRatio}
+                onChange={(ratio) => changePulleyRatio(specExIdx, ratio)}
+                options={PULLEY_OPTIONS}
+              />
 
-            {showCustomForm && (
-              <div className="mb-2 p-3 border border-slate-200 rounded-xl bg-slate-50/70 space-y-2.5 animate-card-in">
-                {customError && (
-                  <p className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">{customError}</p>
-                )}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">动作名称 *</label>
-                  <input
-                    type="text"
-                    value={customName}
-                    onChange={(e) => setCustomName(e.target.value)}
-                    placeholder="例如: 史密斯下斜推胸"
-                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 mb-1">目标肌肉群</label>
-                    <select
-                      value={customCategory}
-                      onChange={(e) => setCustomCategory(e.target.value as MuscleCategory)}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
-                    >
-                      <option value="chest">胸部</option>
-                      <option value="back">背部</option>
-                      <option value="shoulder">肩部</option>
-                      <option value="leg">腿部</option>
-                      <option value="biceps">肱二头</option>
-                      <option value="triceps">肱三头</option>
-                      <option value="abs">腹部核心</option>
-                      <option value="cardio">有氧训练</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 mb-1">计量单位</label>
-                    <select
-                      value={customUnit}
-                      onChange={(e) => setCustomUnit(e.target.value as ResistanceUnit)}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
-                    >
-                      <option value="plates">插销 (片)</option>
-                      <option value="kg">重量 (kg)</option>
-                      <option value="assisted">助力 (kg)</option>
-                      <option value="bodyweight">自重</option>
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">滑轮类型</label>
-                  <select
-                    value={customPulley}
-                    onChange={(e) => setCustomPulley(e.target.value as PulleyRatio)}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
-                  >
-                    <option value="none">普通固定器械/自由重量</option>
-                    <option value="1:1">单滑轮 1:1</option>
-                    <option value="2:1">双滑轮 2:1</option>
-                  </select>
-                </div>
-                <label className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-2.5 py-2 cursor-pointer">
-                  <span className="min-w-0">
-                    <span className="block text-[11px] font-bold text-slate-800">左右独立动作（单侧）</span>
-                    <span className="block text-[10px] text-slate-400">开启后训练时左右分别记录</span>
-                  </span>
+              <p className="mb-1.5 mt-4 text-cap font-semibold text-ink-3">记录方式</p>
+              <SegmentedControl
+                label="记录方式"
+                value={isUni ? 'unilateral' : 'both'}
+                onChange={(mode) => changeRecordMode(specExIdx, mode === 'unilateral', false)}
+                options={RECORD_MODE_OPTIONS}
+                disabled={isDrop}
+              />
+              {isDrop ? (
+                <p className="mt-2 text-cap text-ink-3">超级组按大组记录，不支持左右分开</p>
+              ) : (
+                <label className="mt-2 flex min-h-11 cursor-pointer items-center gap-2 text-sm2 text-ink-2">
                   <input
                     type="checkbox"
-                    checked={customUnilateral}
-                    onChange={(e) => setCustomUnilateral(e.target.checked)}
-                    className="w-4 h-4 accent-indigo-600 shrink-0"
+                    checked={Boolean(specEx.isUnilateral)}
+                    onChange={(e) => changeRecordMode(specExIdx, Boolean(specEx.isUnilateral), e.target.checked)}
+                    className="h-4 w-4 accent-accent"
                   />
+                  同时记住到动作库（以后该动作默认左右分开）
                 </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setCustomName(''); setCustomNotes(''); setCustomUnilateral(false); setCustomError(null); }}
-                    className="py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold"
-                  >
-                    清空
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!customName.trim()) { setCustomError('请输入动作名称'); return; }
-                      createAndAddCustomExercise({
-                        name: customName, category: customCategory, defaultUnit: customUnit,
-                        defaultPulley: customPulley, isUnilateral: customUnilateral, notes: customNotes,
-                      });
-                      setCustomName(''); setCustomNotes(''); setCustomUnilateral(false);
-                      setCustomError(null); setShowCustomForm(false);
-                    }}
-                    className="py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-sm active:scale-95"
-                  >
-                    保存并加入本次训练
-                  </button>
-                </div>
-              </div>
-            )}
+              )}
 
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1 modal-scroll overscroll-contain">
+              <label className="mt-3 flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
+                <span className="min-w-0">
+                  <span className="block text-sm2 font-semibold text-ink">超级组</span>
+                  <span className="block text-cap text-ink-3">把当前组转换为递减阶梯；与左右分开互斥</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={isDrop}
+                  onChange={(e) => changeExerciseDropMode(specExIdx, e.target.checked)}
+                  className="h-4 w-4 shrink-0 accent-accent"
+                />
+              </label>
+            </div>
+          );
+        })()}
+      </Sheet>
+
+      {/* 添加动作面板：动作库 / 自定义两个标签页 */}
+      <Sheet
+        open={showAddExModal}
+        onClose={() => setShowAddExModal(false)}
+        title="添加动作"
+        size="lg"
+      >
+        <SegmentedControl
+          label="添加方式"
+          value={addSheetTab}
+          onChange={setAddSheetTab}
+          options={ADD_SHEET_OPTIONS}
+        />
+
+        {addSheetTab === 'library' ? (
+          <>
+            <input
+              type="text"
+              placeholder="搜索动作名称（如 卧推、深蹲、夹胸）..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              aria-label="搜索动作"
+              className={cx(fieldCls, 'mt-4')}
+            />
+            <div className="mt-2">
               {allExercises
                 .filter(e => !searchTerm || e.name.toLowerCase().includes(searchTerm.toLowerCase()))
                 .map(e => {
                   const cat = CATEGORY_LABELS[e.category] || CATEGORY_LABELS.chest;
                   return (
-                    <div
+                    <button
                       key={e.id}
+                      type="button"
                       onClick={() => addExerciseToCurrent(e)}
-                      className="p-3 bg-slate-50 hover:bg-slate-100 border border-slate-200/90 rounded-xl flex items-center justify-between cursor-pointer group transition-all"
+                      className="flex min-h-14 w-full items-center justify-between gap-3 border-b border-line px-1 py-2 text-left last:border-b-0"
                     >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900 text-sm group-hover:text-blue-600">{e.name}</span>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${cat.bg} ${cat.color}`}>{cat.label}</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-0.5">默认: {UNIT_LABELS[e.defaultUnit]}</p>
-                      </div>
-                      <Plus className="w-4 h-4 text-blue-600 group-hover:scale-125 transition-transform" />
-                    </div>
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-2">
+                          <span className="truncate text-body font-semibold text-ink">{e.name}</span>
+                          <Badge>{cat.label}</Badge>
+                          {e.isDropSet && (
+                            <Badge>
+                              <Flame className="h-3 w-3" />超级组
+                            </Badge>
+                          )}
+                        </span>
+                        <span className="mt-0.5 block text-cap text-ink-3">默认: {UNIT_LABELS[e.defaultUnit]}</span>
+                      </span>
+                      <Plus className="h-4 w-4 shrink-0 text-ink-3" />
+                    </button>
                   );
                 })}
             </div>
+          </>
+        ) : (
+          <div className="mt-4 space-y-3 rounded-ctl border border-line bg-surface-subtle/60 p-3 animate-card-in">
+            {customError && (
+              <p className="rounded-ctl bg-danger-soft px-3 py-2 text-cap font-semibold text-danger">{customError}</p>
+            )}
+            <div>
+              <label className="mb-1 block text-cap font-semibold text-ink-2">动作名称 *</label>
+              <input
+                type="text"
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+                placeholder="例如: 史密斯下斜推胸"
+                className={fieldCls}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="mb-1 block text-cap font-semibold text-ink-2">目标肌肉群</label>
+                <select
+                  value={customCategory}
+                  onChange={(e) => setCustomCategory(e.target.value as MuscleCategory)}
+                  className={fieldCls}
+                >
+                  <option value="chest">胸部</option>
+                  <option value="back">背部</option>
+                  <option value="shoulder">肩部</option>
+                  <option value="leg">腿部</option>
+                  <option value="biceps">肱二头</option>
+                  <option value="triceps">肱三头</option>
+                  <option value="abs">腹部核心</option>
+                  <option value="cardio">有氧训练</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-cap font-semibold text-ink-2">计量单位</label>
+                <select
+                  value={customUnit}
+                  onChange={(e) => setCustomUnit(e.target.value as ResistanceUnit)}
+                  className={fieldCls}
+                >
+                  <option value="plates">插销 (片)</option>
+                  <option value="kg">重量 (kg)</option>
+                  <option value="assisted">助力 (kg)</option>
+                  <option value="bodyweight">自重</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-cap font-semibold text-ink-2">滑轮类型</label>
+              <select
+                value={customPulley}
+                onChange={(e) => setCustomPulley(e.target.value as PulleyRatio)}
+                className={fieldCls}
+              >
+                <option value="none">普通固定器械/自由重量</option>
+                <option value="1:1">单滑轮 1:1</option>
+                <option value="2:1">双滑轮 2:1</option>
+              </select>
+            </div>
+            <div>
+              <p className="mb-1.5 text-cap font-semibold text-ink-3">训练方式</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  aria-pressed={customUnilateral}
+                  onClick={() => { setCustomUnilateral(v => !v); setCustomDropSet(false); }}
+                  className={cx(
+                    'flex min-h-16 flex-col items-start justify-center gap-1 rounded-ctl border px-3 py-2 text-left transition-colors',
+                    customUnilateral ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+                  )}
+                >
+                  <span className="flex w-full items-center gap-1.5 text-sm2 font-semibold text-ink">
+                    <ArrowLeftRight className={cx('h-4 w-4', customUnilateral ? 'text-accent' : 'text-ink-3')} />
+                    左右独立
+                    {customUnilateral && <Check className="ml-auto h-4 w-4 text-accent" />}
+                  </span>
+                  <span className="text-cap text-ink-3">左右分别记录</span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={customDropSet}
+                  onClick={() => { setCustomDropSet(v => !v); setCustomUnilateral(false); }}
+                  className={cx(
+                    'flex min-h-16 flex-col items-start justify-center gap-1 rounded-ctl border px-3 py-2 text-left transition-colors',
+                    customDropSet ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+                  )}
+                >
+                  <span className="flex w-full items-center gap-1.5 text-sm2 font-semibold text-ink">
+                    <Flame className={cx('h-4 w-4', customDropSet ? 'text-accent' : 'text-ink-3')} />
+                    超级组
+                    {customDropSet && <Check className="ml-auto h-4 w-4 text-accent" />}
+                  </span>
+                  <span className="text-cap text-ink-3">自动 4 阶递减</span>
+                </button>
+              </div>
+              <p className="mt-1.5 text-cap text-ink-3">两种方式互斥，也可都不选</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => { setCustomName(''); setCustomNotes(''); setCustomUnilateral(false); setCustomDropSet(false); setCustomError(null); }}
+              >
+                清空
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  if (!customName.trim()) { setCustomError('请输入动作名称'); return; }
+                  createAndAddCustomExercise({
+                    name: customName, category: customCategory, defaultUnit: customUnit,
+                    defaultPulley: customPulley, isUnilateral: customUnilateral,
+                    isDropSet: customDropSet,
+                    dropStages: customDropSet ? makeDefaultDropStages(customUnit) : undefined,
+                    notes: customNotes,
+                  });
+                  setCustomName(''); setCustomNotes(''); setCustomUnilateral(false);
+                  setCustomDropSet(false);
+                  setCustomError(null);
+                }}
+              >
+                保存并加入本次训练
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Sheet>
 
       {/* 完成训练祝贺弹窗 */}
       {showFinishModal && activeSession && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-3xl max-w-sm w-full p-6 text-center shadow-2xl">
-            <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-200">
-              <Award className="w-8 h-8" />
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-ink/40 p-4 backdrop-blur-[2px] animate-fade-in"
+          onClick={() => setShowFinishModal(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="完成训练"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-sheet bg-surface p-6 text-center shadow-modal animate-sheet-up"
+          >
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-success-soft text-success">
+              <Award className="h-8 w-8" />
             </div>
 
-            <h3 className="text-xl font-black text-slate-900">今日训练圆满完成！</h3>
-            <p className="text-xs text-slate-500 mt-1">坚持渐进超负荷，肌肉正在茁壮成长</p>
+            <h2 className="text-[20px] font-bold text-ink">今日训练圆满完成</h2>
+            <p className="mt-1 text-sm2 text-ink-2">坚持渐进超负荷，肌肉正在恢复与增长</p>
 
-            <div className="grid grid-cols-3 gap-2 my-5 bg-slate-50 p-3 rounded-2xl border border-slate-200 text-center">
+            <div className="my-5 grid grid-cols-3 gap-2 rounded-ctl bg-surface-subtle p-3">
               <div>
-                <span className="text-[10px] text-slate-400 block">动作数量</span>
-                <span className="font-mono text-sm font-bold text-slate-900">{activeSession.exercises.length} 个</span>
+                <span className="block text-cap text-ink-3">动作数量</span>
+                <span className="block text-body font-semibold tabular-nums text-ink">{activeSession.exercises.length} 个</span>
               </div>
               <div>
-                <span className="text-[10px] text-slate-400 block">完成总组数</span>
-                <span className="font-mono text-sm font-bold text-emerald-600">{totalCompletedSets} 组</span>
+                <span className="block text-cap text-ink-3">完成总组数</span>
+                <span className="block text-body font-semibold tabular-nums text-success">{totalCompletedSets} 组</span>
               </div>
               <div>
-                <span className="text-[10px] text-slate-400 block">有氧燃脂</span>
-                <span className="font-mono text-sm font-bold text-pink-600">
+                <span className="block text-cap text-ink-3">有氧燃脂</span>
+                <span className="block text-body font-semibold tabular-nums text-ink">
                   {activeSession.cardioCompleted ? `${activeSession.cardioMinutes}m` : '0m'}
                 </span>
               </div>
             </div>
 
             <div className="flex gap-2">
-              <button
-                onClick={() => setShowFinishModal(false)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold"
-              >
+              <Button variant="secondary" className="flex-1" onClick={() => setShowFinishModal(false)}>
                 继续调整
-              </button>
-              <button
-                onClick={finishSession}
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/30"
-              >
-                确认归档记录
-              </button>
+              </Button>
+              <Button variant="primary" className="flex-1" onClick={finishSession}>
+                确认归档
+              </Button>
             </div>
           </div>
         </div>

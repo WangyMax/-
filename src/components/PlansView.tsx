@@ -270,7 +270,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                         <div className="flex items-center gap-1 shrink-0 ml-2">
                           {isDrop ? (
                             <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                              🔥 {pe.targetSets}大组 · 递减超级组
+                              🔥 {pe.targetSets}大组 · 超级组
                             </span>
                           ) : (
                             <>
@@ -491,7 +491,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                             <div className="mt-2.5 space-y-2 bg-amber-50/70 p-2.5 rounded-xl border border-amber-200/90 text-xs">
                               <div className="flex items-center justify-between">
                                 <span className="font-black text-amber-900 text-xs flex items-center gap-1">
-                                  🔥 递减超级组编排
+                                  🔥 超级组编排
                                 </span>
                                 <div className="flex items-center gap-1">
                                   <span className="text-slate-600 font-bold text-[11px]">目标大组数:</span>
@@ -723,7 +723,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                 }}
                                 className="text-[10px] text-amber-800 hover:underline font-bold"
                               >
-                                🔥 设为递减超级组
+                                🔥 设为超级组
                               </button>
                             </div>
                           )}

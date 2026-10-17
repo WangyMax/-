@@ -34,7 +34,7 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
+    <div className="min-h-screen bg-canvas text-ink flex flex-col font-sans">
       {/* 状态栏避让由 MainActivity 原生 insets 统一处理（含打孔/刘海与手势条），此处不再叠加 CSS 垫片，避免双倍留白 */}
       {/* 移动端视口容器 (限制在手机尺寸优雅居中，桌面端自适应居中) */}
       <main className="flex-1 w-full max-w-md mx-auto px-4 pt-1 pb-8">
@@ -66,9 +66,9 @@ export function App() {
         )}
       </main>
 
-      {/* 底部导航栏 (现代原生风格磨砂玻璃 Tab Bar)；专注模式下隐藏 */}
+      {/* 底部导航栏：白底磨砂、1px 顶线、选中项用 4px 强调色圆点；专注模式下隐藏 */}
       {!inFocusMode && (
-        <nav className="fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur-2xl border-t border-slate-200/80 shadow-[0_-4px_24px_rgba(15,23,42,0.05)] safe-bottom">
+        <nav className="fixed bottom-0 inset-x-0 z-50 border-t border-line bg-surface/95 backdrop-blur-2xl shadow-[0_-4px_24px_rgba(16,24,40,0.04)] safe-bottom">
           <div className="max-w-md mx-auto grid grid-cols-4 h-16 px-3 items-center">
             {[
               { id: 'workout', label: '今日训练', icon: Dumbbell },
@@ -81,15 +81,16 @@ export function App() {
               return (
                 <button
                   key={tab.id}
+                  type="button"
                   onClick={() => setActiveTab(tab.id as 'workout' | 'plans' | 'library' | 'journal')}
-                  className={`flex flex-col items-center justify-center gap-1 transition-all py-1.5 rounded-2xl select-none active:scale-95 ${
-                    isActive
-                      ? 'text-blue-700 font-black bg-blue-50/70 ring-1 ring-blue-500/10'
-                      : 'text-slate-400 hover:text-slate-700 font-semibold'
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`flex h-14 flex-col items-center justify-center gap-0.5 rounded-ctl transition-colors duration-150 select-none active:scale-95 ${
+                    isActive ? 'text-ink font-semibold' : 'text-ink-3 font-medium'
                   }`}
                 >
-                  <Icon className={`w-5 h-5 transition-transform ${isActive ? 'scale-110 stroke-[2.3]' : 'stroke-[1.8]'}`} />
-                  <span className="text-[11px] tracking-tight">{tab.label}</span>
+                  <Icon className={`h-[22px] w-[22px] transition-transform ${isActive ? 'scale-110 stroke-[2.2]' : 'stroke-[1.8]'}`} />
+                  <span className="text-cap tracking-tight">{tab.label}</span>
+                  <span aria-hidden="true" className={`h-1 w-1 rounded-full ${isActive ? 'bg-accent' : 'bg-transparent'}`} />
                 </button>
               );
             })}

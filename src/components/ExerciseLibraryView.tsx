@@ -517,7 +517,7 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                 <span className="flex items-start gap-2">
                   <span className={`text-base leading-5 ${newDropSet ? '' : 'grayscale opacity-60'}`}>🔥</span>
                   <span>
-                    <span className="block text-xs font-bold text-slate-700">递减超级组</span>
+                    <span className="block text-xs font-bold text-slate-700">超级组</span>
                     <span className="block text-[10px] text-slate-400 mt-0.5">标记后按超级组编排，可预设递减阶梯（不支持分侧）</span>
                   </span>
                 </span>
