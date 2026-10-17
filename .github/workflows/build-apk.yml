@@ -38,7 +38,12 @@ jobs:
         run: npm run build
 
       - name: Sync Capacitor Android
-        run: npx cap sync android || echo "Sync completed with warnings, proceeding to build"
+        run: npx cap sync android
+
+      - name: Verify Synced Web Assets
+        run: |
+          grep -R "自定义编辑" android/app/src/main/assets/public/assets/*.js
+          grep -R -- "--c-canvas" android/app/src/main/assets/public/assets/*.css
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
@@ -62,16 +67,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.8.13
-          name: "FitCustom Pro v2.8.13 (全新今日训练界面)"
+          tag_name: v2.8.14
+          name: "FitCustom Pro v2.8.14 (全新今日训练界面)"
           body: |
-            ### v2.8.13：全新视觉系统（第一阶段）
+            ### v2.8.14：全新视觉系统（第一阶段）
             1. 设计 token：灰阶画布 + 电蓝强调色，统一字号、圆角、边框、焦点态与数字等宽。
             2. 今日训练页改版：看板、分化罗盘、专注模式（普通 / 左右独立 / 超级组）、规格抽屉、添加动作面板。
             3. 添加动作拆成「从动作库选择 / 自定义新动作」两个标签页；超级组入口移入规格抽屉；自定义动作可并排选择左右独立 / 超级组。
             4. 规格入口改名「自定义编辑」；全站统一「超级组」文案。
-            5. 数据兼容：包名与签名不变，versionCode 32；覆盖安装保留原计划、训练、体重与生活日志。不要卸载；升级前建议导出 JSON 备份。
+            5. 数据兼容：包名与签名不变，versionCode 33；覆盖安装保留原计划、训练、体重与生活日志。不要卸载；升级前建议导出 JSON 备份。
             6. 本版先完成今日训练相关页面；计划分化、动作库、日志页的视觉迁移在后续版本继续。
+            7. 构建修正：CI 在打包前强制同步并校验网页资源，避免版本号更新但界面未更新的问题。
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
