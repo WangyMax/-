@@ -116,6 +116,11 @@ const ADD_SHEET_OPTIONS = [
   { value: 'custom', label: '自定义新动作' },
 ] as const;
 
+const CARDIO_MODE_OPTIONS = [
+  { value: 'none', label: '无有氧' },
+  { value: 'yes', label: '有有氧' },
+] as const;
+
 // 计划名里沿用了数据中的彩色 emoji，展示时统一成单色加号
 const displayPlanName = (name: string) => name.replace(/➕/g, '+');
 
@@ -584,6 +589,23 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     setFocusIdx(prev => Math.max(0, Math.min(prev, exercises.length - 1)));
   };
 
+  // 训练中有氧：无有氧 / 有有氧 + 自定义时长
+  const setCardioMode = (enabled: boolean) => {
+    if (!activeSession) return;
+    updateActiveSession({
+      ...activeSession,
+      cardioCompleted: enabled,
+      cardioMinutes: enabled
+        ? (activeSession.cardioMinutes && activeSession.cardioMinutes > 0 ? activeSession.cardioMinutes : 20)
+        : 0,
+    });
+  };
+
+  const setCardioMinutes = (minutes: number) => {
+    if (!activeSession) return;
+    updateActiveSession({ ...activeSession, cardioMinutes: Math.max(0, Math.round(minutes)) });
+  };
+
   // 完成结算
   const finishSession = () => {
     if (!activeSession) return;
@@ -591,6 +613,16 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       ...activeSession,
       endTime: Date.now()
     };
+    // 归档前统一有氧字段：无有氧清空明细；有有氧保证时长至少 1 分钟
+    if (finalSession.cardioCompleted) {
+      const mins = Math.round(finalSession.cardioMinutes || 0);
+      finalSession.cardioMinutes = mins > 0 ? mins : 20;
+      finalSession.cardioType = (finalSession.cardioType || '').trim() || '跑步机坡度快走';
+    } else {
+      finalSession.cardioMinutes = 0;
+      finalSession.cardioType = '';
+      finalSession.cardioNotes = '';
+    }
     StorageService.addSession(finalSession);
     StorageService.saveActiveSession(null);
     setActiveSession(null);
@@ -1522,8 +1554,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                     <Flame className="h-4 w-4 text-ink-3" /> 有氧
                     <span className="text-sm2 font-normal text-ink-3">
                       {activeSession.cardioCompleted
-                        ? `${activeSession.cardioMinutes}分钟 · ${activeSession.cardioType || ''}`
-                        : '（点开展开）'}
+                        ? `${activeSession.cardioMinutes || 20}分钟${activeSession.cardioType ? ` · ${activeSession.cardioType}` : ''}`
+                        : '无有氧'}
                     </span>
                   </span>
                   {showCardio
@@ -1532,41 +1564,43 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 </button>
                 {showCardio && (
                   <div className="space-y-3 border-t border-line px-4 pb-4 pt-3 animate-card-in">
-                    <label className="flex h-11 cursor-pointer items-center gap-2 text-sm2 text-ink-2">
-                      <input
-                        type="checkbox"
-                        checked={activeSession.cardioCompleted}
-                        onChange={(e) => {
-                          updateActiveSession({
-                            ...activeSession,
-                            cardioCompleted: e.target.checked,
-                            cardioMinutes: e.target.checked ? (activeSession.cardioMinutes || 20) : 0,
-                          });
-                        }}
-                        className="peer sr-only"
-                      />
-                      <span className="relative h-6 w-11 rounded-full bg-surface-strong transition-colors peer-checked:bg-success after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-surface after:transition-transform after:content-[''] peer-checked:after:translate-x-5" />
-                      完成有氧
-                    </label>
+                    <SegmentedControl
+                      label="有氧安排"
+                      value={activeSession.cardioCompleted ? 'yes' : 'none'}
+                      onChange={(value) => setCardioMode(value === 'yes')}
+                      options={CARDIO_MODE_OPTIONS}
+                    />
                     {activeSession.cardioCompleted && (
                       <>
-                        <div className="flex items-center gap-2 text-sm2 text-ink-2">
-                          时长:
-                          {[15, 20, 25, 30].map((mins) => (
-                            <button
-                              key={mins}
-                              type="button"
-                              onClick={() => updateActiveSession({ ...activeSession, cardioMinutes: mins })}
-                              className={cx(
-                                'h-11 rounded-[8px] px-2.5 text-sm2 font-semibold',
-                                activeSession.cardioMinutes === mins
-                                  ? 'bg-ink text-white'
-                                  : 'bg-surface-subtle text-ink-2',
-                              )}
-                            >
-                              {mins}分
-                            </button>
-                          ))}
+                        <div className="flex items-center gap-2">
+                          <span className="shrink-0 text-sm2 text-ink-2">时长</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={300}
+                            inputMode="numeric"
+                            value={activeSession.cardioMinutes || ''}
+                            onChange={(e) => setCardioMinutes(parseInt(e.target.value) || 0)}
+                            className="h-11 w-20 rounded-ctl border border-line bg-surface-subtle px-2 text-center text-body font-semibold tabular-nums text-ink focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15"
+                          />
+                          <span className="text-sm2 text-ink-2">分钟</span>
+                          <div className="ml-auto flex gap-1">
+                            {[15, 20, 30].map((mins) => (
+                              <button
+                                key={mins}
+                                type="button"
+                                onClick={() => setCardioMinutes(mins)}
+                                className={cx(
+                                  'h-11 rounded-[8px] px-2.5 text-cap font-semibold',
+                                  activeSession.cardioMinutes === mins
+                                    ? 'bg-ink text-white'
+                                    : 'bg-surface-subtle text-ink-2',
+                                )}
+                              >
+                                {mins}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                         <input
                           type="text"
@@ -1929,9 +1963,40 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               <div>
                 <span className="block text-cap text-ink-3">有氧燃脂</span>
                 <span className="block text-body font-semibold tabular-nums text-ink">
-                  {activeSession.cardioCompleted ? `${activeSession.cardioMinutes}m` : '0m'}
+                  {activeSession.cardioCompleted ? `${activeSession.cardioMinutes || 20}m` : '0m'}
                 </span>
               </div>
+            </div>
+
+            {/* 完成前最后确认有氧：无有氧 / 有有氧 + 自定义时长 */}
+            <div className="mb-4 rounded-ctl bg-surface-subtle p-3 text-left">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-cap font-semibold text-ink-3">有氧安排</span>
+                <span className="text-sm2 font-semibold text-ink">
+                  {activeSession.cardioCompleted ? '有有氧' : '无有氧'}
+                </span>
+              </div>
+              <SegmentedControl
+                label="有氧安排"
+                value={activeSession.cardioCompleted ? 'yes' : 'none'}
+                onChange={(value) => setCardioMode(value === 'yes')}
+                options={CARDIO_MODE_OPTIONS}
+              />
+              {activeSession.cardioCompleted && (
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={300}
+                    inputMode="numeric"
+                    value={activeSession.cardioMinutes || ''}
+                    onChange={(e) => setCardioMinutes(parseInt(e.target.value) || 0)}
+                    className="h-11 w-20 rounded-ctl border border-line bg-surface px-2 text-center text-body font-semibold tabular-nums text-ink focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent/15"
+                  />
+                  <span className="text-sm2 text-ink-2">分钟</span>
+                  <span className="text-cap text-ink-3">可填 1–300 分钟</span>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2">

@@ -74,7 +74,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
   // 体重日志列表与输入状态
   const [weights, setWeights] = useState<WeightLog[]>([]);
-  const [inputWeight, setInputWeight] = useState('63.3');
+  const [inputWeight, setInputWeight] = useState('');
   const [inputDate, setInputDate] = useState(() => todayLocalDate());
   const [inputSlot, setInputSlot] = useState<'morning' | 'evening' | 'post-workout'>('morning');
   const [inputNote, setInputNote] = useState('');
@@ -173,6 +173,10 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       setInputNote(existing.note || '');
       setIsEditingExisting(false);
     } else {
+      // 新的一天没有记录时清空表单，避免残留上一次的体重/备注
+      setInputWeight('');
+      setInputNote('');
+      setInputSlot('morning');
       setIsEditingExisting(false);
     }
   }, [inputDate, weights]);
@@ -258,8 +262,24 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
   const saveEditSession = () => {
     if (!editingSession) return;
+    // 保存前统一有氧字段语义：无有氧 = false/0 且清空类型备注；有有氧 = 时长至少 1 分钟
+    const normalized = JSON.parse(JSON.stringify(editingSession)) as WorkoutSession;
+    if (normalized.isRestDay) {
+      normalized.cardioCompleted = false;
+      normalized.cardioMinutes = 0;
+      normalized.cardioType = '';
+      normalized.cardioNotes = '';
+    } else if (normalized.cardioCompleted) {
+      const mins = Math.round(normalized.cardioMinutes || 0);
+      normalized.cardioMinutes = mins > 0 ? mins : 20;
+      normalized.cardioType = (normalized.cardioType || '').trim() || '跑步机坡度快走';
+    } else {
+      normalized.cardioMinutes = 0;
+      normalized.cardioType = '';
+      normalized.cardioNotes = '';
+    }
     // addSession 对同 id 做原地替换，因此编辑是覆盖写回而非新增
-    StorageService.addSession(editingSession);
+    StorageService.addSession(normalized);
     setEditingSession(null);
     refreshData();
     if (onDataChanged) onDataChanged();
@@ -375,6 +395,26 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       });
       if (on) ex.isUnilateral = undefined;
     });
+
+  // 历史编辑：有氧开关与明细；无有氧时清空时长/类型/备注，保证展示与保存一致
+  const editCardioMode = (enabled: boolean) =>
+    patchEditing(d => {
+      d.cardioCompleted = enabled;
+      if (enabled) {
+        d.cardioMinutes = d.cardioMinutes && d.cardioMinutes > 0 ? d.cardioMinutes : 20;
+        d.cardioType = (d.cardioType || '').trim() || '跑步机坡度快走';
+      } else {
+        d.cardioMinutes = 0;
+        d.cardioType = '';
+        d.cardioNotes = '';
+      }
+    });
+  const editCardioMinutes = (val: number) =>
+    patchEditing(d => { d.cardioMinutes = Math.max(0, Math.round(val)); });
+  const editCardioType = (val: string) =>
+    patchEditing(d => { d.cardioType = val; });
+  const editCardioNotes = (val: string) =>
+    patchEditing(d => { d.cardioNotes = val; });
 
   // 历史编辑：加一组（复制末组，单侧复制左右）
   const editAddSet = (exIdx: number) =>
@@ -620,8 +660,10 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   }, [sessions, historyFilter, selectedCalDate]);
 
   // ================= 体重统计与洞察 =================
-  const latestWeight = weights[0]?.weight;
-  const previousWeight = weights[1]?.weight;
+  // 汇总栏只反映今天：没有今天的记录时保持空，不用上一次的数据冒充
+  const todayWeightLog = weights.find(w => w.date === todayStr);
+  const latestWeight = todayWeightLog?.weight;
+  const previousWeight = weights.find(w => w.date < todayStr)?.weight;
   const weightDiff = latestWeight && previousWeight ? (latestWeight - previousWeight).toFixed(1) : null;
 
   // 距目标还差
@@ -1057,14 +1099,14 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                         <span className="text-[11px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                           {sess.date}
                         </span>
-                        {sess.cardioCompleted && (
-                          <span className="text-[10px] text-pink-700 bg-pink-50 px-1.5 py-0.2 rounded border border-pink-200 flex items-center gap-0.5 font-bold">
-                            <Flame className="w-2.5 h-2.5" /> 有氧{sess.cardioMinutes || 20}m
+                        {sess.cardioCompleted ? (
+                          <span className="text-[10px] text-pink-700 bg-pink-50 px-1.5 py-0.5 rounded border border-pink-200 flex items-center gap-0.5 font-bold max-w-full">
+                            <Flame className="w-2.5 h-2.5 shrink-0" />
+                            <span className="truncate">有氧{sess.cardioMinutes || 20}m{sess.cardioType ? ` · ${sess.cardioType}` : ''}</span>
                           </span>
-                        )}
-                        {!sess.cardioCompleted && sess.cardioMinutes === 0 && (
-                          <span className="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.2 rounded border border-slate-200">
-                            腿日无有氧
+                        ) : (
+                          <span className="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
+                            无有氧
                           </span>
                         )}
                       </div>
@@ -1184,6 +1226,18 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                           );
                         })}
                       </div>
+
+                      {/* 有氧明细 */}
+                      {sess.cardioCompleted && (
+                        <div className="p-2.5 bg-pink-50/70 border border-pink-200 rounded-xl flex items-start gap-1.5 text-xs text-pink-900">
+                          <Flame className="w-3.5 h-3.5 text-pink-600 shrink-0 mt-0.5" />
+                          <span>
+                            有氧 {sess.cardioMinutes || 20} 分钟
+                            {sess.cardioType ? ` · ${sess.cardioType}` : ''}
+                            {sess.cardioNotes ? ` · ${sess.cardioNotes}` : ''}
+                          </span>
+                        </div>
+                      )}
 
                       {/* 训练备注 */}
                       {sess.notes && (
@@ -1329,62 +1383,66 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </form>
           </div>
 
-          {/* 体重看板：最新 / 变化 / 目标 */}
-          {latestWeight && (
-            <div className="grid grid-cols-3 gap-2">
-              <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
-                <span className="text-[11px] text-slate-500 font-medium">当前最新</span>
+          {/* 体重看板：今日 / 变化 / 目标（今天未记录时保持空） */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
+              <span className="text-[11px] text-slate-500 font-medium">今日体重</span>
+              {latestWeight !== undefined ? (
                 <div className="flex items-baseline gap-1 mt-1">
                   <span className="text-2xl font-black text-slate-900 font-mono">{latestWeight}</span>
                   <span className="text-xs text-slate-400">kg</span>
                 </div>
-              </div>
+              ) : (
+                <div className="mt-2 text-base font-semibold text-slate-300">—</div>
+              )}
+            </div>
 
-              <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
-                <span className="text-[11px] text-slate-500 font-medium">较上一次</span>
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  {weightDiff && parseFloat(weightDiff) > 0 ? (
-                    <>
-                      <TrendingUp className="w-4 h-4 text-amber-600" />
-                      <span className="text-base font-bold text-amber-600">+{weightDiff}</span>
-                    </>
-                  ) : weightDiff && parseFloat(weightDiff) < 0 ? (
-                    <>
-                      <TrendingDown className="w-4 h-4 text-emerald-600" />
-                      <span className="text-base font-bold text-emerald-600">{weightDiff}</span>
-                    </>
-                  ) : (
-                    <span className="text-sm font-semibold text-slate-400">持平</span>
-                  )}
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
-                <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
-                  <Target className="w-3 h-3 text-blue-600" /> 目标体重
-                </span>
-                {weightGoal !== null ? (
-                  <div className="mt-1">
-                    <span className="text-2xl font-black text-blue-700 font-mono">{weightGoal}</span>
-                    <span className="text-xs text-slate-400">kg</span>
-                    {goalDiff !== null && (
-                      <div className={`text-[10px] font-bold mt-0.5 ${goalDiff > 0 ? 'text-amber-600' : goalDiff < 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
-                        {goalDiff > 0 ? `还差 ${goalDiff}kg` : goalDiff < 0 ? `已超目标 ${Math.abs(goalDiff)}kg 🎉` : '已达标 🎉'}
-                      </div>
-                    )}
-                  </div>
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
+              <span className="text-[11px] text-slate-500 font-medium">较上一次</span>
+              <div className="flex items-center gap-1.5 mt-1.5">
+                {weightDiff === null ? (
+                  <span className="text-sm font-semibold text-slate-300">—</span>
+                ) : parseFloat(weightDiff) > 0 ? (
+                  <>
+                    <TrendingUp className="w-4 h-4 text-amber-600" />
+                    <span className="text-base font-bold text-amber-600">+{weightDiff}</span>
+                  </>
+                ) : parseFloat(weightDiff) < 0 ? (
+                  <>
+                    <TrendingDown className="w-4 h-4 text-emerald-600" />
+                    <span className="text-base font-bold text-emerald-600">{weightDiff}</span>
+                  </>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => { setGoalInput(''); setShowGoalEditor(true); }}
-                    className="mt-1.5 text-xs text-blue-600 font-bold underline"
-                  >
-                    设定目标
-                  </button>
+                  <span className="text-sm font-semibold text-slate-400">持平</span>
                 )}
               </div>
             </div>
-          )}
+
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
+              <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                <Target className="w-3 h-3 text-blue-600" /> 目标体重
+              </span>
+              {weightGoal !== null ? (
+                <div className="mt-1">
+                  <span className="text-2xl font-black text-blue-700 font-mono">{weightGoal}</span>
+                  <span className="text-xs text-slate-400">kg</span>
+                  {goalDiff !== null && (
+                    <div className={`text-[10px] font-bold mt-0.5 ${goalDiff > 0 ? 'text-amber-600' : goalDiff < 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                      {goalDiff > 0 ? `还差 ${goalDiff}kg` : goalDiff < 0 ? `已超目标 ${Math.abs(goalDiff)}kg 🎉` : '已达标 🎉'}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { setGoalInput(''); setShowGoalEditor(true); }}
+                  className="mt-1.5 text-xs text-blue-600 font-bold underline"
+                >
+                  设定目标
+                </button>
+              )}
+            </div>
+          </div>
 
           {/* 目标编辑行（竖排：输入一行 + 按钮一行，杜绝小屏横向溢出） */}
           {showGoalEditor && (
@@ -1784,6 +1842,75 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
                 />
               </div>
+
+              {/* 有氧编辑：无有氧 / 有有氧 + 自定义时长、类型、备注 */}
+              {!editingSession.isRestDay && (
+                <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                      <Flame className="w-3.5 h-3.5 text-pink-600" /> 有氧
+                    </span>
+                    <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => editCardioMode(false)}
+                        className={`px-3 py-1.5 rounded-md text-[11px] transition-all ${
+                          !editingSession.cardioCompleted
+                            ? 'bg-white text-slate-900 font-bold shadow-sm'
+                            : 'text-slate-500 font-medium'
+                        }`}
+                      >
+                        无有氧
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => editCardioMode(true)}
+                        className={`px-3 py-1.5 rounded-md text-[11px] transition-all ${
+                          editingSession.cardioCompleted
+                            ? 'bg-white text-pink-700 font-bold shadow-sm'
+                            : 'text-slate-500 font-medium'
+                        }`}
+                      >
+                        有有氧
+                      </button>
+                    </div>
+                  </div>
+                  {editingSession.cardioCompleted && (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] text-slate-400 mb-1">时长（分钟）</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={300}
+                            value={editingSession.cardioMinutes || ''}
+                            onChange={(e) => editCardioMinutes(parseInt(e.target.value) || 0)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-pink-500 focus:bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-slate-400 mb-1">类型</label>
+                          <input
+                            type="text"
+                            value={editingSession.cardioType || ''}
+                            onChange={(e) => editCardioType(e.target.value)}
+                            placeholder="跑步机坡度快走"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-pink-500 focus:bg-white"
+                          />
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        value={editingSession.cardioNotes || ''}
+                        onChange={(e) => editCardioNotes(e.target.value)}
+                        placeholder="有氧备注，例如坡度/速度/感受（可留空）"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-pink-500 focus:bg-white"
+                      />
+                    </>
+                  )}
+                </div>
+              )}
 
               {!editingSession.isRestDay && editingSession.exercises.map((e, exIdx) => {
                 const unitStr = e.currentUnit === 'plates' ? '片'
