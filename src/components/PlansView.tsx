@@ -1,18 +1,40 @@
-import { useState, useEffect } from 'react';
-import { 
-  Plus, Edit3, Trash2, Copy, Play, 
-  Flame, ArrowUp, ArrowDown, X
+import { useCallback, useState, useEffect } from 'react';
+import {
+  Plus, Edit3, Trash2, Copy, Play,
+  Flame, ArrowUp, ArrowDown
 } from 'lucide-react';
-import { WorkoutPlan, Exercise, PlanExerciseTarget, CATEGORY_LABELS, ResistanceUnit, PulleyRatio } from '../types';
+import {
+  WorkoutPlan, Exercise, PlanExerciseTarget, CATEGORY_LABELS, UNIT_LABELS,
+  ResistanceUnit, PulleyRatio
+} from '../types';
 import { StorageService } from '../utils/storage';
-import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 import { ConfirmSheet } from './ConfirmSheet';
+import { Badge, Button, Card, IconButton, SegmentedControl, Sheet, cx } from '../ui';
 
 interface PlansViewProps {
   allExercises: Exercise[];
   onStartPlan: (plan: WorkoutPlan) => void;
   onRefreshExercises?: () => void;
 }
+
+const fieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
+const compactFieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-3 text-sm2 text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
+const compactSelectCls = 'h-11 rounded-ctl border border-line bg-surface-subtle px-2 text-sm2 text-ink focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
+const compactNumCls = 'h-11 rounded-[8px] border border-line bg-surface px-1 text-center text-sm2 font-semibold tabular-nums text-ink focus:border-accent focus:outline-none';
+// 计划内每个动作的数字预设框：与 fieldCls 同源，但用等宽数字并居中
+const numFieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-2 text-center text-body font-semibold tabular-nums text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
+
+type CardioOptionValue = '0' | '15' | '20' | '30' | 'custom';
+
+const CARDIO_OPTIONS: ReadonlyArray<{ value: CardioOptionValue; label: string }> = [
+  { value: '0', label: '无有氧' },
+  { value: '15', label: '15分' },
+  { value: '20', label: '20分' },
+  { value: '30', label: '30分' },
+];
+
+// 计划名沿用了数据里的彩色 emoji，展示时统一成单色加号（不改数据）
+const displayPlanName = (name: string) => name.replace(/➕/g, '+');
 
 export const PlansView: React.FC<PlansViewProps> = ({
   allExercises,
@@ -31,9 +53,6 @@ export const PlansView: React.FC<PlansViewProps> = ({
   const [isImportSessionOpen, setIsImportSessionOpen] = useState(false);
   const [importSearch, setImportSearch] = useState('');
 
-  // 弹窗打开时锁定底层滚动
-  useLockBodyScroll(isModalOpen || isSelectExOpen || isImportSessionOpen || confirmState.open);
-
   // 加载计划列表
   const loadPlans = () => {
     const list = StorageService.getPlans();
@@ -43,6 +62,11 @@ export const PlansView: React.FC<PlansViewProps> = ({
   useEffect(() => {
     loadPlans();
   }, []);
+
+  // 稳定引用：避免 Sheet 内部 focus effect 因 onClose 变化而反复抢焦点
+  const closeEditSheet = useCallback(() => setIsModalOpen(false), []);
+  const closeSelectExSheet = useCallback(() => setIsSelectExOpen(false), []);
+  const closeImportSheet = useCallback(() => setIsImportSessionOpen(false), []);
 
   // 新建空计划
   const handleCreateNew = () => {
@@ -81,7 +105,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
     setConfirmState({
       open: true,
       title: '删除训练计划',
-      description: `确定删除训练计划 “${name}” 吗？此操作无法撤销。`,
+      description: `确定删除训练计划 “${displayPlanName(name)}” 吗？此操作无法撤销。`,
       onConfirm: () => {
         StorageService.deletePlan(planId);
         loadPlans();
@@ -140,7 +164,22 @@ export const PlansView: React.FC<PlansViewProps> = ({
     setIsSelectExOpen(false);
   };
 
-  // 调整动作排序
+  // 计划卡内直接调整动作顺序：与编辑面板同一套交换算法，保存后立即刷新列表
+  // 用 savePlans 传入新数组，避免 savePlan 就地改写 StorageService 缓存（该缓存同时是 React 状态引用）
+  const movePlanExercise = (plan: WorkoutPlan, index: number, direction: 'up' | 'down') => {
+    const newExercises = [...plan.exercises];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= newExercises.length) return;
+    const temp = newExercises[index];
+    newExercises[index] = newExercises[targetIndex];
+    newExercises[targetIndex] = temp;
+    StorageService.savePlans(
+      StorageService.getPlans().map(p => (p.id === plan.id ? { ...p, exercises: newExercises } : p)),
+    );
+    loadPlans();
+  };
+
+  // 调整动作排序（编辑面板内，只改编辑中的草稿）
   const moveExercise = (index: number, direction: 'up' | 'down') => {
     if (!editingPlan) return;
     const newExercises = [...editingPlan.exercises];
@@ -198,706 +237,694 @@ export const PlansView: React.FC<PlansViewProps> = ({
     setIsImportSessionOpen(false);
   };
 
+  // 编辑 Sheet 标题：已存在的计划显示“编辑计划”，新建的显示“新建计划”
+  const isEditingExistingPlan = Boolean(editingPlan && plans.some(p => p.id === editingPlan.id));
+  // 历史导入可能带来 25 分钟这类非预设值：分段控件不选中任何一档，另起一行说明当前值
+  const cardioValue: CardioOptionValue = editingPlan
+    ? (CARDIO_OPTIONS.some(o => o.value === String(editingPlan.cardioMinutes))
+      ? (String(editingPlan.cardioMinutes) as CardioOptionValue)
+      : 'custom')
+    : '0';
+  const cardioOptions: ReadonlyArray<{ value: CardioOptionValue; label: string }> =
+    cardioValue === 'custom' && editingPlan
+      ? [...CARDIO_OPTIONS, { value: 'custom', label: `${editingPlan.cardioMinutes}分` }]
+      : CARDIO_OPTIONS;
+
+  const importSessions = isImportSessionOpen
+    ? StorageService.getSessions().filter(s => {
+      const kw = importSearch.toLowerCase();
+      return !s.isRestDay
+        && (!kw || s.planName.toLowerCase().includes(kw) || s.date.includes(kw));
+    })
+    : [];
+
+  const filteredExercises = allExercises
+    .filter(e => !exerciseSearch || e.name.toLowerCase().includes(exerciseSearch.toLowerCase()));
+
   return (
     <div className="pb-24 pt-2">
       {/* 头部标题与新建按钮 */}
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">自定义训练计划</h1>
-          <p className="text-xs text-slate-500 mt-0.5">自主编排分化循环，灵活设定目标重量与组数</p>
+      <div className="mb-5">
+        <div className="flex items-center justify-between text-cap font-semibold text-ink-3">
+          <span className="tracking-[0.08em]">FITCUSTOM PRO</span>
+          <span>计划库</span>
         </div>
-        <button
-          onClick={handleCreateNew}
-          className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20 active:scale-95 transition-all"
-        >
-          <Plus className="w-4 h-4" /> 新建计划
-        </button>
+        <div className="mt-0.5 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-h1 font-bold text-ink">自定义训练计划</h1>
+            <p className="mt-1 text-sm2 text-ink-2">自主编排分化循环，灵活设定目标重量与组数</p>
+          </div>
+          <Button variant="primary" size="lg" onClick={handleCreateNew} className="mt-1 shrink-0">
+            <Plus className="h-4 w-4" /> 新建计划
+          </Button>
+        </div>
       </div>
 
       {/* 计划卡片列表 */}
-      <div className="space-y-4">
-        {plans.map((plan) => {
-          return (
-            <div
-              key={plan.id}
-              className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm hover:border-slate-300 transition-all"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <h3 className="text-base font-black text-slate-900 tracking-tight">{plan.name}</h3>
-                    {plan.categoryTags.map((tag, i) => (
-                      <span
-                        key={i}
-                        className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                  {plan.description && (
-                    <p className="text-xs text-slate-500 mt-1">{plan.description}</p>
-                  )}
+      <div className="space-y-3">
+        {plans.length === 0 && (
+          <Card className="px-4 py-8 text-center">
+            <p className="text-body text-ink-2">还没有训练计划，创建一个开始编排分化循环</p>
+            <Button variant="outline" size="lg" className="mt-3" onClick={handleCreateNew}>
+              <Plus className="h-4 w-4" /> 新建计划
+            </Button>
+          </Card>
+        )}
+        {plans.map((plan) => (
+          <Card key={plan.id} className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-h2 font-semibold text-ink">{displayPlanName(plan.name)}</h3>
+                  {plan.categoryTags.map((tag, i) => (
+                    <Badge key={`${plan.id}-tag-${i}`}>{tag}</Badge>
+                  ))}
                 </div>
-
-                {/* 快捷开练大按钮 */}
-                <button
-                  onClick={() => onStartPlan(plan)}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-blue-600/20 active:scale-95 transition-all shrink-0"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" /> 一键开练
-                </button>
+                {plan.description && (
+                  <p className="mt-1 text-sm2 text-ink-2">{plan.description}</p>
+                )}
               </div>
 
-              {/* 动作清单 */}
-              <div className="mt-3.5 pt-3 border-t border-slate-100">
-                <span className="text-[11px] font-bold text-slate-400 block mb-2">动作编排与预设负荷 ({plan.exercises.length}个):</span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                  {plan.exercises.map((pe, idx) => {
+              {/* 快捷开练入口：全屏唯一的实心主按钮留给“新建计划”，这里用描边按钮保证可辨识 */}
+              <Button
+                variant="outline"
+                onClick={() => onStartPlan(plan)}
+                className="shrink-0"
+              >
+                <Play className="h-4 w-4 fill-current" /> 一键开练
+              </Button>
+            </div>
+
+            {/* 动作清单：1px 分隔列表 */}
+            <div className="mt-3 border-t border-line pt-1">
+              <span className="block pt-2 text-cap font-semibold text-ink-3">
+                动作编排与预设负荷 · {plan.exercises.length} 个
+              </span>
+              <div>
+                {plan.exercises.map((pe, idx) => {
+                  const ex = allExercises.find(e => e.id === pe.exerciseId);
+                  const unitStr = pe.targetUnit === 'plates' ? '片' : pe.targetUnit === 'assisted' ? 'kg助力' : pe.targetUnit === 'bodyweight' ? '自重' : 'kg';
+                  const pulleyStr = pe.pulleyRatio && pe.pulleyRatio !== 'none' ? ` (${pe.pulleyRatio})` : '';
+                  const isDrop = Boolean(pe.isDropSet || (pe.dropStages && pe.dropStages.length > 0));
+                  return (
+                    <div
+                      key={`${plan.id}-ex-${idx}`}
+                      className="flex min-h-14 items-center justify-between gap-2 border-t border-line py-2"
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="w-4 shrink-0 text-cap tabular-nums text-ink-3">{idx + 1}.</span>
+                        <span className="min-w-0">
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <span className="truncate text-body font-medium text-ink">{ex?.name || '未知动作'}</span>
+                            {isDrop ? (
+                              <Badge>
+                                <Flame className="h-3 w-3" />超级组
+                              </Badge>
+                            ) : (
+                              pe.isUnilateral && <Badge>左右独立</Badge>
+                            )}
+                          </span>
+                          <span className="mt-0.5 block truncate text-cap text-ink-3">
+                            {isDrop
+                              ? `${pe.targetSets} 大组 · ${(pe.dropStages || []).map(s => `${s.weightOrPlates}×${s.reps}`).join(' → ')}`
+                              : `${pe.targetSets}组 × ${pe.targetReps || 12}次${pe.targetWeight !== undefined ? ` · ${pe.targetWeight}${unitStr}${pulleyStr}` : ''}`}
+                          </span>
+                        </span>
+                      </div>
+                      <div className="flex shrink-0 items-center">
+                        <IconButton
+                          label={`上移「${ex?.name || '未知动作'}」`}
+                          onClick={() => movePlanExercise(plan, idx, 'up')}
+                          disabled={idx === 0}
+                          className="h-11 w-10 disabled:opacity-30"
+                        >
+                          <ArrowUp className="h-4 w-4" />
+                        </IconButton>
+                        <IconButton
+                          label={`下移「${ex?.name || '未知动作'}」`}
+                          onClick={() => movePlanExercise(plan, idx, 'down')}
+                          disabled={idx === plan.exercises.length - 1}
+                          className="h-11 w-10 disabled:opacity-30"
+                        >
+                          <ArrowDown className="h-4 w-4" />
+                        </IconButton>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 卡片底栏操作 */}
+            <div className="mt-2 flex items-center justify-between gap-2 border-t border-line pt-1">
+              <span className="min-w-0 truncate text-cap text-ink-3">
+                有氧: {plan.cardioMinutes > 0 ? `${plan.cardioType || '有氧'} ${plan.cardioMinutes}分钟` : '练后无有氧'}
+              </span>
+
+              <div className="flex shrink-0 items-center gap-1">
+                <IconButton label="复制计划为新副本" onClick={() => handleDuplicate(plan)}>
+                  <Copy className="h-[18px] w-[18px]" />
+                </IconButton>
+                <Button variant="ghost" onClick={() => handleEditPlan(plan)}>
+                  <Edit3 className="h-4 w-4" /> 编辑
+                </Button>
+                <IconButton label="删除计划" tone="danger" onClick={() => handleDeletePlan(plan.id, plan.name)}>
+                  <Trash2 className="h-[18px] w-[18px]" />
+                </IconButton>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {/* 新建/编辑计划 Sheet（同一时刻只显示一层 Sheet：打开挑选动作或导入模板时暂时隐藏本层） */}
+      <Sheet
+        open={isModalOpen && Boolean(editingPlan) && !isSelectExOpen && !isImportSessionOpen}
+        onClose={closeEditSheet}
+        title={isEditingExistingPlan ? '编辑计划' : '新建计划'}
+        description="设置组数与重量后，一键开练将直接带入"
+        size="lg"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" onClick={closeEditSheet}>取消</Button>
+            <Button variant="primary" onClick={handleSavePlan}>保存计划</Button>
+          </div>
+        }
+      >
+        {editingPlan && (
+          <div className="space-y-4">
+            {formError && (
+              <p className="rounded-ctl bg-danger-soft px-3 py-2 text-cap font-semibold text-danger">
+                {formError}
+              </p>
+            )}
+
+            <label className="block">
+              <span className="mb-1 block text-cap font-semibold text-ink-2">计划名称（如: 胸 + 三头）</span>
+              <input
+                type="text"
+                value={editingPlan.name}
+                onChange={(e) => setEditingPlan({ ...editingPlan, name: e.target.value })}
+                placeholder="例如: 胸 + 三头、背 + 二头、腿日..."
+                className={fieldCls}
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-cap font-semibold text-ink-2">计划简介 / 备注</span>
+              <input
+                type="text"
+                value={editingPlan.description}
+                onChange={(e) => setEditingPlan({ ...editingPlan, description: e.target.value })}
+                placeholder="例如: 胸部推力与夹胸结合，练后20分钟快走"
+                className={fieldCls}
+              />
+            </label>
+
+            {/* 有氧设置 */}
+            <div className="rounded-ctl bg-surface-subtle p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 text-sm2 font-semibold text-ink">
+                  <Flame className="h-4 w-4 text-ink-3" /> 练后附加有氧
+                </span>
+              </div>
+              <div className="mt-2">
+                <SegmentedControl
+                  label="练后附加有氧"
+                  value={cardioValue}
+                  onChange={(value) => {
+                    if (value === 'custom') return;
+                    setEditingPlan({ ...editingPlan, cardioMinutes: Number(value) });
+                  }}
+                  options={cardioOptions}
+                />
+              </div>
+
+              {editingPlan.cardioMinutes > 0 && (
+                <input
+                  type="text"
+                  value={editingPlan.cardioType || ''}
+                  onChange={(e) => setEditingPlan({ ...editingPlan, cardioType: e.target.value })}
+                  placeholder="有氧项目: 跑步机坡度快走 / 爬楼机 / 椭圆机"
+                  aria-label="有氧项目"
+                  className={cx(compactFieldCls, 'mt-2')}
+                />
+              )}
+            </div>
+
+            {/* 动作列表编辑与重量预设 */}
+            <div>
+              <p className="text-body font-semibold text-ink">
+                动作编排与预设重量 · {editingPlan.exercises.length} 个
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => { setIsImportSessionOpen(true); setImportSearch(''); }}
+                >
+                  从过往训练导入
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setIsSelectExOpen(true)}
+                >
+                  <Plus className="h-4 w-4" /> 挑选动作
+                </Button>
+              </div>
+
+              {editingPlan.exercises.length === 0 ? (
+                <div className="mt-3 rounded-ctl border border-dashed border-line-strong bg-surface-subtle px-3 py-6 text-center text-sm2 text-ink-3">
+                  还没有添加动作，点击上方“挑选动作”添加
+                </div>
+              ) : (
+                <div className="mt-2 border-t border-line">
+                  {editingPlan.exercises.map((pe, idx) => {
                     const ex = allExercises.find(e => e.id === pe.exerciseId);
-                    const unitStr = pe.targetUnit === 'plates' ? '片' : pe.targetUnit === 'assisted' ? 'kg助力' : pe.targetUnit === 'bodyweight' ? '自重' : 'kg';
-                    const pulleyStr = pe.pulleyRatio && pe.pulleyRatio !== 'none' ? ` (${pe.pulleyRatio})` : '';
-                    const isDrop = Boolean(pe.isDropSet || (pe.dropStages && pe.dropStages.length > 0));
+                    const unitLabel = pe.targetUnit === 'plates' ? '片' : pe.targetUnit === 'assisted' ? 'kg 助力' : pe.targetUnit === 'bodyweight' ? '自重' : 'kg';
                     return (
                       <div
-                        key={idx}
-                        className="bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200/80 flex items-center justify-between text-xs"
+                        key={`${pe.exerciseId}-${idx}`}
+                        className="border-b border-line py-3 last:border-b-0"
                       >
-                        <div className="flex items-center gap-1.5 truncate">
-                          <span className="text-slate-400 font-mono text-[10px]">{idx + 1}.</span>
-                          <span className="font-semibold text-slate-800 truncate">{ex?.name || '未知动作'}</span>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0 ml-2">
-                          {isDrop ? (
-                            <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                              🔥 {pe.targetSets}大组 · 超级组
+                        {/* 动作头部 */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center gap-1.5">
+                              <span className="shrink-0 text-cap font-semibold tabular-nums text-ink-3">{idx + 1}.</span>
+                              <span className="min-w-0 truncate text-body font-semibold text-ink">{ex?.name || '未知动作'}</span>
+                              {pe.isDropSet && (
+                                <Badge>
+                                  <Flame className="h-3 w-3" />超级组
+                                </Badge>
+                              )}
+                              {pe.isUnilateral && !pe.isDropSet && <Badge>左右独立</Badge>}
                             </span>
-                          ) : (
-                            <>
-                              <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
-                                {pe.targetSets}组 × {pe.targetReps || 12}次
+                          </div>
+                          <div className="flex shrink-0 items-center">
+                            <IconButton
+                              label={`上移第 ${idx + 1} 个动作`}
+                              onClick={() => moveExercise(idx, 'up')}
+                              disabled={idx === 0}
+                              className="h-11 w-10 disabled:opacity-30"
+                            >
+                              <ArrowUp className="h-4 w-4" />
+                            </IconButton>
+                            <IconButton
+                              label={`下移第 ${idx + 1} 个动作`}
+                              onClick={() => moveExercise(idx, 'down')}
+                              disabled={idx === editingPlan.exercises.length - 1}
+                              className="h-11 w-10 disabled:opacity-30"
+                            >
+                              <ArrowDown className="h-4 w-4" />
+                            </IconButton>
+                            <IconButton
+                              label={`移除第 ${idx + 1} 个动作`}
+                              tone="danger"
+                              onClick={() => removeExerciseFromPlan(idx)}
+                              className="h-11 w-10"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </IconButton>
+                          </div>
+                        </div>
+
+                        {/* 预设参数区：超级组面板 vs 普通动作面板 */}
+                        {pe.isDropSet ? (
+                          <div className="mt-2 rounded-ctl bg-surface-subtle p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="flex items-center gap-1.5 text-sm2 font-semibold text-ink">
+                                <Flame className="h-4 w-4 text-ink-3" /> 超级组编排
                               </span>
-                              {pe.targetWeight !== undefined && (
-                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                                  {pe.targetWeight}{unitStr}{pulleyStr}
-                                </span>
+                              <label className="flex items-center gap-1.5">
+                                <span className="text-cap text-ink-3">目标大组</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="20"
+                                  aria-label="目标大组数"
+                                  value={pe.targetSets || ''}
+                                  onChange={(e) => {
+                                    const newExs = [...editingPlan.exercises];
+                                    newExs[idx].targetSets = e.target.value === '' ? 0 : (parseInt(e.target.value) || 1);
+                                    setEditingPlan({ ...editingPlan, exercises: newExs });
+                                  }}
+                                  className={cx(compactNumCls, 'w-14')}
+                                />
+                                <span className="text-cap text-ink-3">组</span>
+                              </label>
+                            </div>
+
+                            {/* 递减阶梯列表 */}
+                            <div className="mt-2 space-y-1">
+                              {(pe.dropStages || []).map((stg, stgIdx) => (
+                                <div
+                                  key={stg.id}
+                                  className="flex min-h-11 items-center gap-1.5 rounded-[8px] border border-line bg-surface px-2"
+                                >
+                                  <span className="w-5 shrink-0 text-cap font-semibold tabular-nums text-ink-3">#{stgIdx + 1}</span>
+                                  <input
+                                    type="number"
+                                    step="0.5"
+                                    aria-label={`第 ${stgIdx + 1} 阶重量`}
+                                    value={stg.weightOrPlates || ''}
+                                    onChange={(e) => {
+                                      const newExs = [...editingPlan.exercises];
+                                      newExs[idx].dropStages![stgIdx].weightOrPlates = parseFloat(e.target.value) || 0;
+                                      setEditingPlan({ ...editingPlan, exercises: newExs });
+                                    }}
+                                    className={cx(compactNumCls, 'w-16')}
+                                  />
+                                  <span className="text-cap text-ink-3">kg</span>
+                                  <span aria-hidden="true" className="text-cap text-ink-3">→</span>
+                                  <input
+                                    type="number"
+                                    aria-label={`第 ${stgIdx + 1} 阶次数`}
+                                    value={stg.reps || ''}
+                                    onChange={(e) => {
+                                      const newExs = [...editingPlan.exercises];
+                                      newExs[idx].dropStages![stgIdx].reps = parseInt(e.target.value) || 0;
+                                      setEditingPlan({ ...editingPlan, exercises: newExs });
+                                    }}
+                                    className={cx(compactNumCls, 'w-12')}
+                                  />
+                                  <span className="text-cap text-ink-3">次</span>
+                                  {(pe.dropStages || []).length > 1 && (
+                                    <IconButton
+                                      label={`删除第 ${stgIdx + 1} 阶`}
+                                      tone="danger"
+                                      onClick={() => {
+                                        const newExs = [...editingPlan.exercises];
+                                        newExs[idx].dropStages!.splice(stgIdx, 1);
+                                        setEditingPlan({ ...editingPlan, exercises: newExs });
+                                      }}
+                                      className="ml-auto h-10 w-10"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </IconButton>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="mt-1 flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newExs = [...editingPlan.exercises];
+                                  if (!newExs[idx].dropStages) newExs[idx].dropStages = [];
+                                  const last = newExs[idx].dropStages![newExs[idx].dropStages!.length - 1];
+                                  newExs[idx].dropStages!.push({
+                                    id: `stg-${Date.now()}`,
+                                    weightOrPlates: last ? Math.max(1, last.weightOrPlates - 2.5) : 5,
+                                    unit: 'kg',
+                                    reps: 10,
+                                  });
+                                  setEditingPlan({ ...editingPlan, exercises: newExs });
+                                }}
+                                className="flex h-11 items-center gap-1 text-sm2 font-semibold text-accent"
+                              >
+                                <Plus className="h-4 w-4" /> 加一阶递减重量
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newExs = [...editingPlan.exercises];
+                                  newExs[idx].isDropSet = false;
+                                  setEditingPlan({ ...editingPlan, exercises: newExs });
+                                }}
+                                className="h-11 shrink-0 px-1 text-cap text-ink-3 underline"
+                              >
+                                切回普通单组模式
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          /* 普通动作配置面板 */
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <label className="block">
+                              <span className="mb-1 block text-cap font-semibold text-ink-3">目标组数</span>
+                              <input
+                                type="number"
+                                min="1"
+                                max="20"
+                                aria-label="目标组数"
+                                value={pe.targetSets || ''}
+                                onChange={(e) => {
+                                  const newExs = [...editingPlan.exercises];
+                                  newExs[idx].targetSets = e.target.value === '' ? 0 : (parseInt(e.target.value) || 1);
+                                  setEditingPlan({ ...editingPlan, exercises: newExs });
+                                }}
+                                className={numFieldCls}
+                              />
+                            </label>
+
+                            <label className="block">
+                              <span className="mb-1 block text-cap font-semibold text-ink-3">目标次数</span>
+                              <input
+                                type="number"
+                                min="1"
+                                max="100"
+                                aria-label="目标次数"
+                                value={pe.targetReps ?? ''}
+                                placeholder="12"
+                                onChange={(e) => {
+                                  const newExs = [...editingPlan.exercises];
+                                  newExs[idx].targetReps = e.target.value === '' ? undefined : (parseInt(e.target.value) || 1);
+                                  setEditingPlan({ ...editingPlan, exercises: newExs });
+                                }}
+                                className={numFieldCls}
+                              />
+                            </label>
+
+                            <label className="block">
+                              <span className="mb-1 block text-cap font-semibold text-ink-3">预设负荷（{unitLabel}）</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                aria-label="预设负荷"
+                                value={pe.targetWeight ?? ''}
+                                onChange={(e) => {
+                                  const newExs = [...editingPlan.exercises];
+                                  newExs[idx].targetWeight = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0);
+                                  setEditingPlan({ ...editingPlan, exercises: newExs });
+                                }}
+                                className={numFieldCls}
+                              />
+                            </label>
+
+                            <label className="block">
+                              <span className="mb-1 block text-cap font-semibold text-ink-3">阻力单位</span>
+                              <select
+                                value={pe.targetUnit || ex?.defaultUnit || 'kg'}
+                                aria-label="阻力单位"
+                                onChange={(e) => {
+                                  const newExs = [...editingPlan.exercises];
+                                  newExs[idx].targetUnit = e.target.value as ResistanceUnit;
+                                  setEditingPlan({ ...editingPlan, exercises: newExs });
+                                }}
+                                className={fieldCls}
+                              >
+                                <option value="kg">kg (重量)</option>
+                                <option value="plates">片 (插销)</option>
+                                <option value="assisted">助力 (kg)</option>
+                                <option value="bodyweight">自重</option>
+                              </select>
+                            </label>
+
+                            {/* 左右独立（单侧）开关：仅普通动作提供，超级组不支持分侧 */}
+                            <button
+                              type="button"
+                              aria-pressed={Boolean(pe.isUnilateral)}
+                              aria-label="左右独立记录"
+                              onClick={() => {
+                                const newExs = [...editingPlan.exercises];
+                                newExs[idx].isUnilateral = newExs[idx].isUnilateral ? undefined : true;
+                                setEditingPlan({ ...editingPlan, exercises: newExs });
+                              }}
+                              className={cx(
+                                'col-span-2 flex min-h-11 items-center justify-between gap-3 rounded-ctl border px-3 py-2 text-left transition-colors',
+                                pe.isUnilateral ? 'border-line-strong bg-surface-subtle' : 'border-line bg-surface',
                               )}
-                              {pe.isUnilateral && (
-                                <span className="text-[10px] font-bold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200">
-                                  左右独立
+                            >
+                              <span className="min-w-0">
+                                <span className="block text-sm2 font-semibold text-ink">左右独立</span>
+                                <span className="block text-cap text-ink-3">左右分别记录；与超级组互斥</span>
+                              </span>
+                              <span className="flex shrink-0 items-center gap-1.5">
+                                <span
+                                  aria-hidden="true"
+                                  className={cx(
+                                    'relative h-6 w-10 rounded-full transition-colors',
+                                    pe.isUnilateral ? 'bg-ink' : 'bg-surface-strong',
+                                  )}
+                                >
+                                  <span
+                                    className={cx(
+                                      'absolute top-0.5 h-5 w-5 rounded-full border border-line transition-all',
+                                      pe.isUnilateral ? 'left-[1.125rem] bg-surface' : 'left-0.5 bg-surface',
+                                    )}
+                                  />
                                 </span>
-                              )}
-                            </>
-                          )}
+                                <span className={cx('text-cap font-semibold', pe.isUnilateral ? 'text-ink' : 'text-ink-3')}>
+                                  {pe.isUnilateral ? '开' : '关'}
+                                </span>
+                              </span>
+                            </button>
+                          </div>
+                        )}
+
+                        {/* 动作底部：设为超级组按钮（超级组不支持分侧，切换时清除单侧标记） */}
+                        {!pe.isDropSet && (
+                          <div className="mt-1 flex items-center justify-end">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newExs = [...editingPlan.exercises];
+                                newExs[idx].isDropSet = true;
+                                // 超级组不支持分侧记录，切为超级组时清除单侧标记
+                                newExs[idx].isUnilateral = undefined;
+                                if (!newExs[idx].dropStages) {
+                                  newExs[idx].dropStages = [
+                                    { id: 'stg-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
+                                    { id: 'stg-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
+                                    { id: 'stg-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
+                                    { id: 'stg-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
+                                  ];
+                                }
+                                setEditingPlan({ ...editingPlan, exercises: newExs });
+                              }}
+                              className="flex h-11 items-center gap-1 px-1 text-sm2 font-semibold text-accent"
+                            >
+                              <Flame className="h-4 w-4" /> 设为超级组
+                            </button>
+                          </div>
+                        )}
+
+                        {/* 滑轮与备注可选行 */}
+                        <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <label className="flex shrink-0 items-center gap-2">
+                            <span className="text-cap font-semibold text-ink-3">滑轮</span>
+                            <select
+                              value={pe.pulleyRatio || ex?.defaultPulley || 'none'}
+                              aria-label="滑轮比例"
+                              onChange={(e) => {
+                                const newExs = [...editingPlan.exercises];
+                                newExs[idx].pulleyRatio = e.target.value as PulleyRatio;
+                                setEditingPlan({ ...editingPlan, exercises: newExs });
+                              }}
+                              className={compactSelectCls}
+                            >
+                              <option value="none">普通器械</option>
+                              <option value="1:1">单滑轮 (1:1)</option>
+                              <option value="2:1">双滑轮 (2:1)</option>
+                            </select>
+                          </label>
+                          <input
+                            type="text"
+                            value={pe.notes || ''}
+                            onChange={(e) => {
+                              const newExs = [...editingPlan.exercises];
+                              newExs[idx].notes = e.target.value;
+                              setEditingPlan({ ...editingPlan, exercises: newExs });
+                            }}
+                            placeholder="动作小贴士 (如: 顶峰停顿1秒/热身组)"
+                            aria-label="动作小贴士"
+                            className={compactFieldCls}
+                          />
                         </div>
                       </div>
                     );
                   })}
                 </div>
-              </div>
-
-              {/* 卡片底栏操作按钮 */}
-              <div className="mt-3.5 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
-                <span className="text-slate-400 text-[11px]">有氧: {plan.cardioMinutes > 0 ? `${plan.cardioType || '有氧'} ${plan.cardioMinutes}分钟` : '练后无有氧'}</span>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleDuplicate(plan)}
-                    className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
-                    title="复制为新副本"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleEditPlan(plan)}
-                    className="p-1.5 text-blue-600 hover:text-blue-700 rounded-lg hover:bg-blue-50 transition-colors font-bold flex items-center gap-1"
-                    title="编辑计划参数"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" /> 编辑
-                  </button>
-                  <button
-                    onClick={() => handleDeletePlan(plan.id, plan.name)}
-                    className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
-                    title="删除计划"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* 新建/编辑计划 模态框 */}
-      {isModalOpen && editingPlan && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]">
-          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col p-4 shadow-2xl">
-            {/* 模态框头部 */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-black text-slate-900 text-base">
-                {editingPlan.id ? '编辑训练计划' : '创建新计划'}
-              </h3>
-              <button
-                onClick={() => setIsModalOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* 表单内容 */}
-            <div className="flex-1 overflow-y-auto py-3 space-y-4 pr-1 modal-scroll overscroll-contain">
-              {formError && (
-                <p className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
-                  {formError}
-                </p>
               )}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">计划名称 (如: 胸 ➕ 三头)</label>
-                <input
-                  type="text"
-                  value={editingPlan.name}
-                  onChange={(e) => setEditingPlan({ ...editingPlan, name: e.target.value })}
-                  placeholder="例如: 胸 ➕ 三头、背 ➕ 二头、腿日..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
-                />
-              </div>
+            </div>
+          </div>
+        )}
+      </Sheet>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">计划简介/备注</label>
-                <input
-                  type="text"
-                  value={editingPlan.description}
-                  onChange={(e) => setEditingPlan({ ...editingPlan, description: e.target.value })}
-                  placeholder="例如: 胸部推力与夹胸结合，练后20分钟快走"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
-                />
-              </div>
+      {/* 选择动作加入计划 Sheet */}
+      <Sheet
+        open={isSelectExOpen}
+        onClose={closeSelectExSheet}
+        title="挑选动作加入计划"
+        size="lg"
+      >
+        <input
+          type="text"
+          placeholder="搜索动作名称..."
+          value={exerciseSearch}
+          onChange={(e) => setExerciseSearch(e.target.value)}
+          aria-label="搜索动作"
+          className={fieldCls}
+        />
 
-              {/* 有氧设置 */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <Flame className="w-3.5 h-3.5 text-pink-600" /> 练后附加有氧设置
+        <div className="mt-2">
+          {filteredExercises.map(e => {
+            const cat = CATEGORY_LABELS[e.category] || CATEGORY_LABELS.chest;
+            return (
+              <button
+                key={e.id}
+                type="button"
+                onClick={() => handleAddExerciseToPlan(e)}
+                className="flex min-h-14 w-full items-center justify-between gap-3 border-b border-line px-1 py-2 text-left last:border-b-0"
+              >
+                <span className="min-w-0">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate text-body font-semibold text-ink">{e.name}</span>
+                    <Badge>{cat.label}</Badge>
                   </span>
-                  <div className="flex items-center gap-1">
-                    {[0, 15, 20, 30].map(mins => (
-                      <button
-                        key={mins}
-                        type="button"
-                        onClick={() => setEditingPlan({ ...editingPlan, cardioMinutes: mins })}
-                        className={`px-2 py-0.5 rounded text-xs font-bold transition-all ${
-                          editingPlan.cardioMinutes === mins
-                            ? 'bg-pink-600 text-white shadow-sm'
-                            : 'bg-white text-slate-600 border border-slate-200'
-                        }`}
-                      >
-                        {mins === 0 ? '无有氧(腿日)' : `${mins}分钟`}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {editingPlan.cardioMinutes > 0 && (
-                  <input
-                    type="text"
-                    value={editingPlan.cardioType || ''}
-                    onChange={(e) => setEditingPlan({ ...editingPlan, cardioType: e.target.value })}
-                    placeholder="有氧项目: 跑步机坡度快走 / 爬楼机 / 椭圆机"
-                    className="w-full mt-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900"
-                  />
-                )}
-              </div>
-
-              {/* 动作列表编辑与重量预设 */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <label className="text-xs font-bold text-slate-800 block">
-                      动作编排与预设重量 ({editingPlan.exercises.length}个)
-                    </label>
-                    <span className="text-[10px] text-slate-400">设置组数与重量后，一键开练将直接带入</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => { setIsImportSessionOpen(true); setImportSearch(''); }}
-                    className="px-2.5 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white border border-emerald-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"
-                  >
-                    从过往训练导入
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsSelectExOpen(true)}
-                    className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> 挑选动作
-                  </button>
-                  </div>
-                </div>
-
-                {editingPlan.exercises.length === 0 ? (
-                  <div className="text-center py-6 border border-dashed border-slate-200 rounded-xl text-slate-400 text-xs bg-slate-50">
-                    还没有添加动作，点击上方“挑选动作”添加
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {editingPlan.exercises.map((pe, idx) => {
-                      const ex = allExercises.find(e => e.id === pe.exerciseId);
-                      return (
-                        <div
-                          key={idx}
-                          className="bg-slate-50 border border-slate-200 rounded-xl p-3"
-                        >
-                          {/* 动作头部 */}
-                          <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200/60">
-                            <div className="flex items-center gap-2 truncate">
-                              <span className="text-slate-400 font-mono text-xs font-bold w-4">{idx + 1}.</span>
-                              <span className="font-bold text-slate-900 text-xs truncate">{ex?.name || '未知动作'}</span>
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => moveExercise(idx, 'up')}
-                                disabled={idx === 0}
-                                className="p-1 bg-white text-slate-500 hover:text-slate-800 border border-slate-200 disabled:opacity-30 rounded"
-                                title="上移"
-                              >
-                                <ArrowUp className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => moveExercise(idx, 'down')}
-                                disabled={idx === editingPlan.exercises.length - 1}
-                                className="p-1 bg-white text-slate-500 hover:text-slate-800 border border-slate-200 disabled:opacity-30 rounded"
-                                title="下移"
-                              >
-                                <ArrowDown className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => removeExerciseFromPlan(idx)}
-                                className="p-1 text-slate-400 hover:text-red-600 rounded ml-1"
-                                title="删除"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* 预设参数区：超级组面板 vs 普通动作面板 */}
-                          {pe.isDropSet ? (
-                            <div className="mt-2.5 space-y-2 bg-amber-50/70 p-2.5 rounded-xl border border-amber-200/90 text-xs">
-                              <div className="flex items-center justify-between">
-                                <span className="font-black text-amber-900 text-xs flex items-center gap-1">
-                                  🔥 超级组编排
-                                </span>
-                                <div className="flex items-center gap-1">
-                                  <span className="text-slate-600 font-bold text-[11px]">目标大组数:</span>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    max="20"
-                                    value={pe.targetSets || ''}
-                                    onChange={(e) => {
-                                      const newExs = [...editingPlan.exercises];
-                                      newExs[idx].targetSets = e.target.value === '' ? 0 : (parseInt(e.target.value) || 1);
-                                      setEditingPlan({ ...editingPlan, exercises: newExs });
-                                    }}
-                                    className="w-12 bg-white border border-amber-300 rounded px-1 py-0.5 text-center text-slate-900 font-black text-xs"
-                                  />
-                                  <span className="text-slate-400 text-[11px]">大组</span>
-                                </div>
-                              </div>
-
-                              {/* 递减阶梯列表 */}
-                              <div className="space-y-1">
-                                {(pe.dropStages || []).map((stg, stgIdx) => (
-                                  <div key={stg.id} className="bg-white p-1.5 rounded-lg border border-amber-200/80 flex items-center justify-between text-[11px] gap-1 shadow-2xs">
-                                    <span className="font-mono text-slate-400 font-bold w-4">#{stgIdx + 1}</span>
-                                    <div className="flex items-center gap-0.5">
-                                      <input
-                                        type="number"
-                                        step="0.5"
-                                        value={stg.weightOrPlates || ''}
-                                        onChange={(e) => {
-                                          const newExs = [...editingPlan.exercises];
-                                          newExs[idx].dropStages![stgIdx].weightOrPlates = parseFloat(e.target.value) || 0;
-                                          setEditingPlan({ ...editingPlan, exercises: newExs });
-                                        }}
-                                        className="w-12 bg-slate-50 border border-slate-200 rounded py-0.5 text-center font-black"
-                                      />
-                                      <span className="text-slate-400 font-bold">kg</span>
-                                    </div>
-                                    <span className="text-slate-300">➔</span>
-                                    <div className="flex items-center gap-0.5">
-                                      <input
-                                        type="number"
-                                        value={stg.reps || ''}
-                                        onChange={(e) => {
-                                          const newExs = [...editingPlan.exercises];
-                                          newExs[idx].dropStages![stgIdx].reps = parseInt(e.target.value) || 0;
-                                          setEditingPlan({ ...editingPlan, exercises: newExs });
-                                        }}
-                                        className="w-10 bg-slate-50 border border-slate-200 rounded py-0.5 text-center font-black"
-                                      />
-                                      <span className="text-slate-400 font-bold">次</span>
-                                    </div>
-                                    {(pe.dropStages || []).length > 1 && (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const newExs = [...editingPlan.exercises];
-                                          newExs[idx].dropStages!.splice(stgIdx, 1);
-                                          setEditingPlan({ ...editingPlan, exercises: newExs });
-                                        }}
-                                        className="text-slate-300 hover:text-red-500 p-0.5 ml-1"
-                                      >
-                                        <Trash2 className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-
-                              <div className="flex items-center justify-between pt-1">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const newExs = [...editingPlan.exercises];
-                                    if (!newExs[idx].dropStages) newExs[idx].dropStages = [];
-                                    const last = newExs[idx].dropStages![newExs[idx].dropStages!.length - 1];
-                                    newExs[idx].dropStages!.push({
-                                      id: `stg-${Date.now()}`,
-                                      weightOrPlates: last ? Math.max(1, last.weightOrPlates - 2.5) : 5,
-                                      unit: 'kg',
-                                      reps: 10,
-                                    });
-                                    setEditingPlan({ ...editingPlan, exercises: newExs });
-                                  }}
-                                  className="text-[11px] text-amber-800 hover:text-amber-900 font-bold flex items-center gap-1 hover:underline"
-                                >
-                                  <Plus className="w-3 h-3" /> 加一阶递减重量
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const newExs = [...editingPlan.exercises];
-                                    newExs[idx].isDropSet = false;
-                                    setEditingPlan({ ...editingPlan, exercises: newExs });
-                                  }}
-                                  className="text-[10px] text-slate-400 hover:text-slate-600 underline"
-                                >
-                                  切回普通单组模式
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            /* 普通动作配置面板 */
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2.5 text-[11px]">
-                              {/* 目标组数 */}
-                              <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
-                                <span className="text-slate-500 font-medium">目标组数:</span>
-                                <div className="flex items-center gap-1">
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    max="20"
-                                    value={pe.targetSets || ''}
-                                    onChange={(e) => {
-                                      const newExs = [...editingPlan.exercises];
-                                      newExs[idx].targetSets = e.target.value === '' ? 0 : (parseInt(e.target.value) || 1);
-                                      setEditingPlan({ ...editingPlan, exercises: newExs });
-                                    }}
-                                    className="w-10 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900 font-bold"
-                                  />
-                                  <span className="text-slate-400">组</span>
-                                </div>
-                              </div>
-
-                              {/* 目标次数 */}
-                              <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
-                                <span className="text-slate-500 font-medium">目标次数:</span>
-                                <div className="flex items-center gap-1">
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    max="100"
-                                    value={pe.targetReps ?? ''} placeholder="12"
-                                    onChange={(e) => {
-                                      const newExs = [...editingPlan.exercises];
-                                      newExs[idx].targetReps = e.target.value === '' ? undefined : (parseInt(e.target.value) || 1);
-                                      setEditingPlan({ ...editingPlan, exercises: newExs });
-                                    }}
-                                    className="w-10 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-slate-900 font-bold"
-                                  />
-                                  <span className="text-slate-400">次</span>
-                                </div>
-                              </div>
-
-                              {/* 预设重量/片数 */}
-                              <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
-                                <span className="text-slate-500 font-medium">预设负荷:</span>
-                                <div className="flex items-center gap-1">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.5"
-                                    value={pe.targetWeight ?? ''}
-                                    onChange={(e) => {
-                                      const newExs = [...editingPlan.exercises];
-                                      newExs[idx].targetWeight = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0);
-                                      setEditingPlan({ ...editingPlan, exercises: newExs });
-                                    }}
-                                    className="w-12 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-center text-emerald-700 font-bold"
-                                  />
-                                </div>
-                              </div>
-
-                              {/* 阻力单位 */}
-                              <div className="bg-white p-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
-                                <span className="text-slate-500 font-medium">阻力单位:</span>
-                                <select
-                                  value={pe.targetUnit || ex?.defaultUnit || 'kg'}
-                                  onChange={(e) => {
-                                    const newExs = [...editingPlan.exercises];
-                                    newExs[idx].targetUnit = e.target.value as ResistanceUnit;
-                                    setEditingPlan({ ...editingPlan, exercises: newExs });
-                                  }}
-                                  className="bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-[11px] font-bold text-slate-700"
-                                >
-                                  <option value="kg">kg (重量)</option>
-                                  <option value="plates">片 (插销)</option>
-                                  <option value="assisted">助力 (kg)</option>
-                                  <option value="bodyweight">自重</option>
-                                </select>
-                              </div>
-
-                              {/* 左右独立（单侧）开关：仅普通动作提供，超级组不支持分侧 */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const newExs = [...editingPlan.exercises];
-                                  newExs[idx].isUnilateral = newExs[idx].isUnilateral ? undefined : true;
-                                  setEditingPlan({ ...editingPlan, exercises: newExs });
-                                }}
-                                className={`bg-white p-1.5 rounded-lg border flex items-center justify-between transition-colors ${
-                                  pe.isUnilateral ? 'border-teal-300 bg-teal-50' : 'border-slate-200'
-                                }`}
-                              >
-                                <span className={`font-medium ${pe.isUnilateral ? 'text-teal-700' : 'text-slate-500'}`}>
-                                  左右独立:
-                                </span>
-                                <span className="flex items-center gap-1">
-                                  <span className={`w-8 h-4 rounded-full relative transition-colors ${pe.isUnilateral ? 'bg-teal-600' : 'bg-slate-300'}`}>
-                                    <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-all ${pe.isUnilateral ? 'left-[1.125rem]' : 'left-0.5'}`} />
-                                  </span>
-                                  <span className={`font-bold ${pe.isUnilateral ? 'text-teal-700' : 'text-slate-400'}`}>
-                                    {pe.isUnilateral ? '开' : '关'}
-                                  </span>
-                                </span>
-                              </button>
-                            </div>
-                          )}
-
-                          {/* 动作底部：设为超级组按钮或滑轮备注行 */}
-                          {!pe.isDropSet && (
-                            <div className="mt-1.5 flex items-center justify-end">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const newExs = [...editingPlan.exercises];
-                                  newExs[idx].isDropSet = true;
-                                  // 超级组不支持分侧记录，切为超级组时清除单侧标记
-                                  newExs[idx].isUnilateral = undefined;
-                                  if (!newExs[idx].dropStages) {
-                                    newExs[idx].dropStages = [
-                                      { id: 'stg-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
-                                      { id: 'stg-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
-                                      { id: 'stg-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
-                                      { id: 'stg-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
-                                    ];
-                                  }
-                                  setEditingPlan({ ...editingPlan, exercises: newExs });
-                                }}
-                                className="text-[10px] text-amber-800 hover:underline font-bold"
-                              >
-                                🔥 设为超级组
-                              </button>
-                            </div>
-                          )}
-
-                          {/* 滑轮与备注可选行 */}
-                          <div className="flex items-center gap-2 mt-2">
-                            <div className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
-                              <span>滑轮:</span>
-                              <select
-                                value={pe.pulleyRatio || ex?.defaultPulley || 'none'}
-                                onChange={(e) => {
-                                  const newExs = [...editingPlan.exercises];
-                                  newExs[idx].pulleyRatio = e.target.value as PulleyRatio;
-                                  setEditingPlan({ ...editingPlan, exercises: newExs });
-                                }}
-                                className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] text-slate-700"
-                              >
-                                <option value="none">普通器械</option>
-                                <option value="1:1">单滑轮 (1:1)</option>
-                                <option value="2:1">双滑轮 (2:1)</option>
-                              </select>
-                            </div>
-                            <input
-                              type="text"
-                              value={pe.notes || ''}
-                              onChange={(e) => {
-                                const newExs = [...editingPlan.exercises];
-                                newExs[idx].notes = e.target.value;
-                                setEditingPlan({ ...editingPlan, exercises: newExs });
-                              }}
-                              placeholder="动作小贴士 (如: 顶峰停顿1秒/热身组)"
-                              className="flex-1 bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-700 placeholder-slate-400"
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 模态框底部按钮 */}
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold rounded-xl"
-              >
-                取消
+                  <span className="mt-0.5 block text-cap text-ink-3">默认: {UNIT_LABELS[e.defaultUnit]}</span>
+                </span>
+                <Plus className="h-4 w-4 shrink-0 text-ink-3" />
               </button>
-              <button
-                type="button"
-                onClick={handleSavePlan}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-md shadow-blue-500/20"
-              >
-                保存计划
-              </button>
-            </div>
-          </div>
+            );
+          })}
+          {filteredExercises.length === 0 && (
+            <p className="py-6 text-center text-sm2 text-ink-3">没有匹配的动作</p>
+          )}
         </div>
-      )}
+      </Sheet>
 
-      {/* 选择动作加入计划模态框 */}
-      {isSelectExOpen && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]">
-          <div className="bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col p-4 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-black text-slate-900 text-base">挑选动作加入计划</h3>
-              <button
-                onClick={() => setIsSelectExOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {/* 从过往训练导入模板 Sheet */}
+      <Sheet
+        open={isImportSessionOpen}
+        onClose={closeImportSheet}
+        title="从过往训练导入"
+        description="取该场已完成组的重量次数做计划预设，导入后会替换当前动作编排"
+        size="lg"
+      >
+        <input
+          type="text"
+          placeholder="搜索计划名或日期..."
+          value={importSearch}
+          onChange={(e) => setImportSearch(e.target.value)}
+          aria-label="搜索过往训练"
+          className={fieldCls}
+        />
 
-            <div className="py-2.5">
-              <input
-                type="text"
-                placeholder="搜索动作名称..."
-                value={exerciseSearch}
-                onChange={(e) => setExerciseSearch(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
-              />
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1 modal-scroll overscroll-contain">
-              {allExercises
-                .filter(e => !exerciseSearch || e.name.toLowerCase().includes(exerciseSearch.toLowerCase()))
-                .map(e => {
-                  const cat = CATEGORY_LABELS[e.category] || CATEGORY_LABELS.chest;
-                  return (
-                    <div
-                      key={e.id}
-                      onClick={() => handleAddExerciseToPlan(e)}
-                      className="p-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200/90 rounded-xl flex items-center justify-between cursor-pointer group transition-all"
-                    >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900 text-xs group-hover:text-blue-600">{e.name}</span>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${cat.bg} ${cat.color}`}>{cat.label}</span>
-                        </div>
-                      </div>
-                      <Plus className="w-4 h-4 text-blue-600" />
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 从过往训练导入模板 */}
-      {isImportSessionOpen && (() => {
-        const kw = importSearch.toLowerCase();
-        const sessions = StorageService.getSessions().filter(s =>
-          !s.isRestDay && (!kw || s.planName.toLowerCase().includes(kw) || s.date.includes(kw))
-        );
-        return (
-          <div
-            className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]"
-            onClick={() => setIsImportSessionOpen(false)}
-          >
-            <div
-              className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col p-4 shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
+        <div className="mt-2">
+          {importSessions.map(s => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => handleImportSession(s.id)}
+              className="flex min-h-14 w-full flex-col justify-center gap-0.5 border-b border-line px-1 py-2 text-left last:border-b-0"
             >
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100 shrink-0">
-                <div>
-                  <h3 className="font-black text-slate-900 text-sm">从过往训练导入</h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5">取该场已完成组的重量次数做计划预设，导入后会替换当前动作编排</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsImportSessionOpen(false)}
-                  className="p-1 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="py-2 shrink-0">
-                <input
-                  type="text"
-                  placeholder="搜索计划名或日期..."
-                  value={importSearch}
-                  onChange={(e) => setImportSearch(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
-                />
-              </div>
-              <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0 pr-0.5 modal-scroll overscroll-contain">
-                {sessions.map(s => (
-                  <div
-                    key={s.id}
-                    onClick={() => handleImportSession(s.id)}
-                    className="p-2.5 bg-slate-50 hover:bg-emerald-50 border border-slate-200/90 rounded-xl cursor-pointer transition-all"
-                  >
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-slate-900 text-xs">{s.planName}</span>
-                      <span className="text-[10px] font-mono text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200">{s.date}</span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 truncate mt-0.5">
-                      {s.exercises.length} 个动作 · {s.exercises.map(e => e.exerciseName).join('、')}
-                    </p>
-                  </div>
-                ))}
-                {sessions.length === 0 && (
-                  <p className="text-center text-xs text-slate-400 py-6">没有匹配的训练记录</p>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-body font-semibold text-ink">{displayPlanName(s.planName)}</span>
+                <Badge>{s.date}</Badge>
+              </span>
+              <span className="block truncate text-cap text-ink-3">
+                {s.exercises.length} 个动作 · {s.exercises.map(e => e.exerciseName).join('、')}
+              </span>
+            </button>
+          ))}
+          {importSessions.length === 0 && (
+            <p className="py-6 text-center text-sm2 text-ink-3">没有匹配的训练记录</p>
+          )}
+        </div>
+      </Sheet>
 
       {/* 统一确认抽屉 */}
       <ConfirmSheet

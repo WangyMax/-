@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Scale, Plus, TrendingDown, TrendingUp,
   Trash2, Download, Upload, CheckCircle2, MessageSquare, AlertCircle,
-  Dumbbell, Flame, Check, ChevronDown, ChevronUp,
+  Flame, Check, ChevronDown, ChevronUp,
   Layers, Coffee, Target, CalendarDays, Zap, Pencil
 } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
@@ -20,6 +20,7 @@ import {
 } from '../utils/stats';
 import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 import { ConfirmSheet } from './ConfirmSheet';
+import { Badge, Button, Card, IconButton, NumberText, SegmentedControl, Sheet, cx } from '../ui';
 
 interface WeightJournalViewProps {
   onDataChanged?: () => void;
@@ -31,6 +32,55 @@ const SLOT_SHORT: Record<string, string> = {
   'evening': '晚间',
   'post-workout': '练后',
 };
+
+type SlotKey = 'morning' | 'evening' | 'post-workout';
+
+const SLOT_OPTIONS = [
+  { value: 'morning', label: '晨起空腹' },
+  { value: 'post-workout', label: '练后即刻' },
+  { value: 'evening', label: '晚间睡前' },
+] as const;
+
+const HISTORY_FILTER_OPTIONS = [
+  { value: 'all', label: '全部' },
+  { value: 'training', label: '训练' },
+  { value: 'rest', label: '休息' },
+] as const;
+
+const SLOT_FILTER_OPTIONS = [
+  { value: 'all', label: '全部' },
+  { value: 'morning', label: '晨起' },
+  { value: 'post-workout', label: '练后' },
+  { value: 'evening', label: '晚间' },
+] as const;
+
+const CHART_SPAN_OPTIONS = [
+  { value: 'week', label: '周' },
+  { value: 'month', label: '月' },
+  { value: 'all', label: '全部' },
+] as const;
+
+const CARDIO_MODE_OPTIONS = [
+  { value: 'none', label: '无有氧' },
+  { value: 'yes', label: '有有氧' },
+] as const;
+
+// 历史编辑规格抽屉：单位与滑轮（选项文案与开练页规格抽屉对齐）
+const EDIT_UNIT_OPTIONS = [
+  { value: 'plates', label: '插销' },
+  { value: 'kg', label: 'kg' },
+  { value: 'assisted', label: '助力' },
+  { value: 'bodyweight', label: '自重' },
+] as const;
+
+const EDIT_PULLEY_OPTIONS = [
+  { value: 'none', label: '无' },
+  { value: '1:1', label: '1:1' },
+  { value: '2:1', label: '2:1' },
+] as const;
+
+// 输入框统一样式串：与 WorkoutView 的 fieldCls 完全一致
+const fieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
 
 // 历史编辑：规格胶囊与抽屉的简标（与开练页 WorkoutView 保持一致）
 const EDIT_UNIT_SHORT: Record<ResistanceUnit, string> = {
@@ -90,7 +140,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const [goalInput, setGoalInput] = useState('');
   const [showGoalEditor, setShowGoalEditor] = useState(false);
   // 时段过滤：all / morning / post-workout / evening
-  const [slotFilter, setSlotFilter] = useState<string>('all');
+  const [slotFilter, setSlotFilter] = useState<'all' | SlotKey>('all');
   // 体重打卡日历选中的日期
   const [selectedWeightDate, setSelectedWeightDate] = useState<string | null>(null);
 
@@ -108,8 +158,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   // 历史编辑：当前打开规格抽屉（单位 + 滑轮）的动作索引
   const [editSpecExIdx, setEditSpecExIdx] = useState<number | null>(null);
 
-  // 弹窗打开时锁住底层 body 滚动，彻底杜绝滚动穿透
-  useLockBodyScroll(editingSession !== null || editSpecExIdx !== null || confirmState.open || showGoalEditor);
+  // 体重目标编辑为页内折叠块（非浮层），仍需锁底层滚动；其余弹层由 Sheet/ConfirmSheet 自行加锁
+  useLockBodyScroll(confirmState.open || showGoalEditor);
 
   // 历史编辑弹窗内的自定义新动作折叠表单状态
   const [showHistoryCustomForm, setShowHistoryCustomForm] = useState(false);
@@ -833,144 +883,161 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     };
   }, [filteredChartWeights, chartViewSpan, weightGoal]);
 
+  // 日历格子：规范 5.11 —— 不用状态圆点，直接给日期数字着色；
+  // 今天用 1.5px accent 内描边标记，不覆盖状态色；网格保持中性。
+  const calCellCls = 'flex h-11 items-center justify-center rounded-ctl transition-colors';
+  const calDayCls = 'flex h-8 w-8 items-center justify-center rounded-full text-sm2 font-semibold tabular-nums';
+
   // 日历格子渲染（训练活动）
   const renderActivityCal = () => (
-    <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-2.5">
-        <span className="text-xs font-black text-slate-900 flex items-center gap-1">
-          <CalendarDays className="w-3.5 h-3.5 text-blue-600" /> 近8周活动
+    <Card className="p-4">
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-h2 font-semibold text-ink">
+          <CalendarDays className="h-4 w-4 text-ink-3" aria-hidden="true" /> 近8周活动
         </span>
-        <div className="flex items-center gap-2 text-[10px] text-slate-400">
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-blue-500 inline-block" />训练</span>
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-amber-400 inline-block" />休息</span>
+        <div className="flex items-center gap-2 text-cap text-ink-3">
+          <span className="font-semibold text-success">训练</span>
+          <span className="font-semibold text-warning">休息</span>
+          <span>未记录</span>
           {selectedCalDate && (
             <button
               type="button"
               onClick={() => setSelectedCalDate(null)}
-              className="text-blue-600 font-bold underline"
+              className="h-11 px-1 font-semibold text-accent underline"
             >
               清除{selectedCalDate.slice(5)}
             </button>
           )}
         </div>
       </div>
-      <div className="grid grid-cols-7 gap-1">
+      <div className="grid grid-cols-7 gap-0.5">
         {['日', '一', '二', '三', '四', '五', '六'].map((w, i) => (
-          <div key={i} className="text-center text-[10px] text-slate-300 font-bold">{w}</div>
+          <div key={i} className="text-center text-cap font-medium text-ink-3">{w}</div>
         ))}
         {/* 首格按星期补齐 */}
         {Array.from({ length: weekdayOf(activityCal[0]?.date || todayStr) }).map((_, i) => (
           <div key={`pad-${i}`} />
         ))}
-        {activityCal.map(d => (
-          <button
-            key={d.date}
-            type="button"
-            onClick={() => setSelectedCalDate(prev => (prev === d.date ? null : d.date))}
-            className={`aspect-square rounded-lg text-[10px] font-bold flex items-center justify-center transition-all active:scale-95 ${
-              selectedCalDate === d.date
-                ? 'ring-2 ring-blue-600 ring-offset-1'
-                : ''
-            } ${
-              d.hasTraining
-                ? 'bg-blue-500 text-white'
-                : d.hasRest
-                  ? 'bg-amber-300 text-amber-900'
-                  : d.isToday
-                    ? 'bg-slate-200 text-slate-700 ring-1 ring-slate-400'
-                    : 'bg-slate-100 text-slate-300'
-            }`}
-          >
-            {d.day}
-          </button>
-        ))}
+        {activityCal.map(d => {
+          const future = d.date > todayStr;
+          const stateText = d.hasTraining ? '训练' : d.hasRest ? '休息' : future ? '未到日期' : '未记录';
+          return (
+            <button
+              key={d.date}
+              type="button"
+              onClick={() => setSelectedCalDate(prev => (prev === d.date ? null : d.date))}
+              aria-pressed={selectedCalDate === d.date}
+              aria-label={`${d.date} ${stateText}`}
+              className={cx(calCellCls, selectedCalDate === d.date ? 'bg-surface-subtle' : 'hover:bg-surface-subtle/60')}
+            >
+              <span
+                className={cx(
+                  calDayCls,
+                  d.hasTraining
+                    ? 'text-success'
+                    : d.hasRest
+                      ? 'text-warning'
+                      : future
+                        ? 'text-ink-disabled'
+                        : 'text-ink-3',
+                  d.isToday && 'ring-[1.5px] ring-inset ring-accent',
+                )}
+              >
+                {d.day}
+              </span>
+            </button>
+          );
+        })}
       </div>
-    </div>
+    </Card>
   );
 
   // 体重打卡日历
   const renderWeightCal = () => (
-    <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-2.5">
-        <span className="text-xs font-black text-slate-900 flex items-center gap-1">
-          <CalendarDays className="w-3.5 h-3.5 text-emerald-600" /> 近6周打卡
+    <Card className="p-4">
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-h2 font-semibold text-ink">
+          <CalendarDays className="h-4 w-4 text-ink-3" aria-hidden="true" /> 近6周打卡
         </span>
-        {selectedWeightDate && (
-          <button
-            type="button"
-            onClick={() => setSelectedWeightDate(null)}
-            className="text-[11px] text-emerald-600 font-bold underline"
-          >
-            清除{selectedWeightDate.slice(5)}
-          </button>
-        )}
+        <div className="flex items-center gap-2 text-cap text-ink-3">
+          <span className="font-semibold text-success">已打卡</span>
+          <span>未记录</span>
+          {selectedWeightDate && (
+            <button
+              type="button"
+              onClick={() => setSelectedWeightDate(null)}
+              className="h-11 px-1 font-semibold text-accent underline"
+            >
+              清除{selectedWeightDate.slice(5)}
+            </button>
+          )}
+        </div>
       </div>
-      <div className="grid grid-cols-7 gap-1">
+      <div className="grid grid-cols-7 gap-0.5">
         {['日', '一', '二', '三', '四', '五', '六'].map((w, i) => (
-          <div key={i} className="text-center text-[10px] text-slate-300 font-bold">{w}</div>
+          <div key={i} className="text-center text-cap font-medium text-ink-3">{w}</div>
         ))}
         {Array.from({ length: weekdayOf(weightCal[0]?.date || todayStr) }).map((_, i) => (
           <div key={`wpad-${i}`} />
         ))}
-        {weightCal.map(d => (
-          <button
-            key={d.date}
-            type="button"
-            onClick={() => setSelectedWeightDate(prev => (prev === d.date ? null : d.date))}
-            className={`aspect-square rounded-lg text-[10px] font-bold flex items-center justify-center transition-all active:scale-95 ${
-              selectedWeightDate === d.date ? 'ring-2 ring-emerald-600 ring-offset-1' : ''
-            } ${
-              d.logged
-                ? 'bg-emerald-500 text-white'
-                : d.isToday
-                  ? 'bg-slate-200 text-slate-700 ring-1 ring-slate-400'
-                  : 'bg-slate-100 text-slate-300'
-            }`}
-          >
-            {d.day}
-          </button>
-        ))}
+        {weightCal.map(d => {
+          const future = d.date > todayStr;
+          return (
+            <button
+              key={d.date}
+              type="button"
+              onClick={() => setSelectedWeightDate(prev => (prev === d.date ? null : d.date))}
+              aria-pressed={selectedWeightDate === d.date}
+              aria-label={`${d.date} ${d.logged ? '已打卡' : future ? '未到日期' : '未记录'}`}
+              className={cx(calCellCls, selectedWeightDate === d.date ? 'bg-surface-subtle' : 'hover:bg-surface-subtle/60')}
+            >
+              <span
+                className={cx(
+                  calDayCls,
+                  d.logged ? 'text-success' : future ? 'text-ink-disabled' : 'text-ink-3',
+                  d.isToday && 'ring-[1.5px] ring-inset ring-accent',
+                )}
+              >
+                {d.day}
+              </span>
+            </button>
+          );
+        })}
       </div>
-    </div>
+    </Card>
   );
 
   return (
-    <div className="pb-24 pt-2 space-y-4">
+    <div className="space-y-4 pb-24 pt-2">
       {/* 头部标题与双标签切换 */}
       <div>
-        <h1 className="text-2xl font-black text-slate-900 tracking-tight">训练与生活日志</h1>
-        <p className="text-xs text-slate-500 mt-0.5">历史打卡归档、日常体重走势与身体状态记录</p>
+        <div className="flex items-center justify-between text-cap font-semibold tracking-[0.04em] text-ink-3">
+          <span>FITCUSTOM PRO</span>
+          <span>
+            {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}
+            {' '}
+            {new Date().toLocaleDateString('zh-CN', { weekday: 'short' })}
+          </span>
+        </div>
+        <h1 className="mt-0.5 text-h1 font-bold tracking-tight text-ink">训练与生活日志</h1>
+        <p className="mt-1 text-sm2 text-ink-2">历史打卡归档、日常体重走势与身体状态记录</p>
       </div>
 
       {/* 顶部子标签分段控制器 */}
-      <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center gap-1.5 border border-slate-200 shadow-sm">
-        <button
-          onClick={() => setActiveSubTab('training')}
-          className={`flex-1 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all duration-200 active:scale-[0.98] ${
-            activeSubTab === 'training'
-              ? 'bg-blue-600 text-white font-black shadow-md shadow-blue-600/25'
-              : 'text-slate-500 hover:text-slate-900 font-bold hover:bg-white'
-          }`}
-        >
-          <Dumbbell className="w-3.5 h-3.5" /> 历史训练记录 ({sessions.length}次)
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('weight')}
-          className={`flex-1 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all duration-200 active:scale-[0.98] ${
-            activeSubTab === 'weight'
-              ? 'bg-emerald-600 text-white font-black shadow-md shadow-emerald-600/25'
-              : 'text-slate-500 hover:text-slate-900 font-bold hover:bg-white'
-          }`}
-        >
-          <Scale className="w-3.5 h-3.5" /> 体重与生活日志 ({weights.length}条)
-        </button>
-      </div>
+      <SegmentedControl
+        label="日志类型"
+        value={activeSubTab}
+        onChange={setActiveSubTab}
+        options={[
+          { value: 'training', label: `历史训练记录 (${sessions.length} 次)` },
+          { value: 'weight', label: `体重与生活日志 (${weights.length} 条)` },
+        ]}
+      />
 
       {/* 提示消息浮层 */}
       {importStatus && (
-        <div className="p-2.5 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+        <div className="flex items-center gap-2 rounded-ctl border border-line bg-success-soft px-3 py-2.5 text-sm2 text-success">
+          <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span>{importStatus}</span>
         </div>
       )}
@@ -981,97 +1048,78 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           {/* 统计条 */}
           <div className="grid grid-cols-4 gap-2">
             {[
-              { label: '累计训练', value: `${historyStats.trainings}次`, accent: 'text-blue-700' },
-              { label: '本周训练', value: `${historyStats.weekTrainings}次`, accent: 'text-blue-700' },
-              { label: '连续打卡', value: `${historyStats.streak}天`, accent: 'text-amber-600' },
-              { label: '总完成组', value: `${historyStats.totalSets}组`, accent: 'text-emerald-600' },
+              { label: '累计训练', value: `${historyStats.trainings}次` },
+              { label: '本周训练', value: `${historyStats.weekTrainings}次` },
+              { label: '连续打卡', value: `${historyStats.streak}天` },
+              { label: '总完成组', value: `${historyStats.totalSets}组` },
             ].map(s => (
-              <div key={s.label} className="bg-white border border-slate-200/90 rounded-2xl p-2 text-center shadow-sm min-w-0">
-                <span className="text-[10px] text-slate-400 block truncate">{s.label}</span>
-                <span className={`text-xs font-black font-mono ${s.accent}`}>{s.value}</span>
-              </div>
+              <Card key={s.label} className="min-w-0 p-2.5 text-center">
+                <span className="block truncate text-cap text-ink-3">{s.label}</span>
+                <NumberText size="md" className="mt-0.5 block truncate text-ink">{s.value}</NumberText>
+              </Card>
             ))}
           </div>
 
           {renderActivityCal()}
 
           {/* 筛选 + 展开控制 */}
-          <div className="flex items-center justify-between px-1">
-            <div className="flex items-center gap-1 bg-slate-200/70 p-0.5 rounded-xl border border-slate-300/60 text-[11px] font-bold">
-              {([
-                { key: 'all', label: '全部' },
-                { key: 'training', label: '训练' },
-                { key: 'rest', label: '休息' },
-              ] as const).map(f => (
-                <button
-                  key={f.key}
-                  type="button"
-                  onClick={() => setHistoryFilter(f.key)}
-                  className={`px-2.5 py-1 rounded-lg transition-all ${
-                    historyFilter === f.key ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <SegmentedControl
+              label="历史记录类型"
+              className="min-w-0 flex-1"
+              value={historyFilter}
+              onChange={setHistoryFilter}
+              options={HISTORY_FILTER_OPTIONS}
+            />
             {visibleSessions.length > 0 && (
               <button
+                type="button"
                 onClick={() => toggleAllSessions(visibleSessions.map(s => s.id))}
-                className="text-[11px] text-blue-600 hover:text-blue-700 font-bold flex items-center gap-1"
+                className="flex h-11 items-center gap-1 px-2 text-sm2 font-semibold text-accent"
               >
-                <Layers className="w-3 h-3" />
+                <Layers className="h-4 w-4" aria-hidden="true" />
                 {visibleSessions.every(s => expandedSessionIds.has(s.id)) ? '全部收起' : '全部展开'}
               </button>
             )}
           </div>
 
           {visibleSessions.length === 0 ? (
-            <div className="text-center py-12 bg-white border border-slate-200 rounded-2xl text-slate-400 text-xs">
-              {sessions.length === 0
-                ? '暂无历史训练记录，去“今日训练”开启第一次打卡吧！'
-                : '当前筛选下没有记录，换个条件试试'}
-            </div>
+            <Card className="px-4 py-12 text-center">
+              <p className="text-body text-ink-2">
+                {sessions.length === 0
+                  ? '暂无历史训练记录，去“今日训练”开启第一次打卡吧！'
+                  : '当前筛选下没有记录，换个条件试试'}
+              </p>
+            </Card>
           ) : (
             visibleSessions.map((sess) => {
               // 专属渲染：纯粹的完全休息日卡片
               if (sess.isRestDay) {
                 return (
-                  <div
-                    key={sess.id}
-                    className="bg-amber-50/80 border border-amber-200/90 rounded-2xl p-3.5 shadow-xs transition-all flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center font-bold shrink-0">
-                        <Coffee className="w-4 h-4" />
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-black text-amber-950 text-sm">休息日 (完全休息)</span>
-                        <span className="text-[11px] font-mono font-bold text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-200">
-                          {sess.date}
-                        </span>
+                  <Card key={sess.id} className="flex items-center justify-between gap-3 p-3.5">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning-soft text-warning">
+                        <Coffee className="h-4 w-4" aria-hidden="true" />
+                      </span>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="text-body font-semibold text-ink">休息日 (完全休息)</span>
+                        <Badge>{sess.date}</Badge>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => startEditSession(sess)}
-                        className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-amber-100/60 transition-colors"
-                        title="编辑休息日备注"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
+                    <div className="flex shrink-0 items-center">
+                      <IconButton label="编辑休息日备注" onClick={() => startEditSession(sess)}>
+                        <Pencil className="h-[18px] w-[18px]" />
+                      </IconButton>
+                      <IconButton
+                        label="删除此条记录"
+                        tone="danger"
                         onClick={() => promptDeleteSession(sess.id, sess.planName, sess.date)}
-                        className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-amber-100/50 transition-colors"
-                        title="删除此条记录"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        <Trash2 className="h-[18px] w-[18px]" />
+                      </IconButton>
                     </div>
-                  </div>
+                  </Card>
                 );
               }
 
@@ -1084,99 +1132,89 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
               const durMin = sessionDurationMin(sess);
 
               return (
-                <div
-                  key={sess.id}
-                  className="bg-white border border-slate-200/90 rounded-2xl shadow-sm transition-all overflow-hidden"
-                >
-                  {/* 可点击卡片头部（触发折叠/展开） */}
-                  <div
-                    onClick={() => toggleExpandSession(sess.id)}
-                    className="p-3.5 flex items-center justify-between gap-2 cursor-pointer hover:bg-slate-50/70 transition-colors select-none"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className="font-black text-slate-900 text-sm">{sess.planName}</span>
-                        <span className="text-[11px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                          {sess.date}
-                        </span>
+                <Card key={sess.id} className="overflow-hidden">
+                  {/* 卡片头部：左侧文本区可点折叠/展开，右侧编辑/删除独立按钮 */}
+                  <div className="flex items-start justify-between gap-2 p-3.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleExpandSession(sess.id)}
+                      aria-expanded={isExpanded}
+                      className="min-w-0 flex-1 select-none text-left"
+                    >
+                      <span className="mb-1 flex flex-wrap items-center gap-2">
+                        <span className="text-body font-semibold text-ink">{sess.planName}</span>
+                        <Badge>{sess.date}</Badge>
                         {sess.cardioCompleted ? (
-                          <span className="text-[10px] text-pink-700 bg-pink-50 px-1.5 py-0.5 rounded border border-pink-200 flex items-center gap-0.5 font-bold max-w-full">
-                            <Flame className="w-2.5 h-2.5 shrink-0" />
-                            <span className="truncate">有氧{sess.cardioMinutes || 20}m{sess.cardioType ? ` · ${sess.cardioType}` : ''}</span>
-                          </span>
+                          <Badge className="max-w-full">
+                            <Flame className="h-3 w-3 shrink-0" aria-hidden="true" />
+                            <span className="truncate">
+                              有氧{sess.cardioMinutes || 20}m{sess.cardioType ? ` · ${sess.cardioType}` : ''}
+                            </span>
+                          </Badge>
                         ) : (
-                          <span className="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
-                            无有氧
-                          </span>
+                          <Badge className="text-ink-3">无有氧</Badge>
                         )}
-                      </div>
+                      </span>
 
                       {/* 折叠态摘要：容量 + 时长 + 动作列表 */}
-                      <p className="text-[11px] text-slate-500 truncate">
+                      <span className="block truncate text-sm2 text-ink-2">
                         共 {sess.exercises.length} 个动作 · {totalCompletedSets} 组完成
-                        {volStr && <> · <span className="font-bold text-slate-700">容量 {volStr}</span></>}
+                        {volStr && <> · <span className="font-semibold text-ink">容量 {volStr}</span></>}
                         {durMin !== null && <> · 用时 {durMin}分钟</>}
-                      </p>
-                      <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                      </span>
+                      <span className="mt-0.5 block truncate text-cap text-ink-3">
                         {sess.exercises.map(e => e.exerciseName).join('、')}
-                      </p>
-                    </div>
+                      </span>
+                    </button>
 
-                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                    <span className="flex shrink-0 items-center gap-1">
+                      <IconButton
+                        label="编辑该条训练记录"
+                        onClick={() => startEditSession(sess)}
+                      >
+                        <Pencil className="h-[18px] w-[18px]" />
+                      </IconButton>
+                      <IconButton
+                        label="删除该条训练记录"
+                        tone="danger"
+                        onClick={() => promptDeleteSession(sess.id, sess.planName, sess.date)}
+                      >
+                        <Trash2 className="h-[18px] w-[18px]" />
+                      </IconButton>
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          startEditSession(sess);
-                        }}
-                        className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
-                        title="编辑该条训练记录"
+                        onClick={() => toggleExpandSession(sess.id)}
+                        aria-label={isExpanded ? '收起该条训练明细' : '展开该条训练明细'}
+                        aria-expanded={isExpanded}
+                        className="flex h-11 w-11 items-center justify-center text-ink-3"
                       >
-                        <Pencil className="w-3.5 h-3.5" />
+                        {isExpanded
+                          ? <ChevronUp className="h-[18px] w-[18px]" aria-hidden="true" />
+                          : <ChevronDown className="h-[18px] w-[18px]" aria-hidden="true" />}
                       </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          promptDeleteSession(sess.id, sess.planName, sess.date);
-                        }}
-                        className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
-                        title="删除该条训练记录"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-
-                      <div className="flex items-center gap-1 text-[11px] font-bold text-blue-600 bg-blue-50/80 px-2 py-1 rounded-lg border border-blue-200/80">
-                        <span>{isExpanded ? '收起' : '展开'}</span>
-                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      </div>
-                    </div>
+                    </span>
                   </div>
 
                   {/* 展开内容区：具体动作与每组明细 */}
                   {isExpanded && (
-                    <div className="px-3.5 pb-3.5 pt-1 border-t border-slate-100 bg-slate-50/40 space-y-2.5">
-                      <div className="space-y-2 pt-2">
+                    <div className="animate-card-in space-y-2.5 border-t border-line px-3.5 pb-3.5 pt-3">
+                      <div className="space-y-2">
                         {sess.exercises.map((e, idx) => {
                           const completedSets = e.sets.filter(s => s.completed);
                           const unitStr = e.currentUnit === 'plates' ? '片' : e.currentUnit === 'assisted' ? '助力' : e.currentUnit === 'bodyweight' ? '自重' : 'kg';
-                          const pulleyStr = e.pulleyRatio && e.pulleyRatio !== 'none' ? ` (${e.pulleyRatio})` : '';
+                          const pulleyStr = e.pulleyRatio && e.pulleyRatio !== 'none' ? e.pulleyRatio : null;
 
                           return (
-                            <div key={idx} className="bg-white rounded-xl p-2.5 border border-slate-200/80 text-xs shadow-2xs">
-                              <div className="flex items-center justify-between font-bold text-slate-800 mb-1.5">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-slate-400 font-mono text-[10px]">{idx + 1}.</span>
-                                  <span className="text-slate-900">{e.exerciseName}</span>
-                                  {pulleyStr && (
-                                    <span className="text-[10px] text-purple-700 bg-purple-50 px-1 py-0.2 rounded border border-purple-200 font-normal">
-                                      {e.pulleyRatio}
-                                    </span>
-                                  )}
+                            <div key={idx} className="rounded-ctl border border-line bg-surface-subtle/50 p-2.5">
+                              <div className="mb-1.5 flex items-center justify-between gap-2">
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                  <NumberText size="sm" className="shrink-0 text-ink-3">{idx + 1}.</NumberText>
+                                  <span className="truncate text-body font-semibold text-ink">{e.exerciseName}</span>
+                                  {pulleyStr && <Badge className="shrink-0">{pulleyStr}</Badge>}
                                 </div>
-                                <span className="text-[11px] text-blue-700 font-semibold font-mono">
+                                <NumberText size="sm" className="shrink-0 text-ink-2">
                                   {completedSets.length} 组完成
-                                </span>
+                                </NumberText>
                               </div>
 
                               {/* 各组小标签 / 超级组大组阶梯流 */}
@@ -1186,19 +1224,25 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                                     return (
                                       <div
                                         key={sIdx}
-                                        className="w-full bg-slate-50/90 p-2 rounded-xl border border-slate-200/90 text-[11px] font-mono space-y-1.5"
+                                        className="w-full space-y-1.5 rounded-ctl border border-line bg-surface p-2"
                                       >
-                                        <div className="font-bold text-slate-800 flex items-center justify-between">
-                                          <span className="text-blue-700 font-sans font-black">第 {s.setNumber} 大组 (超级组)</span>
-                                          <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 font-sans font-semibold">
-                                            {s.dropStages.length}阶递减全部完成
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="flex items-center gap-1 text-sm2 font-semibold text-ink">
+                                            <Flame className="h-3 w-3 text-ink-3" aria-hidden="true" />
+                                            第 {s.setNumber} 大组 (超级组)
                                           </span>
+                                          <Badge tone="success">{s.dropStages.length}阶递减全部完成</Badge>
                                         </div>
-                                        <div className="flex flex-wrap items-center gap-1.5 text-slate-800">
+                                        <div className="flex flex-wrap items-center gap-1.5">
                                           {s.dropStages.map((stg, stgIdx) => (
-                                            <span key={stgIdx} className="bg-white px-2 py-0.5 rounded-lg border border-slate-200/80 font-bold shadow-2xs">
+                                            <span
+                                              key={stgIdx}
+                                              className="inline-flex items-center gap-1 rounded-[6px] bg-surface-subtle px-2 py-0.5 text-sm2 tabular-nums text-ink"
+                                            >
                                               {stg.weightOrPlates}{stg.unit || 'kg'} × {stg.reps}次
-                                              {stgIdx < s.dropStages!.length - 1 && <span className="text-slate-300 ml-1">➔</span>}
+                                              {stgIdx < s.dropStages!.length - 1 && (
+                                                <span className="text-ink-3" aria-hidden="true">→</span>
+                                              )}
                                             </span>
                                           ))}
                                         </div>
@@ -1209,7 +1253,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                                   return (
                                     <span
                                       key={sIdx}
-                                      className="bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200 text-[11px] font-mono text-slate-700 font-medium"
+                                      className="rounded-[6px] border border-line bg-surface px-2 py-0.5 text-sm2 tabular-nums text-ink-2"
                                     >
                                       {s.unilateral && s.left && s.right
                                         ? `左${s.left.weight}×${s.left.reps} / 右${s.right.weight}×${s.right.reps}${unitStr}`
@@ -1220,7 +1264,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                               </div>
 
                               {e.notes && (
-                                <p className="mt-1.5 text-[10px] text-slate-400 italic">“{e.notes}”</p>
+                                <p className="mt-1.5 text-cap italic text-ink-3">“{e.notes}”</p>
                               )}
                             </div>
                           );
@@ -1229,8 +1273,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
                       {/* 有氧明细 */}
                       {sess.cardioCompleted && (
-                        <div className="p-2.5 bg-pink-50/70 border border-pink-200 rounded-xl flex items-start gap-1.5 text-xs text-pink-900">
-                          <Flame className="w-3.5 h-3.5 text-pink-600 shrink-0 mt-0.5" />
+                        <div className="flex items-start gap-1.5 rounded-ctl bg-surface-subtle px-3 py-2 text-sm2 text-ink-2">
+                          <Flame className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
                           <span>
                             有氧 {sess.cardioMinutes || 20} 分钟
                             {sess.cardioType ? ` · ${sess.cardioType}` : ''}
@@ -1241,14 +1285,14 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
                       {/* 训练备注 */}
                       {sess.notes && (
-                        <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded-xl flex items-start gap-1.5 text-xs text-blue-900">
-                          <MessageSquare className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
+                        <div className="flex items-start gap-1.5 rounded-ctl bg-surface-subtle px-3 py-2 text-sm2 text-ink-2">
+                          <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
                           <span>{sess.notes}</span>
                         </div>
                       )}
                     </div>
                   )}
-                </div>
+                </Card>
               );
             })
           )}
@@ -1260,28 +1304,27 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         <div className="space-y-4">
           {/* 趋势洞察横幅 */}
           {trendInsight && (
-            <div className={`p-2.5 text-xs border rounded-xl flex items-center gap-2 ${
-              trendInsight.good
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                : 'bg-amber-50 text-amber-800 border-amber-200'
-            }`}>
-              <Zap className="w-4 h-4 shrink-0" />
-              <span className="font-bold">趋势洞察：{trendInsight.text}</span>
+            <div className={cx(
+              'flex items-center gap-2 rounded-ctl border border-line px-3 py-2.5 text-sm2',
+              trendInsight.good ? 'bg-success-soft text-success' : 'bg-warning-soft text-warning',
+            )}>
+              <Zap className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="font-semibold">趋势洞察：{trendInsight.text}</span>
             </div>
           )}
 
           {/* 打卡今日体重与饮食卡片 */}
-          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Scale className="w-4 h-4 text-emerald-600" />
-                <h3 className="text-sm font-bold text-slate-900">打卡今日体重与饮食</h3>
+          <Card className="p-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <Scale className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+                <h3 className="truncate text-h2 font-semibold text-ink">打卡今日体重与饮食</h3>
               </div>
               {existingTodayLog && !isEditingExisting && (
                 <button
                   type="button"
                   onClick={() => setIsEditingExisting(true)}
-                  className="text-xs text-blue-600 hover:text-blue-700 font-bold hover:underline"
+                  className="h-11 shrink-0 px-1 text-sm2 font-semibold text-accent"
                 >
                   修改该日打卡
                 </button>
@@ -1289,199 +1332,176 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </div>
 
             {formError && (
-              <p className="mb-2.5 text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+              <p className="mb-2.5 rounded-ctl bg-danger-soft px-3 py-2 text-sm2 font-semibold text-danger">
                 {formError}
               </p>
             )}
 
             <form onSubmit={handleAddLog} className="space-y-3">
-              <div className="grid grid-cols-12 gap-2">
-                <div className="col-span-5">
-                  <label className="text-[11px] text-slate-500 block mb-1">体重 (kg)</label>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={inputWeight}
-                      disabled={isAlreadyLogged}
-                      onChange={(e) => setInputWeight(e.target.value)}
-                      className={`w-full border rounded-xl px-3 py-2 text-base font-extrabold text-slate-900 focus:outline-none focus:border-emerald-500 ${
-                        isAlreadyLogged ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
-                      }`}
-                    />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">kg</span>
-                  </div>
-                </div>
-
-                <div className="col-span-7">
-                  <label className="text-[11px] text-slate-500 block mb-1">记录时段</label>
-                  <div className="grid grid-cols-3 gap-1">
-                    {[
-                      { key: 'morning', label: '晨起空腹' },
-                      { key: 'post-workout', label: '练后即刻' },
-                      { key: 'evening', label: '晚间睡前' },
-                    ].map((s) => (
-                      <button
-                        key={s.key}
-                        type="button"
-                        disabled={isAlreadyLogged}
-                        onClick={() => setInputSlot(s.key as 'morning' | 'evening' | 'post-workout')}
-                        className={`py-2 rounded-xl text-[11px] font-semibold transition-all ${
-                          inputSlot === s.key
-                            ? 'bg-emerald-600 text-white font-bold shadow-sm'
-                            : isAlreadyLogged
-                            ? 'bg-slate-100 text-slate-300 border border-slate-200'
-                            : 'bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200'
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
+              <div>
+                <label htmlFor="weight-input" className="mb-1 block text-cap font-semibold text-ink-2">体重 (kg)</label>
+                <div className="relative">
+                  <input
+                    id="weight-input"
+                    type="number"
+                    step="0.1"
+                    inputMode="decimal"
+                    value={inputWeight}
+                    disabled={isAlreadyLogged}
+                    onChange={(e) => setInputWeight(e.target.value)}
+                    className={cx(fieldCls, 'pr-10 tabular-nums disabled:opacity-60', isAlreadyLogged && 'bg-surface-subtle text-ink-3')}
+                  />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm2 font-semibold text-ink-3">kg</span>
                 </div>
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-500 block mb-1">饮食与生活日记 (饮食摄入、精神状态等)</label>
+                <p className="mb-1.5 text-cap font-semibold text-ink-2">记录时段</p>
+                <SegmentedControl
+                  label="记录时段"
+                  value={inputSlot}
+                  onChange={setInputSlot}
+                  options={SLOT_OPTIONS}
+                  disabled={isAlreadyLogged}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="weight-note" className="mb-1 block text-cap font-semibold text-ink-2">
+                  饮食与生活日记 (饮食摄入、精神状态等)
+                </label>
                 <input
+                  id="weight-note"
                   type="text"
                   value={inputNote}
                   disabled={isAlreadyLogged}
                   onChange={(e) => setInputNote(e.target.value)}
                   placeholder="例如: 晚上吃了鸡公煲，蛋白质充足；昨晚深蹲膝盖微酸..."
-                  className={`w-full border rounded-xl px-3 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-500 ${
-                    isAlreadyLogged ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
-                  }`}
+                  className={cx(fieldCls, 'disabled:opacity-60', isAlreadyLogged && 'bg-surface-subtle text-ink-3')}
                 />
               </div>
 
-              <div className="flex items-center justify-between pt-1">
+              <div className="flex items-center justify-between gap-2 pt-1">
                 <input
                   type="date"
+                  aria-label="打卡日期"
                   value={inputDate}
                   onChange={(e) => setInputDate(e.target.value)}
-                  className="bg-slate-100 text-slate-700 text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 font-medium"
+                  className="h-11 min-w-0 rounded-ctl border border-line bg-surface-subtle px-2.5 text-sm2 text-ink focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15"
                 />
 
                 {isAlreadyLogged ? (
-                  <button
-                    type="button"
-                    disabled
-                    className="px-5 py-2 bg-slate-100 text-slate-400 border border-slate-200 rounded-xl text-xs font-bold cursor-not-allowed flex items-center gap-1.5 transition-all"
-                  >
-                    <Check className="w-3.5 h-3.5 text-emerald-500 stroke-[3]" /> 今日已打卡
-                  </button>
+                  <Button variant="secondary" disabled>
+                    <Check className="h-4 w-4" aria-hidden="true" /> 今日已打卡
+                  </Button>
                 ) : (
-                  <button
-                    type="submit"
-                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center gap-1.5 active:scale-95 transition-all"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> 记录打卡
-                  </button>
+                  // 每日高频动作用 primary；备份导出在页面底部另一屏，同为 primary 不构成同屏冲突
+                  <Button type="submit" variant="primary">
+                    <Plus className="h-4 w-4" aria-hidden="true" /> 记录打卡
+                  </Button>
                 )}
               </div>
             </form>
-          </div>
+          </Card>
 
           {/* 体重看板：今日 / 变化 / 目标（今天未记录时保持空） */}
           <div className="grid grid-cols-3 gap-2">
-            <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
-              <span className="text-[11px] text-slate-500 font-medium">今日体重</span>
+            <Card className="min-w-0 p-3">
+              <span className="block truncate text-cap font-medium text-ink-3">今日体重</span>
               {latestWeight !== undefined ? (
-                <div className="flex items-baseline gap-1 mt-1">
-                  <span className="text-2xl font-black text-slate-900 font-mono">{latestWeight}</span>
-                  <span className="text-xs text-slate-400">kg</span>
+                <div className="mt-1 flex items-baseline gap-1">
+                  <NumberText size="lg" className="font-bold text-ink">{latestWeight}</NumberText>
+                  <span className="text-sm2 text-ink-3">kg</span>
                 </div>
               ) : (
-                <div className="mt-2 text-base font-semibold text-slate-300">—</div>
+                <div className="mt-2 text-body font-semibold text-ink-3">—</div>
               )}
-            </div>
+            </Card>
 
-            <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
-              <span className="text-[11px] text-slate-500 font-medium">较上一次</span>
-              <div className="flex items-center gap-1.5 mt-1.5">
+            <Card className="min-w-0 p-3">
+              <span className="block truncate text-cap font-medium text-ink-3">较上一次</span>
+              <div className="mt-1.5 flex items-center gap-1.5">
                 {weightDiff === null ? (
-                  <span className="text-sm font-semibold text-slate-300">—</span>
+                  <span className="text-sm2 font-semibold text-ink-3">—</span>
                 ) : parseFloat(weightDiff) > 0 ? (
                   <>
-                    <TrendingUp className="w-4 h-4 text-amber-600" />
-                    <span className="text-base font-bold text-amber-600">+{weightDiff}</span>
+                    <TrendingUp className="h-4 w-4 text-warning" aria-hidden="true" />
+                    <NumberText size="sm" className="text-warning">+{weightDiff}</NumberText>
                   </>
                 ) : parseFloat(weightDiff) < 0 ? (
                   <>
-                    <TrendingDown className="w-4 h-4 text-emerald-600" />
-                    <span className="text-base font-bold text-emerald-600">{weightDiff}</span>
+                    <TrendingDown className="h-4 w-4 text-success" aria-hidden="true" />
+                    <NumberText size="sm" className="text-success">{weightDiff}</NumberText>
                   </>
                 ) : (
-                  <span className="text-sm font-semibold text-slate-400">持平</span>
+                  <span className="text-sm2 font-semibold text-ink-3">持平</span>
                 )}
               </div>
-            </div>
+            </Card>
 
-            <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-sm">
-              <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
-                <Target className="w-3 h-3 text-blue-600" /> 目标体重
+            <Card className="min-w-0 p-3">
+              <span className="flex items-center gap-1 text-cap font-medium text-ink-3">
+                <Target className="h-3 w-3 shrink-0" aria-hidden="true" /> 目标体重
               </span>
               {weightGoal !== null ? (
                 <div className="mt-1">
-                  <span className="text-2xl font-black text-blue-700 font-mono">{weightGoal}</span>
-                  <span className="text-xs text-slate-400">kg</span>
+                  <span className="flex items-baseline gap-1">
+                    <NumberText size="lg" className="font-bold text-ink">{weightGoal}</NumberText>
+                    <span className="text-sm2 text-ink-3">kg</span>
+                  </span>
                   {goalDiff !== null && (
-                    <div className={`text-[10px] font-bold mt-0.5 ${goalDiff > 0 ? 'text-amber-600' : goalDiff < 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
-                      {goalDiff > 0 ? `还差 ${goalDiff}kg` : goalDiff < 0 ? `已超目标 ${Math.abs(goalDiff)}kg 🎉` : '已达标 🎉'}
-                    </div>
+                    <span className={cx(
+                      'mt-0.5 block text-cap font-semibold',
+                      goalDiff > 0 ? 'text-warning' : goalDiff < 0 ? 'text-success' : 'text-ink-3',
+                    )}>
+                      {goalDiff > 0 ? `还差 ${goalDiff}kg` : goalDiff < 0 ? `已超目标 ${Math.abs(goalDiff)}kg` : '已达标'}
+                    </span>
                   )}
                 </div>
               ) : (
                 <button
                   type="button"
                   onClick={() => { setGoalInput(''); setShowGoalEditor(true); }}
-                  className="mt-1.5 text-xs text-blue-600 font-bold underline"
+                  className="mt-1 h-11 text-sm2 font-semibold text-accent underline"
                 >
                   设定目标
                 </button>
               )}
-            </div>
+            </Card>
           </div>
 
           {/* 目标编辑行（竖排：输入一行 + 按钮一行，杜绝小屏横向溢出） */}
           {showGoalEditor && (
-            <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3 space-y-2 animate-card-in">
+            <Card className="animate-card-in space-y-2 p-3">
               <div className="flex items-center gap-2">
                 <input
                   type="number"
                   step="0.1"
+                  inputMode="decimal"
+                  aria-label="目标体重"
                   value={goalInput}
                   onChange={(e) => setGoalInput(e.target.value)}
                   placeholder={weightGoal !== null ? `当前 ${weightGoal}` : '例如 65'}
-                  className="flex-1 min-w-0 bg-white border border-blue-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                  className={cx(fieldCls, 'min-w-0 flex-1 tabular-nums')}
                 />
-                <span className="text-xs text-slate-500 shrink-0">kg</span>
+                <span className="shrink-0 text-sm2 text-ink-2">kg</span>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowGoalEditor(false)}
-                  className="py-2.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold"
-                >
+                <Button variant="ghost" onClick={() => setShowGoalEditor(false)}>
                   取消
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveGoal}
-                  className="py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95"
-                >
+                </Button>
+                <Button variant="outline" onClick={handleSaveGoal}>
                   保存目标
-                </button>
+                </Button>
               </div>
-            </div>
+            </Card>
           )}
           {weightGoal !== null && !showGoalEditor && (
-            <div className="flex justify-end -mt-2">
+            <div className="-mt-2 flex justify-end">
               <button
                 type="button"
                 onClick={() => { setGoalInput(String(weightGoal)); setShowGoalEditor(true); }}
-                className="text-[11px] text-slate-400 hover:text-blue-600 underline"
+                className="h-11 px-1 text-sm2 text-ink-3 underline"
               >
                 修改目标
               </button>
@@ -1489,97 +1509,61 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           )}
 
           {/* 体重波动曲线图 */}
-          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm space-y-3">
+          <Card className="space-y-3 p-4">
             {/* 顶栏：标题与视图切换按钮 */}
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <span className="text-xs font-black text-slate-900 flex items-center gap-1">
-                  <TrendingDown className="w-3.5 h-3.5 text-emerald-600" /> 体重波动曲线
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <span className="flex items-center gap-1.5 text-h2 font-semibold text-ink">
+                  <TrendingDown className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" /> 体重波动曲线
                 </span>
-                <span className="text-[10px] text-slate-400">平滑贝塞尔走势{weightGoal !== null ? ' · 蓝色虚线为目标' : ''}</span>
+                <span className="text-cap text-ink-3">平滑贝塞尔走势{weightGoal !== null ? ' · 蓝色虚线为目标' : ''}</span>
               </div>
 
               {/* 周期切换: 周视图 / 月视图 / 全部 */}
-              <div className="bg-slate-200/80 p-0.5 rounded-xl flex items-center border border-slate-300/80 text-[11px] gap-0.5">
-                <button
-                  type="button"
-                  onClick={() => setChartViewSpan('week')}
-                  className={`px-2.5 py-1 rounded-lg font-black transition-all active:scale-95 ${
-                    chartViewSpan === 'week'
-                      ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-                >
-                  周
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setChartViewSpan('month')}
-                  className={`px-2.5 py-1 rounded-lg font-black transition-all active:scale-95 ${
-                    chartViewSpan === 'month'
-                      ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-                >
-                  月
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setChartViewSpan('all')}
-                  className={`px-2.5 py-1 rounded-lg font-black transition-all active:scale-95 ${
-                    chartViewSpan === 'all'
-                      ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-                >
-                  全部
-                </button>
-              </div>
+              <SegmentedControl
+                label="曲线周期"
+                className="w-[168px] shrink-0"
+                value={chartViewSpan}
+                onChange={setChartViewSpan}
+                options={CHART_SPAN_OPTIONS}
+              />
             </div>
 
             {/* 动态视图说明横幅 */}
-            <div className={`text-[11px] font-bold px-2.5 py-1 rounded-lg flex items-center justify-between border transition-all ${
-              chartViewSpan === 'week'
-                ? 'bg-emerald-50/90 text-emerald-800 border-emerald-200/80'
-                : chartViewSpan === 'month'
-                ? 'bg-blue-50/90 text-blue-800 border-blue-200/80'
-                : 'bg-purple-50/90 text-purple-800 border-purple-200/80'
-            }`}>
-              <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
-                <span>
-                  {chartViewSpan === 'week' && '周视图：近7日走势'}
-                  {chartViewSpan === 'month' && '月视图：过去30天走势'}
-                  {chartViewSpan === 'all' && '全部历史：全周期累计数据'}
-                </span>
-              </div>
-              <span className="font-mono text-[10px] opacity-80">
-                {filteredChartWeights.length} 条
+            <div className="flex items-center justify-between gap-2 rounded-ctl bg-surface-subtle px-3 py-2 text-sm2 text-ink-2">
+              <span>
+                {chartViewSpan === 'week' && '周视图：近7日走势'}
+                {chartViewSpan === 'month' && '月视图：过去30天走势'}
+                {chartViewSpan === 'all' && '全部历史：全周期累计数据'}
               </span>
+              <NumberText size="sm" className="shrink-0 text-ink-3">
+                {filteredChartWeights.length} 条
+              </NumberText>
             </div>
 
             {/* 区间统计指标指示条 */}
             {chartStats && (
-              <div className="grid grid-cols-4 gap-1.5 py-2 px-2.5 bg-slate-50 rounded-xl border border-slate-200/70 text-center">
+              <div className="grid grid-cols-4 gap-1.5 rounded-ctl border border-line bg-surface-subtle/60 px-2.5 py-2 text-center">
                 <div>
-                  <span className="text-[10px] text-slate-400 block">最低</span>
-                  <span className="text-xs font-bold text-emerald-600 font-mono">{chartStats.min}kg</span>
+                  <span className="block text-cap text-ink-3">最低</span>
+                  <NumberText size="sm" className="text-ink">{chartStats.min}kg</NumberText>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 block">最高</span>
-                  <span className="text-xs font-bold text-slate-700 font-mono">{chartStats.max}kg</span>
+                  <span className="block text-cap text-ink-3">最高</span>
+                  <NumberText size="sm" className="text-ink">{chartStats.max}kg</NumberText>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 block">平均</span>
-                  <span className="text-xs font-bold text-slate-700 font-mono">{chartStats.avg}kg</span>
+                  <span className="block text-cap text-ink-3">平均</span>
+                  <NumberText size="sm" className="text-ink">{chartStats.avg}kg</NumberText>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 block">净变</span>
-                  <span className={`text-xs font-bold font-mono ${
-                    chartStats.netChange > 0 ? 'text-amber-600' : chartStats.netChange < 0 ? 'text-emerald-600' : 'text-slate-500'
-                  }`}>
+                  <span className="block text-cap text-ink-3">净变</span>
+                  <NumberText
+                    size="sm"
+                    className={chartStats.netChange > 0 ? 'text-warning' : chartStats.netChange < 0 ? 'text-success' : 'text-ink-2'}
+                  >
                     {chartStats.netChange > 0 ? `+${chartStats.netChange}` : chartStats.netChange}kg
-                  </span>
+                  </NumberText>
                 </div>
               </div>
             )}
@@ -1589,31 +1573,33 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
               <div className="w-full overflow-hidden pt-1">
                 <svg
                   viewBox={`0 0 ${svgData.width} ${svgData.height}`}
-                  className="w-full h-36 select-none"
+                  className="h-36 w-full select-none"
+                  role="img"
+                  aria-label={`体重走势，共 ${svgData.points.length} 个记录点`}
                 >
                   <defs>
                     <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#10b981" stopOpacity="0.25" />
-                      <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
+                      <stop offset="0%" stopColor="rgb(var(--c-success))" stopOpacity="0.22" />
+                      <stop offset="100%" stopColor="rgb(var(--c-success))" stopOpacity="0.0" />
                     </linearGradient>
                   </defs>
 
                   {/* 背景参考横虚线 */}
-                  <line x1="36" y1="30" x2="336" y2="30" stroke="#f1f5f9" strokeDasharray="3 3" strokeWidth="1" />
-                  <line x1="36" y1="75" x2="336" y2="75" stroke="#f1f5f9" strokeDasharray="3 3" strokeWidth="1" />
-                  <line x1="36" y1="120" x2="336" y2="120" stroke="#f1f5f9" strokeDasharray="3 3" strokeWidth="1" />
+                  <line x1="36" y1="30" x2="336" y2="30" stroke="rgb(var(--c-line))" strokeDasharray="3 3" strokeWidth="1" />
+                  <line x1="36" y1="75" x2="336" y2="75" stroke="rgb(var(--c-line))" strokeDasharray="3 3" strokeWidth="1" />
+                  <line x1="36" y1="120" x2="336" y2="120" stroke="rgb(var(--c-line))" strokeDasharray="3 3" strokeWidth="1" />
 
                   {/* 目标体重虚线 */}
                   {svgData.goalY !== null && weightGoal !== null && (
                     <g>
                       <line
                         x1="36" y1={svgData.goalY} x2="336" y2={svgData.goalY}
-                        stroke="#3b82f6" strokeDasharray="5 4" strokeWidth="1.5"
+                        stroke="rgb(var(--c-accent))" strokeDasharray="5 4" strokeWidth="1.5"
                       />
                       <text
                         x="336" y={svgData.goalY - 5}
-                        textAnchor="end" fontSize="9" fontWeight="bold" fill="#3b82f6"
-                        className="font-mono"
+                        textAnchor="end" fontSize="12" fontWeight="600"
+                        fill="rgb(var(--c-accent))"
                       >
                         目标 {weightGoal}
                       </text>
@@ -1627,7 +1613,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   <path
                     d={svgData.linePath}
                     fill="none"
-                    stroke="#10b981"
+                    stroke="rgb(var(--c-success))"
                     strokeWidth="2.5"
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -1636,16 +1622,15 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   {/* 节点高亮圆点与文字标注 */}
                   {svgData.points.map((p, idx) => (
                     <g key={idx}>
-                      <circle cx={p.x} cy={p.y} r="5" fill="#10b981" fillOpacity="0.15" />
-                      <circle cx={p.x} cy={p.y} r="3" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" />
+                      <circle cx={p.x} cy={p.y} r="5" fill="rgb(var(--c-success))" fillOpacity="0.15" />
+                      <circle cx={p.x} cy={p.y} r="3" fill="rgb(var(--c-success))" stroke="rgb(var(--c-surface))" strokeWidth="1.5" />
                       <text
                         x={p.x}
                         y={p.y - 8}
                         textAnchor="middle"
-                        fontSize="10"
-                        fontWeight="bold"
-                        fill="#0f172a"
-                        className="font-mono"
+                        fontSize="12"
+                        fontWeight="600"
+                        fill="rgb(var(--c-ink))"
                       >
                         {p.weight}
                       </text>
@@ -1653,9 +1638,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                         x={p.x}
                         y={svgData.height - 8}
                         textAnchor="middle"
-                        fontSize="9"
-                        fill="#94a3b8"
-                        className="font-mono"
+                        fontSize="12"
+                        fill="rgb(var(--c-ink-3))"
                       >
                         {p.date}
                       </text>
@@ -1664,55 +1648,40 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 </svg>
               </div>
             ) : (
-              <div className="text-center py-8 text-slate-400 text-xs bg-slate-50 rounded-xl">
+              <div className="rounded-ctl bg-surface-subtle px-4 py-8 text-center text-body text-ink-2">
                 该周期内暂无体重数据
               </div>
             )}
-          </div>
+          </Card>
 
           {renderWeightCal()}
 
           {/* 历史打卡日志列表 */}
           <div>
-            <div className="flex items-center justify-between gap-2 mb-2.5 px-1 flex-wrap">
-              <h3 className="text-sm font-bold text-slate-800 shrink-0">体重与日记记录</h3>
-              <div className="flex items-center gap-1 flex-wrap">
-                <div className="flex items-center gap-1 bg-slate-200/70 p-0.5 rounded-xl border border-slate-300/60 text-[10px] font-bold">
-                  {([
-                    { key: 'all', label: '全部' },
-                    { key: 'morning', label: '晨起' },
-                    { key: 'post-workout', label: '练后' },
-                    { key: 'evening', label: '晚间' },
-                  ] as const).map(f => (
-                    <button
-                      key={f.key}
-                      type="button"
-                      onClick={() => setSlotFilter(f.key)}
-                      className={`px-2 py-0.5 rounded-lg transition-all ${
-                        slotFilter === f.key ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'
-                      }`}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-                <span className="text-xs text-slate-400 ml-1">共 {visibleWeights.length} 条</span>
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="shrink-0 text-h2 font-semibold text-ink">体重与日记记录</h3>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <SegmentedControl
+                  label="记录时段筛选"
+                  className="w-[248px] max-w-full"
+                  value={slotFilter}
+                  onChange={setSlotFilter}
+                  options={SLOT_FILTER_OPTIONS}
+                />
+                <span className="text-sm2 text-ink-3">共 {visibleWeights.length} 条</span>
               </div>
             </div>
 
             <div className="space-y-2">
               {visibleWeights.map((log) => (
-                <div
-                  key={log.id}
-                  className="bg-white border border-slate-200/90 rounded-xl p-3 shadow-sm flex items-start justify-between gap-3 hover:border-slate-300 transition-all"
-                >
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base font-black text-slate-900 font-mono">{log.weight} kg</span>
+                <Card key={log.id} className="flex items-start justify-between gap-3 p-3">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <NumberText size="md" className="text-ink">{log.weight} kg</NumberText>
                       <button
                         type="button"
                         onClick={() => setSlotFilter(log.timeSlot || 'morning')}
-                        className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 font-medium hover:bg-emerald-50 hover:text-emerald-700"
+                        className="h-11 rounded-full bg-surface-subtle px-3 text-cap font-semibold text-ink-2"
                         title="按此时段过滤"
                       >
                         {SLOT_SHORT[log.timeSlot || 'morning']}
@@ -1720,7 +1689,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       <button
                         type="button"
                         onClick={() => setInputDate(log.date)}
-                        className="text-xs text-slate-400 font-medium hover:text-blue-600 hover:underline"
+                        className="h-11 px-2 text-sm2 font-medium text-ink-3 underline"
                         title="跳到该日期打卡"
                       >
                         {log.date}
@@ -1728,27 +1697,26 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                     </div>
 
                     {log.note && (
-                      <div className="flex items-start gap-1.5 text-xs text-emerald-800 bg-emerald-50/80 px-2.5 py-1.5 rounded-lg border border-emerald-200">
-                        <MessageSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                      <div className="flex items-start gap-1.5 rounded-ctl bg-surface-subtle px-2.5 py-1.5 text-sm2 text-ink-2">
+                        <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
                         <span>{log.note}</span>
                       </div>
                     )}
                   </div>
 
-                  <button
-                    type="button"
+                  <IconButton
+                    label="删除此条体重记录"
+                    tone="danger"
                     onClick={() => promptDeleteWeight(log.id, log.date, log.weight)}
-                    className="p-1.5 text-slate-300 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
-                    title="删除此条记录"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                    <Trash2 className="h-[18px] w-[18px]" />
+                  </IconButton>
+                </Card>
               ))}
               {visibleWeights.length === 0 && (
-                <div className="text-center py-8 bg-white border border-slate-200 rounded-xl text-slate-400 text-xs">
-                  当前筛选下没有记录
-                </div>
+                <Card className="px-4 py-8 text-center">
+                  <p className="text-body text-ink-2">当前筛选下没有记录</p>
+                </Card>
               )}
             </div>
           </div>
@@ -1756,156 +1724,151 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       )}
 
       {/* 数据安全与备份中心 */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm mt-4">
-        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">本地数据中心与备份</h3>
-        <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+      <Card className="p-4">
+        <h3 className="mb-2 text-h2 font-semibold text-ink">本地数据中心与备份</h3>
+        <p className="mb-3 text-sm2 leading-relaxed text-ink-2">
           所有计划、训练动作与体重日记 100% 保存在本地。可随时导出 JSON 备份，或导入备份文件恢复数据。
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <button
-            onClick={handleExportBackup}
-            className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-1.5 transition-all"
-          >
-            <Download className="w-3.5 h-3.5 text-blue-600" /> 导出 JSON 备份
-          </button>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <Button variant="primary" onClick={handleExportBackup}>
+            <Download className="h-4 w-4" aria-hidden="true" /> 导出 JSON 备份
+          </Button>
 
-          <label className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-1.5 transition-all cursor-pointer">
-            <Upload className="w-3.5 h-3.5 text-emerald-600" /> 导入恢复备份
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleImportBackup}
-              className="hidden"
-            />
-          </label>
+          <Button
+            variant="secondary"
+            onClick={() => document.getElementById('journal-import-file')?.click()}
+          >
+            <Upload className="h-4 w-4" aria-hidden="true" /> 导入恢复备份
+          </Button>
+          <input
+            id="journal-import-file"
+            type="file"
+            accept=".json"
+            aria-label="导入恢复备份"
+            onChange={handleImportBackup}
+            className="hidden"
+          />
         </div>
 
         {backupStatus && (
           <div
-            className={`mt-2 px-3 py-2 rounded-xl border text-[11px] font-bold flex items-start gap-1.5 ${
+            className={cx(
+              'mt-2 flex items-start gap-1.5 rounded-ctl px-3 py-2 text-sm2 font-semibold',
               backupStatus.type === 'success'
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                : 'bg-red-50 border-red-200 text-red-700'
-            }`}
+                ? 'bg-success-soft text-success'
+                : 'bg-danger-soft text-danger',
+            )}
           >
             {backupStatus.type === 'success' ? (
-              <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-px" />
+              <CheckCircle2 className="mt-px h-4 w-4 shrink-0" aria-hidden="true" />
             ) : (
-              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+              <AlertCircle className="mt-px h-4 w-4 shrink-0" aria-hidden="true" />
             )}
             <span className="break-all">{backupStatus.message}</span>
           </div>
         )}
-      </div>
+      </Card>
 
-      {/* 历史训练编辑弹窗（z-70，同 id 写回；休息日仅备注可改） */}
-      {editingSession && (
-        <div
-          className="fixed inset-0 z-[70] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)] animate-fade-in"
-          onClick={cancelEditSession}
-        >
-          <div
-            className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col shadow-2xl animate-sheet-up"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* 弹窗头部 */}
-            <div className="p-4 border-b border-slate-100 flex items-start justify-between gap-2 shrink-0">
-              <div className="min-w-0 flex-1">
+      {/* 历史训练编辑弹窗（同 id 写回；休息日仅备注可改）
+          规范 5.4 只允许一层 sheet：规格 / 换动作 / 新增动作弹层打开时先隐藏本层，
+          关掉上层后自动回到编辑态（编辑草稿仍在 state 中）。 */}
+      <Sheet
+        open={editingSession !== null && editSpecExIdx === null && replaceExIdx === null && !addExOpen}
+        onClose={cancelEditSession}
+        title="编辑训练记录"
+        description={editingSession ? `${editingSession.date}${editingSession.isRestDay ? ' · 休息日' : ''}` : undefined}
+        size="lg"
+        footer={
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="secondary" onClick={cancelEditSession}>
+              取消
+            </Button>
+            <Button variant="primary" onClick={saveEditSession}>
+              保存修改
+            </Button>
+          </div>
+        }
+      >
+        {editingSession && (() => {
+          return (
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="edit-session-name" className="mb-1 block text-cap font-semibold text-ink-2">训练记录名称</label>
                 <input
+                  id="edit-session-name"
                   type="text"
                   value={editingSession.planName}
                   onChange={(e) => patchEditing(d => { d.planName = e.target.value; })}
                   placeholder="训练记录名称"
-                  className="w-full bg-transparent font-black text-slate-900 text-sm focus:outline-none focus:border-b focus:border-blue-500 min-w-0 px-0.5 -mx-0.5"
+                  className={fieldCls}
                 />
-                <p className="text-[11px] text-slate-400 font-mono mt-0.5">{editingSession.date}</p>
               </div>
-              <button
-                type="button"
-                onClick={cancelEditSession}
-                className="text-xs text-slate-500 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg font-bold shrink-0"
-              >
-                关闭
-              </button>
-            </div>
 
-            {/* 弹窗内容（可滚动） */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0 modal-scroll overscroll-contain">
               <div>
-                <label className="text-[11px] text-slate-500 block mb-1">训练备注</label>
+                <label htmlFor="edit-session-notes" className="mb-1 block text-cap font-semibold text-ink-2">训练备注</label>
                 <textarea
+                  id="edit-session-notes"
                   rows={2}
                   value={editingSession.notes || ''}
                   onChange={(e) => editSessionNotes(e.target.value)}
                   placeholder="记录当日状态、器械手感等..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+                  className="w-full rounded-ctl border border-line bg-surface-subtle p-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15"
                 />
               </div>
 
               {/* 有氧编辑：无有氧 / 有有氧 + 自定义时长、类型、备注 */}
               {!editingSession.isRestDay && (
-                <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2.5">
+                <div className="space-y-2.5 rounded-ctl border border-line bg-surface-subtle/60 p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
-                      <Flame className="w-3.5 h-3.5 text-pink-600" /> 有氧
+                    <span className="flex items-center gap-1.5 text-body font-semibold text-ink">
+                      <Flame className="h-4 w-4 text-ink-3" aria-hidden="true" /> 有氧
                     </span>
-                    <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
-                      <button
-                        type="button"
-                        onClick={() => editCardioMode(false)}
-                        className={`px-3 py-1.5 rounded-md text-[11px] transition-all ${
-                          !editingSession.cardioCompleted
-                            ? 'bg-white text-slate-900 font-bold shadow-sm'
-                            : 'text-slate-500 font-medium'
-                        }`}
-                      >
-                        无有氧
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => editCardioMode(true)}
-                        className={`px-3 py-1.5 rounded-md text-[11px] transition-all ${
-                          editingSession.cardioCompleted
-                            ? 'bg-white text-pink-700 font-bold shadow-sm'
-                            : 'text-slate-500 font-medium'
-                        }`}
-                      >
-                        有有氧
-                      </button>
-                    </div>
+                    <span className="text-sm2 text-ink-3">
+                      {editingSession.cardioCompleted ? '有有氧' : '无有氧'}
+                    </span>
                   </div>
+                  <SegmentedControl
+                    label="有氧安排"
+                    value={editingSession.cardioCompleted ? 'yes' : 'none'}
+                    onChange={(value) => editCardioMode(value === 'yes')}
+                    options={CARDIO_MODE_OPTIONS}
+                  />
                   {editingSession.cardioCompleted && (
                     <>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-[10px] text-slate-400 mb-1">时长（分钟）</label>
+                          <label htmlFor="edit-cardio-minutes" className="mb-1 block text-cap font-semibold text-ink-2">时长（分钟）</label>
                           <input
+                            id="edit-cardio-minutes"
                             type="number"
                             min={1}
                             max={300}
+                            inputMode="numeric"
                             value={editingSession.cardioMinutes || ''}
                             onChange={(e) => editCardioMinutes(parseInt(e.target.value) || 0)}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-pink-500 focus:bg-white"
+                            className={cx(fieldCls, 'tabular-nums')}
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-slate-400 mb-1">类型</label>
+                          <label htmlFor="edit-cardio-type" className="mb-1 block text-cap font-semibold text-ink-2">类型</label>
                           <input
+                            id="edit-cardio-type"
                             type="text"
                             value={editingSession.cardioType || ''}
                             onChange={(e) => editCardioType(e.target.value)}
                             placeholder="跑步机坡度快走"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-pink-500 focus:bg-white"
+                            className={fieldCls}
                           />
                         </div>
                       </div>
                       <input
                         type="text"
+                        aria-label="有氧备注"
                         value={editingSession.cardioNotes || ''}
                         onChange={(e) => editCardioNotes(e.target.value)}
                         placeholder="有氧备注，例如坡度/速度/感受（可留空）"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-pink-500 focus:bg-white"
+                        className={fieldCls}
                       />
                     </>
                   )}
@@ -1919,54 +1882,52 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 // 该动作是否已按超级组编排（任一组带超级组标记）
                 const isDrop = e.sets.some(s => s.isDropSet);
                 return (
-                  <div key={exIdx} className="bg-slate-50/70 border border-slate-200 rounded-xl p-2.5 space-y-2">
+                  <div key={exIdx} className="space-y-2 rounded-ctl border border-line bg-surface-subtle/60 p-3">
                     {/* 动作名：可直接改名（仅改本条记录） */}
-                    <input
-                      type="text"
-                      value={e.exerciseName}
-                      onChange={(ev) => editExerciseName(exIdx, ev.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500 min-w-0"
-                    />
+                    <div>
+                      <label htmlFor={`edit-ex-name-${exIdx}`} className="mb-1 block text-cap font-semibold text-ink-2">动作名称</label>
+                      <input
+                        id={`edit-ex-name-${exIdx}`}
+                        type="text"
+                        value={e.exerciseName}
+                        onChange={(ev) => editExerciseName(exIdx, ev.target.value)}
+                        className={cx(fieldCls, 'font-semibold')}
+                      />
+                    </div>
+
                     {/* 规格胶囊：展示当前计量单位与滑轮，点击打开规格抽屉 */}
                     <button
                       type="button"
                       onClick={() => setEditSpecExIdx(exIdx)}
-                      className="w-full flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2 py-1 text-left active:scale-[0.99] transition-all"
+                      className="flex h-11 w-full items-center gap-2 rounded-ctl border border-line bg-surface px-3 text-left transition-colors active:bg-surface-strong"
                     >
-                      <Layers className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                      <span className="text-[10px] font-bold text-slate-500 shrink-0">规格</span>
-                      <span className="text-[11px] font-bold text-indigo-700 truncate min-w-0">
+                      <Layers className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+                      <span className="shrink-0 text-cap font-semibold text-ink-3">规格</span>
+                      <span className="min-w-0 flex-1 truncate text-sm2 font-semibold text-ink-2">
                         {EDIT_UNIT_SHORT[e.currentUnit]} · {EDIT_PULLEY_SHORT[e.pulleyRatio]}{e.pulleyRatio !== 'none' ? ` (${e.pulleyRatio})` : ''}
                       </span>
-                      <span className="flex-1" />
-                      <Pencil className="w-3 h-3 text-slate-400 shrink-0" />
+                      <Pencil className="h-3.5 w-3.5 shrink-0 text-ink-3" aria-hidden="true" />
                     </button>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {e.isUnilateral ? (
-                        <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded shrink-0">
-                          左右独立
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded shrink-0">
-                          双侧
-                        </span>
+
+                    {/* 记录方式与超级组标记 + 操作 */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!isDrop && (
+                        <Badge tone={e.isUnilateral ? 'accent' : 'neutral'}>
+                          {e.isUnilateral ? '左右独立' : '双侧'}
+                        </Badge>
                       )}
                       <button
                         type="button"
                         onClick={() => editToggleUnilateral(exIdx, !e.isUnilateral)}
-                        className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline shrink-0"
+                        className="h-11 px-1 text-sm2 font-semibold text-accent underline"
                       >
                         {e.isUnilateral ? '切回双侧' : '改为单侧'}
                       </button>
-                      {isDrop && (
-                        <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded shrink-0">
-                          🔥 超级组
-                        </span>
-                      )}
+                      {isDrop && <Badge><Flame className="h-3 w-3" aria-hidden="true" />超级组</Badge>}
                       <button
                         type="button"
                         onClick={() => editToggleDropSet(exIdx, !isDrop)}
-                        className="text-[10px] font-bold text-amber-700 hover:text-amber-900 underline shrink-0"
+                        className="h-11 px-1 text-sm2 font-semibold text-accent underline"
                       >
                         {isDrop ? '取消超级组' : '设为超级组'}
                       </button>
@@ -1974,7 +1935,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       <button
                         type="button"
                         onClick={() => { setReplaceExIdx(exIdx); setReplaceSearch(''); }}
-                        className="text-[10px] font-bold text-slate-500 hover:text-blue-600 underline shrink-0"
+                        className="h-11 px-1 text-sm2 font-semibold text-ink-2 underline"
                       >
                         换动作
                       </button>
@@ -1982,196 +1943,237 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                         <button
                           type="button"
                           onClick={() => editRemoveExercise(exIdx)}
-                          className="text-[10px] font-bold text-slate-400 hover:text-red-600 underline shrink-0"
+                          className="h-11 px-1 text-sm2 text-ink-3 underline hover:text-danger"
                         >
                           删动作
                         </button>
                       )}
                     </div>
 
-                    <div className="space-y-1.5">
-                      {e.sets.map((s, setIdx) => (
-                        <div
-                          key={setIdx}
-                          className="bg-white rounded-lg border border-slate-200 p-2 flex flex-wrap items-center gap-1.5"
-                        >
-                          <span className="w-6 h-6 rounded-lg bg-slate-100 text-slate-600 text-[11px] font-black flex items-center justify-center shrink-0">
-                            {s.setNumber}
-                          </span>
+                    {/* 组行：普通 / 左右独立 / 超级组阶梯 */}
+                    <div className="space-y-2">
+                      {!isDrop && !e.isUnilateral && (
+                        <div className="grid grid-cols-[32px_1fr_64px_44px] items-center gap-2 px-2 text-center text-cap font-semibold text-ink-3">
+                          <span>组</span>
+                          <span>{unitStr}</span>
+                          <span>次</span>
+                          <span />
+                        </div>
+                      )}
+                      {!isDrop && e.isUnilateral && (
+                        <div className="grid grid-cols-[26px_1fr_1px_1fr_44px] items-center gap-1.5 px-2 text-center text-cap font-semibold text-ink-3">
+                          <span>组</span>
+                          <span>左</span>
+                          <span />
+                          <span>右</span>
+                          <span />
+                        </div>
+                      )}
 
-                          {s.isDropSet && s.dropStages && s.dropStages.length > 0 ? (
-                            <span className="text-[10px] text-slate-500 font-mono flex-1 min-w-0 truncate">
-                              {s.dropStages.map(st => `${st.weightOrPlates}×${st.reps}`).join(' ➔ ')}
-                            </span>
-                          ) : s.unilateral ? (
-                            <div className="flex-1 min-w-0 space-y-1">
-                            {(['left', 'right'] as const).map(side => {
-                              const sd: UnilateralSide = s[side] || { weight: s.weightOrPlates, reps: s.reps };
-                              return (
-                                <div key={side} className="grid grid-cols-[1rem_minmax(0,1fr)_auto_minmax(0,1fr)_2rem] items-center gap-1">
-                                  <span className="text-[10px] font-black text-indigo-600 text-center shrink-0">
-                                    {side === 'left' ? '左' : '右'}
+                      {e.sets.map((s, setIdx) => {
+                        if (s.isDropSet && s.dropStages && s.dropStages.length > 0) {
+                          return (
+                            <div key={setIdx} className="rounded-ctl border border-line bg-surface px-3 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="flex items-center gap-1.5 text-sm2 font-semibold text-ink">
+                                  <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-surface-subtle text-cap font-semibold text-ink-3 tabular-nums">
+                                    {s.setNumber}
                                   </span>
+                                  第 {s.setNumber} 大组
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <Badge tone="success">{s.dropStages.length}阶递减</Badge>
+                                  <IconButton
+                                    label={`删除第 ${s.setNumber} 大组`}
+                                    onClick={() => editRemoveSet(exIdx, setIdx)}
+                                    disabled={e.sets.length <= 1}
+                                    className="hover:text-danger disabled:opacity-40"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </IconButton>
+                                </span>
+                              </div>
+                              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                {s.dropStages.map((stg, stgIdx) => (
+                                  <span
+                                    key={stgIdx}
+                                    className="inline-flex items-center gap-1 rounded-[6px] bg-surface-subtle px-2 py-1 text-sm2 tabular-nums text-ink-2"
+                                  >
+                                    {stg.weightOrPlates}{stg.unit || 'kg'} × {stg.reps}次
+                                    {stgIdx < s.dropStages!.length - 1 && (
+                                      <span className="text-ink-3" aria-hidden="true">→</span>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        if (s.unilateral) {
+                          const sideBlock = (side: 'left' | 'right') => {
+                            const label = side === 'left' ? '左' : '右';
+                            const sd: UnilateralSide = s[side] || { weight: s.weightOrPlates, reps: s.reps };
+                            return (
+                              <div className="flex min-w-0 items-center justify-center gap-0.5">
+                                <div className="flex min-w-[44px] flex-col items-center">
                                   <input
                                     type="number"
+                                    inputMode="decimal"
+                                    aria-label={`第 ${s.setNumber} 组${label}侧重量`}
                                     value={sd.weight || ''}
                                     onChange={(ev) => editUnilateralField(exIdx, setIdx, side, 'weight', parseFloat(ev.target.value) || 0)}
-                                    className="w-full min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                                    className="w-11 bg-transparent text-center text-[16px] font-semibold tabular-nums text-ink focus:outline-none"
                                   />
-                                  <span className="text-[10px] text-slate-400 shrink-0">×</span>
-                                  <input
-                                    type="number"
-                                    value={sd.reps || ''}
-                                    onChange={(ev) => editUnilateralField(exIdx, setIdx, side, 'reps', parseInt(ev.target.value) || 0)}
-                                    className="w-full min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
-                                  />
-                                  <span className="text-[10px] text-slate-400 text-center shrink-0">{unitStr}</span>
+                                  <span className="mt-0.5 inline-flex items-center gap-0.5 rounded-[6px] bg-surface-subtle px-1 py-0.5">
+                                    <input
+                                      type="number"
+                                      inputMode="numeric"
+                                      aria-label={`第 ${s.setNumber} 组${label}侧次数`}
+                                      value={sd.reps || ''}
+                                      onChange={(ev) => editUnilateralField(exIdx, setIdx, side, 'reps', parseInt(ev.target.value) || 0)}
+                                      className="w-6 bg-transparent text-center text-cap font-medium tabular-nums text-ink-3 focus:outline-none"
+                                    />
+                                    <span className="text-cap font-medium text-ink-3">次</span>
+                                  </span>
                                 </div>
-                              );
-                            })}
+                              </div>
+                            );
+                          };
+                          return (
+                            <div
+                              key={setIdx}
+                              className="grid min-h-[58px] grid-cols-[26px_1fr_1px_1fr_44px] items-center gap-1.5 rounded-ctl border border-line bg-surface px-2"
+                            >
+                              <span className="flex h-[26px] w-[26px] items-center justify-center justify-self-center rounded-[8px] bg-success-soft text-sm2 font-semibold tabular-nums text-success">
+                                {s.setNumber}
+                              </span>
+                              {sideBlock('left')}
+                              <span aria-hidden="true" className="h-7 w-px justify-self-center bg-line" />
+                              {sideBlock('right')}
+                              <IconButton
+                                label={`删除第 ${s.setNumber} 组`}
+                                onClick={() => editRemoveSet(exIdx, setIdx)}
+                                disabled={e.sets.length <= 1}
+                                className="justify-self-center hover:text-danger disabled:opacity-40"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </IconButton>
                             </div>
-                          ) : (
-                            <>
-                              <input
-                                type="number"
-                                value={s.weightOrPlates || ''}
-                                onChange={(ev) => editSetField(exIdx, setIdx, 'weightOrPlates', parseFloat(ev.target.value) || 0)}
-                                className="w-16 min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
-                              />
-                              <span className="text-[10px] text-slate-400 shrink-0">{unitStr}</span>
-                              <span className="text-[10px] text-slate-400 shrink-0">×</span>
-                              <input
-                                type="number"
-                                value={s.reps || ''}
-                                onChange={(ev) => editSetField(exIdx, setIdx, 'reps', parseInt(ev.target.value) || 0)}
-                                className="w-14 min-w-0 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500"
-                              />
-                            </>
-                          )}
+                          );
+                        }
 
-                          <button
-                            type="button"
-                            onClick={() => editRemoveSet(exIdx, setIdx)}
-                            disabled={e.sets.length <= 1}
-                            className="ml-auto shrink-0 p-1.5 text-slate-300 hover:text-red-600 disabled:opacity-40 disabled:hover:text-slate-300 rounded-lg"
-                            title="删除该组"
+                        return (
+                          <div
+                            key={setIdx}
+                            className="grid h-14 grid-cols-[32px_1fr_64px_44px] items-center gap-2 rounded-ctl border border-line bg-surface px-2"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
+                            <span className="flex h-7 w-7 items-center justify-center justify-self-center rounded-[8px] bg-success-soft text-sm2 font-semibold tabular-nums text-success">
+                              {s.setNumber}
+                            </span>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              aria-label={`第 ${s.setNumber} 组重量`}
+                              value={s.weightOrPlates || ''}
+                              onChange={(ev) => editSetField(exIdx, setIdx, 'weightOrPlates', parseFloat(ev.target.value) || 0)}
+                              className="mx-auto w-[52px] bg-transparent text-center text-[20px] font-semibold tabular-nums text-ink focus:outline-none"
+                            />
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              aria-label={`第 ${s.setNumber} 组次数`}
+                              value={s.reps || ''}
+                              onChange={(ev) => editSetField(exIdx, setIdx, 'reps', parseInt(ev.target.value) || 0)}
+                              className="h-11 w-full rounded-[8px] bg-surface-subtle text-center text-[17px] font-semibold tabular-nums text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-accent/30"
+                            />
+                            <IconButton
+                              label={`删除第 ${s.setNumber} 组`}
+                              onClick={() => editRemoveSet(exIdx, setIdx)}
+                              disabled={e.sets.length <= 1}
+                              className="justify-self-center hover:text-danger disabled:opacity-40"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </IconButton>
+                          </div>
+                        );
+                      })}
+
                       <button
                         type="button"
                         onClick={() => editAddSet(exIdx)}
-                        className="w-full py-1.5 text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-white border border-dashed border-slate-300 rounded-lg"
+                        className="flex h-11 w-full items-center justify-center gap-1 rounded-ctl border border-dashed border-line-strong text-sm2 font-semibold text-accent"
                       >
-                        + 加一组
+                        <Plus className="h-4 w-4" aria-hidden="true" /> 加一组
                       </button>
                     </div>
 
                     <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">动作备注</label>
+                      <label htmlFor={`edit-ex-notes-${exIdx}`} className="mb-1 block text-cap font-semibold text-ink-2">动作备注</label>
                       <input
+                        id={`edit-ex-notes-${exIdx}`}
                         type="text"
                         value={e.notes || ''}
                         onChange={(ev) => editExerciseNotes(exIdx, ev.target.value)}
                         placeholder="该动作备注（可留空）"
-                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                        className={fieldCls}
                       />
                     </div>
                   </div>
                 );
               })}
+
               {!editingSession.isRestDay && (
                 <button
                   type="button"
                   onClick={() => { setAddExOpen(true); setAddExSearch(''); }}
-                  className="w-full py-2.5 text-xs font-bold text-blue-600 hover:text-blue-800 bg-blue-50/60 border border-dashed border-blue-300 rounded-xl flex items-center justify-center gap-1"
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-card border border-dashed border-line-strong text-body font-medium text-ink-2 hover:bg-surface-subtle"
                 >
-                  <Plus className="w-3.5 h-3.5" /> 新增动作
+                  <Plus className="h-4 w-4" aria-hidden="true" /> 新增动作
                 </button>
               )}
             </div>
+          );
+        })()}
+      </Sheet>
 
-            {/* 弹窗底部操作（两列等宽，320 下不挤出） */}
-            <div className="p-4 pt-3 border-t border-slate-100 shrink-0">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={cancelEditSession}
-                  className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold"
-                >
-                  取消
-                </button>
-                <button
-                  type="button"
-                  onClick={saveEditSession}
-                  className="py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95"
-                >
-                  保存修改
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 历史编辑：规格抽屉（单位 + 滑轮），镜像开练页规格抽屉 */}
+      <Sheet
+        open={editingSession !== null && editSpecExIdx !== null && Boolean(editingSession.exercises[editSpecExIdx])}
+        onClose={() => setEditSpecExIdx(null)}
+        title="动作规格"
+        description={editingSession && editSpecExIdx !== null ? editingSession.exercises[editSpecExIdx]?.exerciseName : undefined}
+        footer={
+          <Button variant="primary" size="lg" block onClick={() => setEditSpecExIdx(null)}>
+            完成
+          </Button>
+        }
+      >
+        {editingSession && editSpecExIdx !== null && editingSession.exercises[editSpecExIdx] && (() => {
+          const specEx = editingSession.exercises[editSpecExIdx];
+          return (
+            <div>
+              <p className="mb-1.5 text-cap font-semibold text-ink-3">计量单位</p>
+              <SegmentedControl
+                label="计量单位"
+                value={specEx.currentUnit}
+                onChange={(unit) => editChangeUnit(editSpecExIdx, unit)}
+                options={EDIT_UNIT_OPTIONS}
+              />
 
-      {/* 历史编辑：规格抽屉（单位 + 滑轮），z-80 盖在编辑弹窗之上 */}
-      {editingSession && editSpecExIdx !== null && editingSession.exercises[editSpecExIdx] && (
-        <div
-          className="fixed inset-0 z-[80] bg-slate-900/40 flex items-end justify-center animate-fade-in pt-[max(env(safe-area-inset-top),46px)]"
-          onClick={() => setEditSpecExIdx(null)}
-        >
-          <div
-            className="bg-white w-full max-w-md rounded-t-3xl p-5 pb-8 shadow-2xl animate-sheet-up max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] overflow-y-auto modal-scroll overscroll-contain"
-            onClick={(ev) => ev.stopPropagation()}
-          >
-            <h3 className="font-black text-sm mb-1">{editingSession.exercises[editSpecExIdx].exerciseName}</h3>
-            <p className="text-[11px] text-slate-400 mb-3">计量规格（修改后整组同步）</p>
-            <div className="text-xs font-bold text-slate-600 mb-1.5">计量单位</div>
-            <div className="grid grid-cols-4 gap-1.5 mb-4">
-              {(['plates', 'kg', 'assisted', 'bodyweight'] as ResistanceUnit[]).map(u => (
-                <button
-                  key={u}
-                  type="button"
-                  onClick={() => editChangeUnit(editSpecExIdx, u)}
-                  className={`py-2.5 rounded-xl text-xs font-bold transition-all ${
-                    editingSession.exercises[editSpecExIdx].currentUnit === u
-                      ? 'bg-blue-600 text-white shadow'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  {u === 'plates' ? '插销(片)' : u === 'kg' ? '重量(kg)' : u === 'assisted' ? '助力' : '自重'}
-                </button>
-              ))}
+              <p className="mb-1.5 mt-4 text-cap font-semibold text-ink-3">滑轮比例</p>
+              <SegmentedControl
+                label="滑轮比例"
+                value={specEx.pulleyRatio}
+                onChange={(ratio) => editChangePulley(editSpecExIdx, ratio)}
+                options={EDIT_PULLEY_OPTIONS}
+              />
+
+              <p className="mt-3 text-cap text-ink-3">修改后该动作所有组同步</p>
             </div>
-            <div className="text-xs font-bold text-slate-600 mb-1.5">滑轮比例</div>
-            <div className="grid grid-cols-3 gap-1.5 mb-4">
-              {(['none', '1:1', '2:1'] as PulleyRatio[]).map(p => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => editChangePulley(editSpecExIdx, p)}
-                  className={`py-2.5 rounded-xl text-xs font-bold transition-all ${
-                    editingSession.exercises[editSpecExIdx].pulleyRatio === p
-                      ? 'bg-indigo-600 text-white shadow'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  {p === 'none' ? '普通器械' : p === '1:1' ? '单滑轮 1:1' : '双滑轮 2:1'}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => setEditSpecExIdx(null)}
-              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold"
-            >
-              完成
-            </button>
-          </div>
-        </div>
-      )}
+          );
+        })()}
+      </Sheet>
 
       {/* 历史编辑：换动作 / 新增动作挑选弹窗 */}
       {editingSession && (replaceExIdx !== null || addExOpen) && (() => {
@@ -2200,185 +2202,167 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           close();
         };
         return (
-          <div
-            className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 pt-[max(env(safe-area-inset-top),46px)]"
-            onClick={close}
+          <Sheet
+            open
+            onClose={close}
+            title={replaceExIdx !== null ? '更换动作' : '新增动作'}
+            description={replaceExIdx !== null ? '替换后保留组数与备注' : '加入本条历史记录'}
+            size="lg"
           >
-            <div
-              className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[calc(100vh-max(env(safe-area-inset-top),46px)-16px)] flex flex-col p-4 shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
+            <input
+              type="text"
+              placeholder="搜索动作名称（如 卧推、深蹲、夹胸）..."
+              aria-label="搜索动作"
+              value={replaceExIdx !== null ? replaceSearch : addExSearch}
+              onChange={(e) => replaceExIdx !== null ? setReplaceSearch(e.target.value) : setAddExSearch(e.target.value)}
+              className={fieldCls}
+            />
+
+            {/* 自定义新动作：默认收起，点开才展开表单 */}
+            <button
+              type="button"
+              onClick={() => { setShowHistoryCustomForm(v => !v); setHistoryCustomError(null); }}
+              aria-expanded={showHistoryCustomForm}
+              className="mt-3 flex h-11 w-full items-center gap-2 rounded-ctl border border-dashed border-line-strong px-3 text-left"
             >
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100 shrink-0">
-                <h3 className="font-black text-slate-900 text-sm">
-                  {replaceExIdx !== null ? '更换动作' : '新增动作到本条记录'}
-                </h3>
-                <button
-                  type="button"
-                  onClick={close}
-                  className="text-xs text-slate-500 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg font-bold"
-                >
-                  关闭
-                </button>
-              </div>
-              <div className="py-2 shrink-0">
-                <input
-                  type="text"
-                  placeholder="搜索动作名称..."
-                  value={replaceExIdx !== null ? replaceSearch : addExSearch}
-                  onChange={(e) => replaceExIdx !== null ? setReplaceSearch(e.target.value) : setAddExSearch(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
-                />
-              </div>
+              <Plus className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+              <span className="shrink-0 text-sm2 font-semibold text-ink">自定义新动作</span>
+              <span className="min-w-0 flex-1 truncate text-cap text-ink-3">动作库里没有？在这里直接新增</span>
+              {showHistoryCustomForm
+                ? <ChevronUp className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+                : <ChevronDown className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />}
+            </button>
 
-              {/* 自定义新动作：默认收起，点开才展开表单 */}
-              <button
-                type="button"
-                onClick={() => { setShowHistoryCustomForm(v => !v); setHistoryCustomError(null); }}
-                aria-expanded={showHistoryCustomForm}
-                className="w-full mb-2 px-3 py-2 border border-dashed border-indigo-300 bg-indigo-50/60 rounded-xl flex items-center gap-2 text-left active:scale-[0.99] transition-all shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                <span className="text-xs font-black text-indigo-800 shrink-0">自定义新动作</span>
-                <span className="text-[10px] text-slate-400 truncate flex-1 min-w-0">动作库里没有？在这里直接新增</span>
-                {showHistoryCustomForm ? <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
-              </button>
-
-              {showHistoryCustomForm && (
-                <div className="mb-2 p-3 border border-slate-200 rounded-xl bg-slate-50/70 space-y-2.5 animate-card-in shrink-0">
-                  {historyCustomError && (
-                    <p className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">{historyCustomError}</p>
-                  )}
+            {showHistoryCustomForm && (
+              <div className="mt-2 space-y-3 rounded-ctl border border-line bg-surface-subtle/60 p-3 animate-card-in">
+                {historyCustomError && (
+                  <p className="rounded-ctl bg-danger-soft px-3 py-2 text-cap font-semibold text-danger">{historyCustomError}</p>
+                )}
+                <div>
+                  <label htmlFor="history-custom-name" className="mb-1 block text-cap font-semibold text-ink-2">动作名称 *</label>
+                  <input
+                    id="history-custom-name"
+                    type="text"
+                    value={historyCustomName}
+                    onChange={(e) => setHistoryCustomName(e.target.value)}
+                    placeholder="例如: 史密斯下斜推胸"
+                    className={fieldCls}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-700 mb-1">动作名称 *</label>
-                    <input
-                      type="text"
-                      value={historyCustomName}
-                      onChange={(e) => setHistoryCustomName(e.target.value)}
-                      placeholder="例如: 史密斯下斜推胸"
-                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 mb-1">目标肌肉群</label>
-                      <select
-                        value={historyCustomCategory}
-                        onChange={(e) => setHistoryCustomCategory(e.target.value as MuscleCategory)}
-                        className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
-                      >
-                        <option value="chest">胸部</option>
-                        <option value="back">背部</option>
-                        <option value="shoulder">肩部</option>
-                        <option value="leg">腿部</option>
-                        <option value="biceps">肱二头</option>
-                        <option value="triceps">肱三头</option>
-                        <option value="abs">腹部核心</option>
-                        <option value="cardio">有氧训练</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 mb-1">计量单位</label>
-                      <select
-                        value={historyCustomUnit}
-                        onChange={(e) => setHistoryCustomUnit(e.target.value as ResistanceUnit)}
-                        className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
-                      >
-                        <option value="plates">插销 (片)</option>
-                        <option value="kg">重量 (kg)</option>
-                        <option value="assisted">助力 (kg)</option>
-                        <option value="bodyweight">自重</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 mb-1">滑轮类型</label>
+                    <label htmlFor="history-custom-category" className="mb-1 block text-cap font-semibold text-ink-2">目标肌肉群</label>
                     <select
-                      value={historyCustomPulley}
-                      onChange={(e) => setHistoryCustomPulley(e.target.value as PulleyRatio)}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                      id="history-custom-category"
+                      value={historyCustomCategory}
+                      onChange={(e) => setHistoryCustomCategory(e.target.value as MuscleCategory)}
+                      className={fieldCls}
                     >
-                      <option value="none">普通固定器械/自由重量</option>
-                      <option value="1:1">单滑轮 1:1</option>
-                      <option value="2:1">双滑轮 2:1</option>
+                      <option value="chest">胸部</option>
+                      <option value="back">背部</option>
+                      <option value="shoulder">肩部</option>
+                      <option value="leg">腿部</option>
+                      <option value="biceps">肱二头</option>
+                      <option value="triceps">肱三头</option>
+                      <option value="abs">腹部核心</option>
+                      <option value="cardio">有氧训练</option>
                     </select>
                   </div>
-                  <label className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-2.5 py-2 cursor-pointer">
-                    <span className="min-w-0">
-                      <span className="block text-[11px] font-bold text-slate-800">左右独立动作（单侧）</span>
-                      <span className="block text-[10px] text-slate-400">开启后左右分别记录</span>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={historyCustomUnilateral}
-                      onChange={(e) => setHistoryCustomUnilateral(e.target.checked)}
-                      className="w-4 h-4 accent-indigo-600 shrink-0"
-                    />
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => { setHistoryCustomName(''); setHistoryCustomNotes(''); setHistoryCustomUnilateral(false); setHistoryCustomError(null); }}
-                      className="py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold"
+                  <div>
+                    <label htmlFor="history-custom-unit" className="mb-1 block text-cap font-semibold text-ink-2">计量单位</label>
+                    <select
+                      id="history-custom-unit"
+                      value={historyCustomUnit}
+                      onChange={(e) => setHistoryCustomUnit(e.target.value as ResistanceUnit)}
+                      className={fieldCls}
                     >
-                      清空
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!historyCustomName.trim()) { setHistoryCustomError('请输入动作名称'); return; }
-                        const created = StorageService.addCustomExercise({
-                          name: historyCustomName.trim(),
-                          category: historyCustomCategory,
-                          defaultUnit: historyCustomUnit,
-                          defaultPulley: historyCustomPulley,
-                          isUnilateral: historyCustomUnilateral || undefined,
-                          notes: historyCustomNotes.trim() || undefined,
-                          isFavorite: true,
-                        });
-                        setHistoryCustomName('');
-                        setHistoryCustomNotes('');
-                        setHistoryCustomUnilateral(false);
-                        setHistoryCustomError(null);
-                        setShowHistoryCustomForm(false);
-                        pick(created);
-                      }}
-                      className="py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-sm active:scale-95"
-                    >
-                      保存并加入本记录
-                    </button>
+                      <option value="plates">插销 (片)</option>
+                      <option value="kg">重量 (kg)</option>
+                      <option value="assisted">助力 (kg)</option>
+                      <option value="bodyweight">自重</option>
+                    </select>
                   </div>
                 </div>
-              )}
-
-              <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0 pr-0.5 modal-scroll overscroll-contain">
-                {pool.map(ex => (
-                  <div
-                    key={ex.id}
-                    onClick={() => pick(ex)}
-                    className="p-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-200/90 rounded-xl flex items-center justify-between cursor-pointer transition-all"
+                <div>
+                  <label htmlFor="history-custom-pulley" className="mb-1 block text-cap font-semibold text-ink-2">滑轮类型</label>
+                  <select
+                    id="history-custom-pulley"
+                    value={historyCustomPulley}
+                    onChange={(e) => setHistoryCustomPulley(e.target.value as PulleyRatio)}
+                    className={fieldCls}
                   >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="font-bold text-slate-900 text-xs truncate">{ex.name}</span>
-                      {ex.isUnilateral && (
-                        <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1 py-0.5 rounded shrink-0">
-                          单侧
-                        </span>
-                      )}
-                      {ex.isCustom && (
-                        <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 px-1 py-0.5 rounded shrink-0">
-                          自建
-                        </span>
-                      )}
-                    </div>
-                    <Plus className="w-4 h-4 text-blue-600 shrink-0" />
-                  </div>
-                ))}
-                {pool.length === 0 && (
-                  <p className="text-center text-xs text-slate-400 py-6">没有匹配的动作，换个关键词试试</p>
-                )}
+                    <option value="none">普通固定器械/自由重量</option>
+                    <option value="1:1">单滑轮 1:1</option>
+                    <option value="2:1">双滑轮 2:1</option>
+                  </select>
+                </div>
+                <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
+                  <span className="min-w-0">
+                    <span className="block text-sm2 font-semibold text-ink">左右独立动作（单侧）</span>
+                    <span className="block text-cap text-ink-3">开启后左右分别记录</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={historyCustomUnilateral}
+                    onChange={(e) => setHistoryCustomUnilateral(e.target.checked)}
+                    className="h-4 w-4 shrink-0 accent-accent"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => { setHistoryCustomName(''); setHistoryCustomNotes(''); setHistoryCustomUnilateral(false); setHistoryCustomError(null); }}
+                  >
+                    清空
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      if (!historyCustomName.trim()) { setHistoryCustomError('请输入动作名称'); return; }
+                      const created = StorageService.addCustomExercise({
+                        name: historyCustomName.trim(),
+                        category: historyCustomCategory,
+                        defaultUnit: historyCustomUnit,
+                        defaultPulley: historyCustomPulley,
+                        isUnilateral: historyCustomUnilateral || undefined,
+                        notes: historyCustomNotes.trim() || undefined,
+                        isFavorite: true,
+                      });
+                      setHistoryCustomName('');
+                      setHistoryCustomNotes('');
+                      setHistoryCustomUnilateral(false);
+                      setHistoryCustomError(null);
+                      setShowHistoryCustomForm(false);
+                      pick(created);
+                    }}
+                  >
+                    保存并加入本记录
+                  </Button>
+                </div>
               </div>
+            )}
+
+            <div className="mt-3">
+              {pool.map(ex => (
+                <button
+                  key={ex.id}
+                  type="button"
+                  onClick={() => pick(ex)}
+                  className="flex min-h-14 w-full items-center justify-between gap-3 border-b border-line px-1 py-2 text-left last:border-b-0"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-body font-semibold text-ink">{ex.name}</span>
+                    {ex.isUnilateral && <Badge>单侧</Badge>}
+                    {ex.isCustom && <Badge>自建</Badge>}
+                  </span>
+                  <Plus className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+                </button>
+              ))}
+              {pool.length === 0 && (
+                <p className="py-6 text-center text-body text-ink-2">没有匹配的动作，换个关键词试试</p>
+              )}
             </div>
-          </div>
+          </Sheet>
         );
       })()}
 
