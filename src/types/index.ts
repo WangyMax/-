@@ -119,15 +119,16 @@ export interface WeightLog {
   note: string; // e.g. "晚上吃了鸡公煲"
 }
 
-export const CATEGORY_LABELS: Record<MuscleCategory, { label: string; color: string; bg: string }> = {
-  chest: { label: '胸部', color: 'text-red-700', bg: 'bg-red-50 border-red-200' },
-  back: { label: '背部', color: 'text-blue-700', bg: 'bg-blue-50 border-blue-200' },
-  shoulder: { label: '肩部', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200' },
-  leg: { label: '腿部', color: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200' },
-  biceps: { label: '肱二头', color: 'text-indigo-700', bg: 'bg-indigo-50 border-indigo-200' },
-  triceps: { label: '肱三头', color: 'text-purple-700', bg: 'bg-purple-50 border-purple-200' },
-  abs: { label: '腹部核心', color: 'text-yellow-800', bg: 'bg-yellow-50 border-yellow-200' },
-  cardio: { label: '有氧训练', color: 'text-pink-700', bg: 'bg-pink-50 border-pink-200' },
+// 分类只保留文案：颜色由设计系统的中性 Badge 统一承担，避免色相与状态色语义冲突
+export const CATEGORY_LABELS: Record<MuscleCategory, { label: string }> = {
+  chest: { label: '胸部' },
+  back: { label: '背部' },
+  shoulder: { label: '肩部' },
+  leg: { label: '腿部' },
+  biceps: { label: '肱二头' },
+  triceps: { label: '肱三头' },
+  abs: { label: '腹部核心' },
+  cardio: { label: '有氧训练' },
 };
 
 export const UNIT_LABELS: Record<ResistanceUnit, string> = {
