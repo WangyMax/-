@@ -37,3 +37,12 @@ export function shiftLocalDate(dateStr: string, deltaDays: number): string {
 export function weekdayOf(dateStr: string): number {
   return parseLocalDate(dateStr).getDay();
 }
+
+// 两个本地日期的整日差（to - from）。用 UTC 毫秒计算，避免夏令时/时区偏移造成的 ±1 天误差。
+export function diffLocalDays(fromDate: string, toDate: string): number {
+  const [fy, fm, fd] = fromDate.split('-').map(Number);
+  const [ty, tm, td] = toDate.split('-').map(Number);
+  const from = Date.UTC(fy, (fm || 1) - 1, fd || 1);
+  const to = Date.UTC(ty, (tm || 1) - 1, td || 1);
+  return Math.round((to - from) / 86400000);
+}

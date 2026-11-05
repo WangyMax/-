@@ -14,6 +14,7 @@ import {
 } from '../types';
 import { StorageService } from '../utils/storage';
 import { todayLocalDate, shiftLocalDate, weekdayOf } from '../utils/date';
+import { MED_CHANGED_EVENT } from '../utils/medication';
 import {
   sessionVolumes, formatVolumeShort, sessionDurationMin,
   countWeekTrainings, computeStreak, totalCompletedSetsAll,
@@ -25,6 +26,8 @@ import { Badge, Button, Card, IconButton, NumberText, SegmentedControl, Sheet, c
 interface WeightJournalViewProps {
   onDataChanged?: () => void;
   allExercises?: Exercise[];
+  /** 打开时默认落在哪个子页签：底部导航第 4 项叫「每天记录体重」，默认进体重组 */
+  initialSubTab?: 'training' | 'weight';
 }
 
 const SLOT_SHORT: Record<string, string> = {
@@ -110,9 +113,10 @@ const makeEditDefaultDropStages = (): DropStage[] =>
 export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   onDataChanged,
   allExercises,
+  initialSubTab = 'training',
 }) => {
   // 当前子标签: 'training' | 'weight'
-  const [activeSubTab, setActiveSubTab] = useState<'training' | 'weight'>('training');
+  const [activeSubTab, setActiveSubTab] = useState<'training' | 'weight'>(initialSubTab);
 
   // 训练记录列表与展开状态集合
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
@@ -168,6 +172,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const [historyCustomUnit, setHistoryCustomUnit] = useState<ResistanceUnit>('plates');
   const [historyCustomPulley, setHistoryCustomPulley] = useState<PulleyRatio>('none');
   const [historyCustomUnilateral, setHistoryCustomUnilateral] = useState(false);
+  // 历史新增动作也支持直接建成递减超级组（v2.9.0 补上 v2.8.11 的遗留缺口）
+  const [historyCustomDropSet, setHistoryCustomDropSet] = useState(false);
   const [historyCustomNotes, setHistoryCustomNotes] = useState('');
   const [historyCustomError, setHistoryCustomError] = useState<string | null>(null);
 
@@ -655,6 +661,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       const content = event.target?.result as string;
       const success = StorageService.importBackupJson(content);
       if (success) {
+        // 备份 2.1 起含用药数据：广播一次，让 App 级用药状态立即重读
+        window.dispatchEvent(new Event(MED_CHANGED_EVENT));
         setImportStatus('备份数据恢复成功！');
         refreshData();
         if (onDataChanged) onDataChanged();
@@ -1727,7 +1735,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       <Card className="p-4">
         <h3 className="mb-2 text-h2 font-semibold text-ink">本地数据中心与备份</h3>
         <p className="mb-3 text-sm2 leading-relaxed text-ink-2">
-          所有计划、训练动作与体重日记 100% 保存在本地。可随时导出 JSON 备份，或导入备份文件恢复数据。
+          所有计划、训练记录、体重日记与用药记录 100% 保存在本地。可随时导出 JSON 备份，或导入备份文件恢复数据。
         </p>
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -2304,14 +2312,33 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   <input
                     type="checkbox"
                     checked={historyCustomUnilateral}
-                    onChange={(e) => setHistoryCustomUnilateral(e.target.checked)}
+                    onChange={(e) => {
+                      setHistoryCustomUnilateral(e.target.checked);
+                      if (e.target.checked) setHistoryCustomDropSet(false);
+                    }}
+                    className="h-4 w-4 shrink-0 accent-accent"
+                  />
+                </label>
+                <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
+                  <span className="min-w-0">
+                    <span className="block text-sm2 font-semibold text-ink">递减超级组（4 阶梯）</span>
+                    <span className="block text-cap text-ink-3">默认 10/7.5/5/2.5 kg，之后可逐级改</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={historyCustomDropSet}
+                    onChange={(e) => {
+                      setHistoryCustomDropSet(e.target.checked);
+                      // 超级组与单侧互斥，与历史编辑里的切换规则一致
+                      if (e.target.checked) setHistoryCustomUnilateral(false);
+                    }}
                     className="h-4 w-4 shrink-0 accent-accent"
                   />
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <Button
                     variant="secondary"
-                    onClick={() => { setHistoryCustomName(''); setHistoryCustomNotes(''); setHistoryCustomUnilateral(false); setHistoryCustomError(null); }}
+                    onClick={() => { setHistoryCustomName(''); setHistoryCustomNotes(''); setHistoryCustomUnilateral(false); setHistoryCustomDropSet(false); setHistoryCustomError(null); }}
                   >
                     清空
                   </Button>
@@ -2322,15 +2349,18 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       const created = StorageService.addCustomExercise({
                         name: historyCustomName.trim(),
                         category: historyCustomCategory,
-                        defaultUnit: historyCustomUnit,
+                        defaultUnit: historyCustomDropSet ? 'kg' : historyCustomUnit,
                         defaultPulley: historyCustomPulley,
-                        isUnilateral: historyCustomUnilateral || undefined,
+                        isUnilateral: historyCustomDropSet ? undefined : (historyCustomUnilateral || undefined),
+                        isDropSet: historyCustomDropSet || undefined,
+                        dropStages: historyCustomDropSet ? makeEditDefaultDropStages() : undefined,
                         notes: historyCustomNotes.trim() || undefined,
                         isFavorite: true,
                       });
                       setHistoryCustomName('');
                       setHistoryCustomNotes('');
                       setHistoryCustomUnilateral(false);
+                      setHistoryCustomDropSet(false);
                       setHistoryCustomError(null);
                       setShowHistoryCustomForm(false);
                       pick(created);

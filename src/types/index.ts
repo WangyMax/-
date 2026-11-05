@@ -119,6 +119,39 @@ export interface WeightLog {
   note: string; // e.g. "晚上吃了鸡公煲"
 }
 
+// ===================== 用药管理（服药记录与提醒） =====================
+// 场景：隔天一次（48h）的长期用药（非那雄胺），需要按固定节律提醒并留档。
+// 设计要点：槽位日（slotDate）从 startDate 起按 intervalHours 整日递推，
+// 与实际打卡时刻无关——保证“隔天同一时刻”的节律稳定，迟到记录不会把周期越拖越乱。
+export type MedicationDoseStatus = 'taken' | 'skipped';
+
+export interface MedicationConfig {
+  /** 药品名，如“非那雄胺” */
+  name: string;
+  /** 剂量说明，如“1 mg” */
+  dosage: string;
+  /** 服药间隔小时数（24=每天 / 48=隔天 / 72=每3天），按整天递推 */
+  intervalHours: number;
+  /** 每日提醒时刻 HH:mm（本地时间） */
+  reminderTime: string;
+  /** 提醒总开关：关闭后不再排期系统通知 */
+  reminderEnabled: boolean;
+  /** 周期锚点：首剂应服日 YYYY-MM-DD */
+  startDate: string;
+  notes?: string;
+}
+
+export interface MedicationDose {
+  id: string;
+  /** 对应的规划槽位日 YYYY-MM-DD */
+  slotDate: string;
+  /** 实际打卡时间戳（ms） */
+  takenAt: number;
+  /** taken=已服用；skipped=本次跳过（顺延到下一槽位，不计漏服） */
+  status: MedicationDoseStatus;
+  note?: string;
+}
+
 // 分类只保留文案：颜色由设计系统的中性 Badge 统一承担，避免色相与状态色语义冲突
 export const CATEGORY_LABELS: Record<MuscleCategory, { label: string }> = {
   chest: { label: '胸部' },

@@ -1,4 +1,8 @@
-import { Exercise, WorkoutPlan, WorkoutSession, WeightLog, ExerciseLog, CATEGORY_ORDER } from '../types';
+import {
+  Exercise, WorkoutPlan, WorkoutSession, WeightLog, ExerciseLog, CATEGORY_ORDER,
+  MedicationConfig, MedicationDose,
+} from '../types';
+import { createDefaultMedicationConfig, normalizeMedicationConfig } from './medication';
 import { INITIAL_EXERCISES } from '../data/initialExercises';
 import { INITIAL_PLANS } from '../data/initialPlans';
 
@@ -39,12 +43,15 @@ const BUILTIN_EXERCISE_PATCHES: Record<string, { isDropSet: boolean; dropStages:
 };
 
 // 就地补齐内置动作缺失字段；返回是否发生改动（供调用方决定是否写回 localStorage）
+// 仅在字段「从未存在」（undefined）时补齐：用户主动关掉超级组后落盘的是
+// isDropSet: false，若继续用 !ex.isDropSet 判断，冷启动就会把用户的选择改回来
+//（v2.8.x 已知问题）。undefined / false 必须区分开。
 function applyBuiltinExercisePatch(list: Exercise[]): boolean {
   let changed = false;
   list.forEach(ex => {
     const patch = BUILTIN_EXERCISE_PATCHES[ex.id];
     if (!patch) return;
-    if (patch.isDropSet && !ex.isDropSet) {
+    if (patch.isDropSet && typeof ex.isDropSet === 'undefined') {
       ex.isDropSet = true;
       if (!ex.dropStages || ex.dropStages.length === 0) {
         ex.dropStages = patch.dropStages ? JSON.parse(JSON.stringify(patch.dropStages)) : undefined;
@@ -62,6 +69,9 @@ const STORAGE_KEYS = {
   WEIGHTS: 'fitcustom_weights_v2',
   ACTIVE_SESSION: 'fitcustom_active_session_v2',
   WEIGHT_GOAL: 'fitcustom_weight_goal_v2',
+  MED_CONFIG: 'fitcustom_med_config_v2',
+  MED_DOSES: 'fitcustom_med_doses_v2',
+  MED_SNOOZE: 'fitcustom_med_snooze_v2',
   // 旧版本键名，用于自动迁移
   OLD_SESSIONS: 'fitcustom_sessions_v1',
   OLD_WEIGHTS: 'fitcustom_weights_v1',
@@ -76,7 +86,11 @@ const cache: {
   plans: WorkoutPlan[] | null;
   sessions: WorkoutSession[] | null;
   weights: WeightLog[] | null;
-} = { exercises: null, plans: null, sessions: null, weights: null };
+  medConfig: MedicationConfig | null;
+  medDoses: MedicationDose[] | null;
+} = {
+  exercises: null, plans: null, sessions: null, weights: null, medConfig: null, medDoses: null,
+};
 
 // 预填充真实历史体重记录 (来自用户的真实记录)
 export const INITIAL_WEIGHTS: WeightLog[] = [
@@ -844,6 +858,91 @@ export const StorageService = {
     }
   },
 
+  // ===================== 用药管理（服药记录与提醒） =====================
+  // 首次使用没有配置时落一份默认配置：属于「设置项」而非种子业务数据，
+  // 清空数据后重新进入设置页仍需有值可编辑。
+  getMedicationConfig(): MedicationConfig {
+    if (cache.medConfig) return cache.medConfig;
+    const raw = localStorage.getItem(STORAGE_KEYS.MED_CONFIG);
+    if (raw) {
+      try {
+        const normalized = normalizeMedicationConfig(JSON.parse(raw));
+        cache.medConfig = normalized;
+        return normalized;
+      } catch {
+        // 解析失败：落到默认配置
+      }
+    }
+    const fresh = createDefaultMedicationConfig();
+    localStorage.setItem(STORAGE_KEYS.MED_CONFIG, JSON.stringify(fresh));
+    cache.medConfig = fresh;
+    return fresh;
+  },
+
+  saveMedicationConfig(config: MedicationConfig): MedicationConfig {
+    const normalized = normalizeMedicationConfig(config);
+    localStorage.setItem(STORAGE_KEYS.MED_CONFIG, JSON.stringify(normalized));
+    // 浅拷贝写缓存：避免把调用方的对象引用塞进缓存（React setState 判等会失效）
+    cache.medConfig = { ...normalized };
+    return normalized;
+  },
+
+  getMedicationDoses(): MedicationDose[] {
+    if (cache.medDoses) return cache.medDoses;
+    const raw = localStorage.getItem(STORAGE_KEYS.MED_DOSES);
+    if (!raw) {
+      cache.medDoses = [];
+      return cache.medDoses;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      const doses: MedicationDose[] = Array.isArray(parsed)
+        ? parsed.filter(
+            (d: MedicationDose | null | undefined): d is MedicationDose =>
+              d != null && typeof d.slotDate === 'string' && typeof d.takenAt === 'number',
+          )
+        : [];
+      cache.medDoses = doses;
+      return doses;
+    } catch {
+      cache.medDoses = [];
+      return cache.medDoses;
+    }
+  },
+
+  saveMedicationDoses(doses: MedicationDose[]): void {
+    const sorted = [...doses].sort((a, b) => b.takenAt - a.takenAt);
+    localStorage.setItem(STORAGE_KEYS.MED_DOSES, JSON.stringify(sorted));
+    cache.medDoses = [...sorted];
+  },
+
+  // 一个槽位只保留一条记录：按 slotDate 覆盖写入，避免重复打卡
+  upsertMedicationDose(dose: MedicationDose): MedicationDose[] {
+    const rest = this.getMedicationDoses().filter(d => d.slotDate !== dose.slotDate);
+    this.saveMedicationDoses([dose, ...rest]);
+    return this.getMedicationDoses();
+  },
+
+  deleteMedicationDose(id: string): MedicationDose[] {
+    this.saveMedicationDoses(this.getMedicationDoses().filter(d => d.id !== id));
+    return this.getMedicationDoses();
+  },
+
+  // 应用内提醒的「稍后提醒」截止时间戳（0 表示未稍后）
+  getMedicationSnooze(): number {
+    const raw = localStorage.getItem(STORAGE_KEYS.MED_SNOOZE);
+    const value = raw ? Number(raw) : 0;
+    return Number.isFinite(value) ? value : 0;
+  },
+
+  setMedicationSnooze(untilMs: number): void {
+    if (!Number.isFinite(untilMs) || untilMs <= 0) {
+      localStorage.removeItem(STORAGE_KEYS.MED_SNOOZE);
+    } else {
+      localStorage.setItem(STORAGE_KEYS.MED_SNOOZE, String(Math.round(untilMs)));
+    }
+  },
+
   // 恢复内置官方数据（含 10.06-10.09 全部真实记录与预设重量）
   restoreOfficialData(): void {
     localStorage.setItem(STORAGE_KEYS.EXERCISES, JSON.stringify(INITIAL_EXERCISES));
@@ -862,13 +961,15 @@ export const StorageService = {
   // 备份与恢复
   exportBackupJson(): string {
     const data = {
-      version: '2.0',
+      version: '2.1',
       exportedAt: new Date().toISOString(),
       exercises: this.getExercises(),
       plans: this.getPlans(),
       sessions: this.getSessions(),
       weights: this.getWeightLogs(),
       goal: this.getWeightGoal(),
+      medication: this.getMedicationConfig(),
+      medicationDoses: this.getMedicationDoses(),
     };
     return JSON.stringify(data, null, 2);
   },
@@ -881,6 +982,13 @@ export const StorageService = {
       if (Array.isArray(data.sessions)) this.saveSessions(data.sessions);
       if (Array.isArray(data.weights)) this.saveWeightLogs(data.weights);
       if (typeof data.goal === 'number') this.saveWeightGoal(data.goal);
+      // 用药数据为 2.1 新增：旧备份没有这两段，缺省即跳过（保持旧备份可导入）
+      if (data.medication && typeof data.medication === 'object') {
+        this.saveMedicationConfig(data.medication as MedicationConfig);
+      }
+      if (Array.isArray(data.medicationDoses)) {
+        this.saveMedicationDoses(data.medicationDoses as MedicationDose[]);
+      }
       return true;
     } catch (err) {
       console.error('Failed to import backup:', err);
@@ -895,9 +1003,14 @@ export const StorageService = {
     localStorage.removeItem(STORAGE_KEYS.WEIGHTS);
     localStorage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
     localStorage.removeItem(STORAGE_KEYS.WEIGHT_GOAL);
+    localStorage.removeItem(STORAGE_KEYS.MED_CONFIG);
+    localStorage.removeItem(STORAGE_KEYS.MED_DOSES);
+    localStorage.removeItem(STORAGE_KEYS.MED_SNOOZE);
     cache.exercises = null;
     cache.plans = null;
     cache.sessions = null;
     cache.weights = null;
+    cache.medConfig = null;
+    cache.medDoses = null;
   }
 };

@@ -1,6 +1,6 @@
 import { useCallback, useState, useEffect } from 'react';
 import {
-  Plus, Edit3, Trash2, Copy, Play,
+  Plus, Edit3, Trash2, Copy, Play, Pill, ChevronRight,
   Flame, ArrowUp, ArrowDown
 } from 'lucide-react';
 import {
@@ -15,6 +15,12 @@ interface PlansViewProps {
   allExercises: Exercise[];
   onStartPlan: (plan: WorkoutPlan) => void;
   onRefreshExercises?: () => void;
+  /** 用药入口（计划分化页顶部）：用药页不再是底部 tab，从这里进入 */
+  medication?: {
+    due: boolean;
+    summary: string;
+    onOpen: () => void;
+  };
 }
 
 const fieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
@@ -39,6 +45,7 @@ const displayPlanName = (name: string) => name.replace(/➕/g, '+');
 export const PlansView: React.FC<PlansViewProps> = ({
   allExercises,
   onStartPlan,
+  medication,
 }) => {
   const [plans, setPlans] = useState<WorkoutPlan[]>([]);
   const [editingPlan, setEditingPlan] = useState<WorkoutPlan | null>(null);
@@ -279,6 +286,33 @@ export const PlansView: React.FC<PlansViewProps> = ({
           </Button>
         </div>
       </div>
+
+      {/* 用药入口：一条独立卡片，待服时带小红点 */}
+      {medication && (
+        <button
+          type="button"
+          onClick={medication.onOpen}
+          className="mb-3 flex w-full items-center gap-3 rounded-card border border-line bg-surface p-4 text-left transition-colors hover:bg-surface-subtle active:scale-[0.99]"
+        >
+          <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
+            <Pill className="h-4 w-4" />
+            {medication.due && (
+              <span
+                aria-hidden="true"
+                className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-danger ring-2 ring-surface"
+              />
+            )}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-1.5">
+              <span className="text-h2 font-semibold text-ink">用药管理</span>
+              {medication.due && <Badge tone="danger">待服用</Badge>}
+            </span>
+            <span className="mt-0.5 block truncate text-cap text-ink-2">{medication.summary}</span>
+          </span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-ink-3" />
+        </button>
+      )}
 
       {/* 计划卡片列表 */}
       <div className="space-y-3">

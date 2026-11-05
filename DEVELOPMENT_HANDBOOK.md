@@ -203,7 +203,7 @@
 - **问题① 内置超级组飞鸟无标记**：`ex-sho-03` 只有名称含“超级组”字样，无 `isDropSet/dropStages` 字段，徽标渲染条件命中不了，真机列表与你截图一致无徽标。修法：数据源补标记与默认四阶（10×12/7.5×12/5×10/2.5×12）；`getExercises` 四条读取路径加单条内置补丁并有改写回，老手机不清数据也能生效，只碰 `ex-sho-03` 一条。
 - **问题② 动作库只能看不能改**：列表编辑按钮仅 `ex.isCustom` 可见，内置动作点不了。修法：编辑入口放开到全部动作，删除仍仅自建；内置编辑时名称与部位锁定只读，保存保留原名原部位，其余规格照表单写入。
 - **问题③ 历史编辑无超级组开关**：已有普通组（如飞鸟/侧平举）无法一键转超级组，换动作还丢标记。修法：每组动作行加“🔥超级组”徽标与“设为超级组/取消超级组”切换（`editToggleDropSet`，开时深拷贝默认四阶并清单侧，关时保留重量次数）；切单侧改为清除超级组标记；`editReplaceExercise` 追加标记参数并按组数重建大组；挑选弹窗换动作分支补透传。
-- **验证**：单 data-code 子代理实施并按 L2 审核通过（review-v2811.json accepted）；390 视口实测超级组飞鸟带“🔥超级组·4阶”、全库 48 个编辑入口、历史编辑 5 组动作行均有切换且点开翻转为取消；tsc 与构建通过。已知限制：历史自定义新动作内联表单无超级组开关（任务明确未覆盖）；内置动作关超级组保存后冷启动会补回（取消不跨重启持久，需另立方案）。
+- **验证**：单 data-code 子代理实施并按 L2 审核通过（review-v2811.json accepted）；390 视口实测超级组飞鸟带“🔥超级组·4阶”、全库 48 个编辑入口、历史编辑 5 组动作行均有切换且点开翻转为取消；tsc 与构建通过。已知限制（历史自定义新动作内联表单无超级组开关，**已于 v2.9.0 补齐，见 24 节**）；内置动作关超级组保存后冷启动会补回（取消不跨重启持久，**已于 v2.9.0 修复，见 24 节**）。
 - **数据红线**：无新增存储键；版本号 versionCode 30 / versionName 2.8.11。
 
 ### 23. v2.8.12 状态栏避让 + 移除恢复按钮 + 原生导出备份
@@ -213,7 +213,44 @@
 - **验证**：单 data-code 子代理实施并按 L2 审核通过（review-v2812.json accepted）；主模型重跑 tsc 与构建通过；cap sync 确认两个插件已注册；真机顶距与分享面板待用户覆盖安装确认。
 - **数据红线**：无新增存储键；导出 JSON 结构未变；版本号 versionCode 31 / versionName 2.8.12。
 
-### 25. v2.8.17 日志页顶部双标签高亮
+### 24. v2.9.0 用药记录与提醒（隔天服药，第一个非训练模块）
+- **需求**：长期隔天服用非那雄胺（48h 一次），经常忘；要「可设时间 + 每 48h 提醒 + 一键打卡 + 历史看漏服 + 提醒开关」，且视觉与既有四页一致。
+- **模块边界（关键设计）**：用药属于「与训练无关的周期事件」，因此**不进 WorkoutSession / WeightLog 结构**，单列三个存储键 `fitcustom_med_config_v2` / `fitcustom_med_doses_v2` / `fitcustom_med_snooze_v2`，避免污染既有数据模型与统计（`sessionVolumes`、`computeStreak` 等一行未改）。
+- **文件分工**（三层，便于以后加第二个药）：
+  - `src/utils/medication.ts`：纯函数层（无 localStorage、无 React）。槽位按「首剂日期 + 间隔天数」用 `shiftLocalDate` 生成，全本地时间；`getMedicationState(config, doses, now)` 一次算出 todaySlot / dueSlot / upcoming / nextDueAt / overdueMs / isDue / takenToday / streak / stats / history / chain。
+  - `src/utils/medicationReminder.ts`：原生通知层。`notificationIdForSlot(dateStr) = 71_000_000 + diffLocalDays('2024-01-01', dateStr)`，id 只跟应服日绑定，**同一天重复排程必然覆盖同一条通知**，撤销时按 id 区间精确 cancel，不会误杀别的通知。
+  - `src/utils/useMedication.ts`：状态中枢 hook，App 层调用一次，用药页与全局到点弹层共用同一份快照（打卡后底部红点立即消失）。
+- **待处理槽位的判定规则（踩坑后定的）**：`dueSlot` 只取「≤ 今天的最近一个槽位」，且它没有记录时才算待办。最初写成「从今天往前找第一个没打卡的槽位」，结果用户补打卡今天的之后，首页仍停在很久以前的待补槽位（测试 S3：due=11-03 而 11-05 已服）。改成只认最近槽位后，更早的空缺统一沉到历史里显示「漏服」，每行都有「补记」按钮，既有交代又不挡今天的操作。
+- **提醒策略**：
+  - 原生用 `@capacitor/local-notifications` 一次性排 16 条单次通知（48h 间隔≈32 天），每次配置/打卡/回前台都先撤后排（幂等）。
+  - `isExactNotification: false` + `allowWhileIdle: true`：插件源码里 exact 为真且缺「闹钟与提醒」权限时会**直接跳系统设置页**（打断用户），故选择非精确 + Doze 可用，代价是最多晚几分钟。
+  - 权限：`POST_NOTIFICATIONS` 等由插件 manifest 合并，App 清单无需手改；未授权时页面给黄色提示条 + 「开启通知权限」；拒绝后只是不响，不阻塞打卡。
+  - 点通知进 App：App.tsx 监听 `localNotificationActionPerformed`，带 `extra.medicationSlot` 的直接切到用药页并撤掉该条通知。
+  - 页内兜底：`reminderEnabled && isDue && now >= snoozeUntil && 不在用药页` 时弹全局 Sheet，关闭 = snooze 1 小时（落盘，重启仍生效）。
+- **顺手修掉的既有问题**：
+  - 内置超级组冷启动复活：`applyBuiltinExercisePatch` 原来用 `!ex.isDropSet` 判断，用户关掉后落盘 `false` 又被改回 `true`；改为只在 `typeof ex.isDropSet === 'undefined'` 时补默认值（区分「从未写入」与「用户选了否」）。
+  - 白屏无自救：新增 `src/components/ErrorBoundary.tsx`，`main.tsx` 包住 `<App />`，渲染异常时给「页面出错了」卡片 + 重新加载，并提示数据在 localStorage、可先去日志页导出备份。
+  - 历史新增动作不能建超级组：v2.8.11 留下的缺口（历史编辑里自定义新动作只能建成普通动作，事后要再点一次「设为超级组」）。表单并入「递减超级组（4 阶梯）」开关，勾选时强制 kg 单重并清空单侧（与 `editToggleDropSet` 同一规则），保存即带默认四阶。
+  - 备份漏数据：`exportBackupJson` 升到 `version: '2.1'`，带上 `medication` / `medicationDoses`；`importBackupJson` 对缺失字段容忍（旧备份照常导入）；日志页文案改为四类数据，导入成功后 `window.dispatchEvent(new Event(MED_CHANGED_EVENT))` 让用药状态重读。
+- **验证**：`npx tsc --noEmit` 与 `npm run build` 通过；用 esbuild 打包 `medication.ts` 在 node 里跑 6 组场景（未到点/逾期 30 分/已服/漏两天/逾期补记/跳过）确认 dueSlot、isDue、late、streak、stats 全部符合预期；`npx cap sync android` 确认 `capacitor.build.gradle` 已注册 `:capacitor-local-notifications`。真机响铃待覆盖安装确认。
+- **数据红线**：新增 3 个存储键，旧键与结构零改动；版本号 versionCode 39 / versionName 2.9.0；CI `tag_name: v2.9.0`。
+
+### 25. v2.9.1 用药入口下移 + 默认 12:00 + 系统日历（导航回归 4 项）
+- **需求（用户第二轮）**：撤掉底部第 5 个「用药」Tab，第 4 项改名「每天记录体重」；用药入口挪到「计划分化」页并带小红点；提醒改成隔天中午 12:00；尽可能把提醒也落到系统日历里。
+- **导航回归 4 项**：`src/App.tsx` 的 `navTabs` 回到 4 项、容器 `grid-cols-5` → `grid-cols-4`；`TabId` 仍保留 `'medication'`——它现在是「计划分化」的**二级页**而不是导航项，`navActiveId = activeTab === 'medication' ? 'plans' : activeTab` 让导航高亮跟着父级走，用药页左上角新增返回按钮（`MedicationViewProps.onBack`）。
+- **第 4 项语义**：标签「每天记录体重」；`WeightJournalViewProps` 新增 `initialSubTab?: 'training' | 'weight'`（默认 `'training'`），App 传 `'weight'`，打开即落在体重子页签，训练历史仍在同页第二个子页签——只加了一个可选属性，没有拆组件、没有改数据。
+- **入口卡**：`PlansViewProps` 新增可选 `medication?: { due: boolean; summary: string; onOpen: () => void }`，在页头下渲染一条卡片（accent-soft 圆形 Pill 图标、待服时 danger 小红点 + 「待服用」Badge、ChevronRight）。摘要由 App 算好传入（到点显示「…12:00 已到点，记得打卡」，否则显示周期 / 时间 / 下次应服日），**PlansView 不读用药存储**，保持计划页对用药模块零依赖。
+- **默认时间**：`DEFAULT_MED_REMINDER_TIME` 从 `'21:00'` 改为 `'12:00'`，`FALLBACK_MINUTES` 同步为 `12 * 60`（历史数据没写时间时也按中午解释）。
+- **系统日历（新增 `src/utils/calendarIcs.ts`）**：
+  - 为什么不直写 CalendarContract：需要 `READ/WRITE_CALENDAR` 运行时权限 + 自研原生插件，还得自己挑可写日历、写 Reminders 表，一旦失败就是「静默不提醒」；`.ics` 里带 `RRULE:FREQ=DAILY;INTERVAL=<stepDays>` 与 `VALARM TRIGGER:-PT0M`，用户导入一次后由系统日历自己隔天提醒，App 被清理也不受影响。
+  - `buildMedicationIcs(config, fromDate?, now?)`：DTSTART 取「今天或之后最近、且时间点还没过」的槽位（用 `shiftLocalDate` 往后挪一格，避免迁到过去），用**浮动本地时间**（不带 Z），换时区不漂移；UID 绑定起始槽位日，重复导入是更新而不是堆叠；描述里写明「导入后由系统日历负责提醒」与 App 内记录路径。
+  - 折行按 RFC 5545（75 八位字节内，中文按 3 字节算，续行以空格开头），`foldIcsLines` 按**字符边界**切，不会把汉字劈成半个。
+  - `exportMedicationIcs(config)`：原生端 `Filesystem.writeFile(Directory.Cache)` + `Share.share({ files: [uri] })`（用户取消分享不算失败）；Web 端退化成 Blob + `a[download]`。任何异常只返回 `{ ok: false, message }`，不往 React 里抛。
+  - 页面：「系统日历提醒」卡片 + 4 步导入说明 + 导出结果 Sheet，并提示日历事件与 App 通知是两套提醒，重复提醒时删掉一边。
+- **验证**：`npx tsc --noEmit`、`npm run build`、`npx cap sync android` 全绿；esbuild 打包在 node 里跑 ICS 用例（11-01 起隔天 12:00、now=11-05 12:00）得到 `DTSTART:20261107T120000` / `RRULE:FREQ=DAILY;INTERVAL=2`（今天的槽位已过点，自动挪到下一格）；SSR 冒烟：用药页含「系统日历提醒」与返回按钮、计划页带入口卡时含「用药管理 / 待服用 / 每 2 天一次」、不传 `medication` 时不渲染入口、App 导航四项标签齐全且为 `grid-cols-4`。
+- **数据红线**：无新增存储键（日历文件是临时产物，不落 localStorage）；版本号 versionCode 40 / versionName 2.9.1；CI `tag_name: v2.9.1`。
+
+### 26. v2.8.17 日志页顶部双标签高亮
 - **问题**：日志页「历史训练记录 / 体重与生活日志」两栏选中态只是白底加极细描边，在灰底容器上几乎看不出哪栏被选中。
 - **修法**：选中态改为实色填充——训练记录用蓝底白字（bg-blue-600），体重日志用绿底白字（bg-emerald-600），各带同色阴影；未选中改为浅灰字，悬停时才显示白底。容器底色由 slate-200/70 调浅为 slate-100，内阴影去掉改用外阴影，让选中色块更跳。
 - **验证**：390 视口实测两栏切换均正确高亮，截图确认蓝/绿实色块与白字对比清晰；tsc 与构建通过。
@@ -243,6 +280,8 @@
 │   │   ├── PlansView.tsx          # 训练计划管理、编辑弹窗、动作负荷预设
 │   │   ├── ExerciseLibraryView.tsx # 标准动作库、部位筛选、动作搜索、收藏
 │   │   ├── WeightJournalView.tsx  # 日志记录中心：统计+日历+容量+目标曲线
+│   │   ├── MedicationView.tsx     # 用药管理：今日状态卡、打卡、历史与漏服、提醒设置
+│   │   ├── ErrorBoundary.tsx      # 全局渲染兜底：白屏救急卡片 + 重新加载
 │   │   └── ConfirmSheet.tsx       # 全应用统一底部确认抽屉
 │   ├── data/
 │   │   ├── initialExercises.ts    # 预置官方完整动作库字典
@@ -253,6 +292,9 @@
 │   │   ├── sessionBuilder.ts      # 统一会话构建器：计划→进行中训练的唯一构造入口（含超级组阶梯注入）
 │   │   ├── date.ts                # 本地日期工具：todayLocalDate，禁止再用 toISOString 取日期
 │   │   ├── stats.ts               # 纯函数统计：容量/时长/连续打卡/周次数
+│   │   ├── medication.ts          # 用药纯函数：48h 槽位、待办判定、依从率、格式化
+│   │   ├── medicationReminder.ts   # 原生本地通知：幂等排程/撤销、通知 id 与应服日绑定
+│   │   ├── useMedication.ts       # 用药状态中枢 hook：App 层单例，页面与弹层共用
 │   │   └── storage.ts             # 数据持久化封装、进程内解析缓存、版本迁移、备份导出导入
 │   ├── App.tsx                    # 主视图容器、顶部安全垫片、磨砂底部导航
 │   └── main.tsx                   # 前端挂载入口
