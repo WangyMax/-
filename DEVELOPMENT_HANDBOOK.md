@@ -250,7 +250,27 @@
 - **验证**：`npx tsc --noEmit`、`npm run build`、`npx cap sync android` 全绿；esbuild 打包在 node 里跑 ICS 用例（11-01 起隔天 12:00、now=11-05 12:00）得到 `DTSTART:20261107T120000` / `RRULE:FREQ=DAILY;INTERVAL=2`（今天的槽位已过点，自动挪到下一格）；SSR 冒烟：用药页含「系统日历提醒」与返回按钮、计划页带入口卡时含「用药管理 / 待服用 / 每 2 天一次」、不传 `medication` 时不渲染入口、App 导航四项标签齐全且为 `grid-cols-4`。
 - **数据红线**：无新增存储键（日历文件是临时产物，不落 localStorage）；版本号 versionCode 40 / versionName 2.9.1；CI `tag_name: v2.9.1`。
 
-### 26. v2.8.17 日志页顶部双标签高亮
+### 26. v2.9.2 通知权限自诊断 + .ics 真正能被系统日历打开（两个线上 Bug）
+- **用户反馈（真机 v2.9.1）**：① 到点提醒开关已打开，界面仍提示「还没有通知权限」，右侧按钮点了没反应；② 导出的 .ics 在「打开方式」里没有系统日历，打开后文件里只有一句话。
+- **Bug ② 根因（两条叠加，都在第三方插件侧）**：
+  1. 写盘文件名用了中文 `fitcustom-用药提醒.ics`。`@capacitor/share` 的 `SharePlugin.shareFiles()` 用 `MimeTypeMap.getSingleton().getMimeTypeFromExtension(getFileExtensionFromUrl(url))` 反推类型，中文名取不到扩展名 → `type == null` → `intent.setType("*/*")` → 分享面板里只剩文本类 App，日历不出现。
+  2. 分享时同时传了 `text`。`SharePlugin.java:117-122` 只要 `text != null` 就 `putExtra(EXTRA_TEXT)` 并 `setTypeAndNormalize("text/plain")`，接收方把整个 intent 当纯文本打开——用户看到的「文件里只有一句话」正是那段 text。
+- **修法**：`MED_ICS_FILE_NAME` 改成 ASCII `fitcustom-medication.ics`（中文名只做展示常量 `MED_ICS_DISPLAY_NAME`）；分享文件**不再传 text**；并且不再只依赖分享面板——新增自研插件用 `ACTION_VIEW + text/calendar` 直达日历导入（国内 ROM 日历多只注册 VIEW，不注册 SEND）。
+- **新原生插件 `MedicationNative`**（`android/app/src/main/java/com/fitcustom/pro/MedicationNativePlugin.java`，零第三方依赖）：
+  - `notificationsEnabled()` → `NotificationManagerCompat.from(ctx).areNotificationsEnabled()`，返回 `{enabled, sdkInt}`；
+  - `openNotificationSettings()` → API≥O 用 `Settings.ACTION_APP_NOTIFICATION_SETTINGS` + `EXTRA_APP_PACKAGE`，否则回落 `ACTION_APPLICATION_DETAILS_SETTINGS`，两级 try/catch，返回 `{opened}`；
+  - `openIcsFile({uri})` → `file:` 走 `FileProvider.getUriForFile(ctx, pkg + ".fileprovider", file)`（复用 Manifest 里已有的 provider 与 `res/xml/file_paths.xml` 的 `<cache-path path=".">`），然后 `Intent.ACTION_VIEW.setDataAndType(uri, "text/calendar")` + `setClipData(ClipData.newRawUri(...))` + `FLAG_GRANT_READ_URI_PERMISSION`，拿不到 Activity 时返回 `{opened:false}` 让 JS 回退分享。
+  - **注册位置铁律**：`MainActivity.onCreate()` 里 `registerPlugin(...)` 必须在 `super.onCreate(...)` **之前**（Bridge 在 super 里组装，之后注册无效）。
+- **Bug ① 根因**：`LocalNotificationsPlugin` 的 `checkPermissions()` 在 API≥33 走 Capacitor 运行时权限（可能长期停在 `prompt`），而 `permissionsCallback` 只用 `areNotificationsEnabled()` 返回 granted/denied、永不返回 prompt；加上 Android 13+ 用户在二次拒绝后系统不再弹对话框，`requestPermissions()` 的 Promise 也可能长时间不回——两种表现都像「点了没反应」。
+- **修法（`src/utils/medicationReminder.ts` + 新 `src/utils/medicationNative.ts`）**：
+  - 双路校验：`decide(pluginPermission, nativeEnabled)` —— `prompt`/`unsupported` 原样返回，`granted` 但系统层面 `areNotificationsEnabled()===false` 判为 `denied`，其余取插件值；`ReminderPermissionInfo{permission, pluginPermission, nativeEnabled, error?}` 把原始值透传给界面。
+  - `requestReminderPermissionInfo()` 用 `withTimeout(api.requestPermissions(), 6_000)`，超时后回读真实状态并带 `error:'request_timeout'`，界面不再"卡在提示上"。
+  - 界面：`permission !== 'granted'` 时始终给出可点按钮（`prompt` → 「开启通知权限」，非 `unsupported` → 「打开系统通知设置」，外加「重新检测」），点击后显示忙态与结论；`granted` 时显示「通知已开启 · 已排期 N 条」；面板底部一行诊断（运行时权限 / 系统通知 / 排期条数 / 错误）。
+  - `useMedication` 的 controller 新增 `permissionInfo`、`scheduled`、`syncError`、`recheckPermission`、`openNotificationSettings`；`requestPermission` 改为返回 `ReminderPermissionInfo`。
+- **验证**：`npx tsc --noEmit`、`npm run build`、`npx cap sync android` 全绿；esbuild + node 的 ICS 用例确认文件名纯 ASCII、`13:00` 导出时起始槽位自动挪到 `2026-11-07`、`DTSTART:20261107T120000`、`RRULE:FREQ=DAILY;INTERVAL=2`、`TRIGGER:-PT0M`；SSR 冒烟覆盖 4 种权限态（prompt 有「开启通知权限」、denied 有「打开系统通知设置」、granted 显示「已排期」且无警告条、unsupported 只留「重新检测」）。
+- **数据红线**：无新增存储键；versionCode 41 / versionName 2.9.2；CI `tag_name: v2.9.2`。Java 侧只新增一个插件文件 + `MainActivity` 一行注册，未改任何 Capacitor 官方插件源码（升级插件不会覆盖丢失）。
+
+### 27. v2.8.17 日志页顶部双标签高亮
 - **问题**：日志页「历史训练记录 / 体重与生活日志」两栏选中态只是白底加极细描边，在灰底容器上几乎看不出哪栏被选中。
 - **修法**：选中态改为实色填充——训练记录用蓝底白字（bg-blue-600），体重日志用绿底白字（bg-emerald-600），各带同色阴影；未选中改为浅灰字，悬停时才显示白底。容器底色由 slate-200/70 调浅为 slate-100，内阴影去掉改用外阴影，让选中色块更跳。
 - **验证**：390 视口实测两栏切换均正确高亮，截图确认蓝/绿实色块与白字对比清晰；tsc 与构建通过。

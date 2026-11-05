@@ -4,6 +4,7 @@ import { Share } from '@capacitor/share';
 import { MedicationConfig } from '../types';
 import { shiftLocalDate, todayLocalDate } from './date';
 import { intervalDaysOf, nextSlotOnOrAfter, slotTimestamp } from './medication';
+import { openIcsWithSystemCalendar } from './medicationNative';
 
 /**
  * 把「隔 N 天 / 固定时刻」的用药计划导出成一个 .ics 日历文件。
@@ -19,7 +20,14 @@ import { intervalDaysOf, nextSlotOnOrAfter, slotTimestamp } from './medication';
  * 换时区也不会漂移。
  */
 
-export const MED_ICS_FILE_NAME = 'fitcustom-用药提醒.ics';
+export const MED_ICS_FILE_NAME = 'fitcustom-medication.ics';
+/**
+ * 展示名带中文，但**写盘一律用 ASCII 名**：
+ * Capacitor Share 插件用 `MimeTypeMap.getFileExtensionFromUrl()` 反推 MIME，
+ * 文件名里出现中文时它取不到扩展名 → intent type 退化为 `* / *` → 分享面板里只剩文本类 App，
+ * 系统日历不会出现在列表里（v2.9.2 用户反馈「打开方式里没有系统日历」的根因）。
+ */
+export const MED_ICS_DISPLAY_NAME = '用药提醒.ics';
 
 const ICS_END_OF_LINE = '\r\n';
 const EVENT_MINUTES = 15;
@@ -151,9 +159,14 @@ export interface IcsExportResult {
   ok: boolean;
   /** 给用户看的一句话结论 */
   message: string;
-  /** 原生端分享出去的文件路径（Web 端为空） */
+  /** 原生端写出的文件路径（Web 端为空） */
   path?: string;
+  /** 是否成功唤起系统日历（仅在 mode='open' 时有意义） */
+  openedWithCalendar?: boolean;
 }
+
+/** 导出后的动作：直接用系统日历打开（推荐），或走分享面板让用户自己挑 App */
+export type IcsShareMode = 'open' | 'share';
 
 /** 浏览器端：走 Blob + a[download]，不支持时退化成提示 */
 function downloadInBrowser(ics: MedicationIcs): boolean {
@@ -176,16 +189,21 @@ function downloadInBrowser(ics: MedicationIcs): boolean {
 
 /**
  * 导出日历文件：
- *  - 原生端：写入 App 缓存目录并调起系统分享面板（可"保存到文件"/发给日历）；
+ *  - 原生端：写入 App 缓存目录，默认用 ACTION_VIEW + text/calendar 直接唤起居中的日历
+ *    （国内 ROM 的日历多数只注册 VIEW，不注册 SEND，所以分享面板里往往找不到它）；
+ *    唤起失败再退回到分享面板（不带 text，否则 Share 插件会把 intent type 改成 text/plain）；
  *  - 浏览器：直接下载 .ics。
  * 任何失败都只返回 ok:false，不抛异常。
  */
-export async function exportMedicationIcs(config: MedicationConfig): Promise<IcsExportResult> {
+export async function exportMedicationIcs(
+  config: MedicationConfig,
+  mode: IcsShareMode = 'open',
+): Promise<IcsExportResult> {
   const ics = buildMedicationIcs(config);
 
   if (!Capacitor.isNativePlatform()) {
     return downloadInBrowser(ics)
-      ? { ok: true, message: `已生成 ${ics.fileName}，用系统日历打开即可导入。` }
+      ? { ok: true, message: `已生成 ${MED_ICS_DISPLAY_NAME}，用系统日历打开即可导入。` }
       : { ok: false, message: '当前浏览器不支持直接下载，请改用 App 操作。' };
   }
 
@@ -197,18 +215,36 @@ export async function exportMedicationIcs(config: MedicationConfig): Promise<Ics
       encoding: Encoding.UTF8,
     });
 
+    if (mode === 'open') {
+      const opened = await openIcsWithSystemCalendar(written.uri);
+      if (opened) {
+        return {
+          ok: true,
+          openedWithCalendar: true,
+          message: '已交给系统日历，在日历里确认导入即可获得隔天提醒。',
+          path: written.uri,
+        };
+      }
+    }
+
     try {
+      // 注意：这里**不要**传 text —— Share 插件一旦收到 text 就会把 intent 类型改成 text/plain，
+      // 文件会被当成纯文本转发，用户看到的正是"文件里只有一段话"。
       await Share.share({
         title: '导出用药提醒到系统日历',
-        text: '用系统日历打开这个 .ics 文件，即可获得每 N 天一次的重复提醒。',
         files: [written.uri],
-        dialogTitle: '导出用药提醒到系统日历',
+        dialogTitle: '用系统日历打开（或保存文件）',
       });
     } catch {
       // 用户取消分享 / 分享面板不可用：文件已经写好了，仍然算导出成功
     }
 
-    return { ok: true, message: '日历文件已生成，可在分享面板里保存或用日历打开。', path: written.uri };
+    return {
+      ok: true,
+      openedWithCalendar: false,
+      message: `日历文件已生成（${MED_ICS_DISPLAY_NAME}），在分享面板里选「日历」或保存后用日历打开。`,
+      path: written.uri,
+    };
   } catch {
     return { ok: false, message: '生成日历文件失败，请稍后重试。' };
   }

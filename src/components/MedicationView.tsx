@@ -10,7 +10,7 @@ import {
   formatClock, formatCountdown, formatOverdue, formatSlotLabel, intervalLabel,
   MED_INTERVAL_OPTIONS, MedicationSlot, SLOT_STATUS_LABELS,
 } from '../utils/medication';
-import { exportMedicationIcs, MED_ICS_FILE_NAME } from '../utils/calendarIcs';
+import { exportMedicationIcs, IcsShareMode, MED_ICS_DISPLAY_NAME } from '../utils/calendarIcs';
 
 /**
  * 用药管理页：隔天一次（48h）长期用药的打卡 + 提醒 + 历史。
@@ -25,8 +25,8 @@ interface MedicationViewProps {
 
 const PERMISSION_HINT = {
   granted: '系统通知已授权，到点会弹提醒',
-  denied: '系统通知被拒绝：请到「设置 → 通知 → FitCustom Pro」手动打开',
-  prompt: '还没有通知权限，点右侧按钮开启',
+  denied: '系统通知被关掉了：请到「设置 → 通知 → FitCustom Pro」手动打开',
+  prompt: '还没有通知权限，点下方按钮开启',
   unsupported: '当前环境不支持系统通知（网页预览），仅显示应用内提醒',
 } as const;
 
@@ -93,13 +93,16 @@ function slotStatusText(slot: MedicationSlot): string {
 }
 
 export function MedicationView({ med, onBack }: MedicationViewProps) {
-  const { config, state, permission, doses } = med;
+  const { config, state, permission, permissionInfo, doses, scheduled } = med;
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [infoSheetOpen, setInfoSheetOpen] = useState(false);
   const [draftName, setDraftName] = useState(config.name);
   const [draftDosage, setDraftDosage] = useState(config.dosage);
   const [undoDose, setUndoDose] = useState<{ id: string; label: string } | null>(null);
   const [skipSlotDate, setSkipSlotDate] = useState<string | null>(null);
+  // 权限按钮点击后置忙，避免"点了没反应"的错觉（系统对话框可能延迟弹出）
+  const [permissionBusy, setPermissionBusy] = useState(false);
+  const [permissionNote, setPermissionNote] = useState<string | null>(null);
   // 导出 .ics 到系统日历：busy 防连点，result 用来回显结果
   const [icsBusy, setIcsBusy] = useState(false);
   const [icsResult, setIcsResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -131,16 +134,59 @@ export function MedicationView({ med, onBack }: MedicationViewProps) {
   const historyRows = historyExpanded ? state.history.slice(0, 30) : state.history.slice(0, 8);
   const hasRecords = doses.length > 0;
 
-  const handleExportIcs = async () => {
+  const handleExportIcs = async (mode: IcsShareMode) => {
     if (icsBusy) return;
     setIcsBusy(true);
     try {
-      const result = await exportMedicationIcs(config);
+      const result = await exportMedicationIcs(config, mode);
       setIcsResult({ ok: result.ok, message: result.message });
     } finally {
       setIcsBusy(false);
     }
   };
+
+  const handleRequestPermission = async () => {
+    if (permissionBusy) return;
+    setPermissionBusy(true);
+    setPermissionNote(null);
+    try {
+      const info = await med.requestPermission();
+      if (info.permission === 'granted') {
+        setPermissionNote('已获得通知权限，提醒已重新排期。');
+      } else {
+        // 系统对话框被系统静默拒绝（Android 13+ 二次拒绝后不再弹窗）时，明确引导去设置页
+        setPermissionNote('系统没有弹出授权框：说明已被永久拒绝，请点「打开系统通知设置」手动打开。');
+      }
+    } finally {
+      setPermissionBusy(false);
+    }
+  };
+
+  const recheckPermission = async () => {
+    if (permissionBusy) return;
+    setPermissionBusy(true);
+    try {
+      const info = await med.recheckPermission();
+      setPermissionNote(
+        info.permission === 'granted'
+          ? '检测到通知已开启，提醒已重新排期。'
+          : '仍未开启，请到系统设置里允许 FitCustom Pro 发送通知。',
+      );
+    } finally {
+      setPermissionBusy(false);
+    }
+  };
+
+  // 诊断行：把插件值与系统值都摊开，用户截图即可定位问题
+  const diagnostics = useMemo(() => {
+    const plugin = permissionInfo.pluginPermission;
+    const native = permissionInfo.nativeEnabled;
+    const nativeText = native === null ? '未知' : native ? '已开启' : '已关闭';
+    const parts = [`运行时权限：${plugin}`, `系统通知：${nativeText}`];
+    if (state.stepDays > 0 && permission === 'granted') parts.push(`已排期 ${scheduled} 条`);
+    if (permissionInfo.error) parts.push(`错误：${permissionInfo.error}`);
+    return parts.join(' · ');
+  }, [permissionInfo, permission, scheduled, state.stepDays]);
 
   const submitInfoSheet = () => {
     med.updateConfig({ name: draftName.trim() || config.name, dosage: draftDosage.trim() });
@@ -383,17 +429,50 @@ export function MedicationView({ med, onBack }: MedicationViewProps) {
         </div>
 
         {config.reminderEnabled && permission !== 'granted' && (
-          <div className="mt-3 flex items-start gap-2 rounded-ctl bg-warning-soft px-3 py-2.5">
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm2 font-medium text-ink">{PERMISSION_HINT[permission]}</p>
-              {permission !== 'unsupported' && permission !== 'denied' && (
-                <Button size="md" variant="outline" className="mt-2" onClick={() => void med.requestPermission()}>
-                  开启通知权限
-                </Button>
-              )}
+          <div className="mt-3 rounded-ctl bg-warning-soft px-3 py-2.5">
+            <div className="flex items-start gap-2">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm2 font-medium text-ink">{PERMISSION_HINT[permission]}</p>
+                <p className="mt-0.5 text-cap leading-relaxed text-ink-2">{diagnostics}</p>
+                {permissionNote && (
+                  <p className="mt-1 text-cap leading-relaxed text-ink-2">{permissionNote}</p>
+                )}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {permission === 'prompt' && (
+                    <Button
+                      size="md"
+                      variant="outline"
+                      disabled={permissionBusy}
+                      onClick={() => void handleRequestPermission()}
+                    >
+                      {permissionBusy ? '请求中…' : '开启通知权限'}
+                    </Button>
+                  )}
+                  {permission !== 'unsupported' && (
+                    <Button
+                      size="md"
+                      variant="outline"
+                      disabled={permissionBusy}
+                      onClick={() => void med.openNotificationSettings()}
+                    >
+                      打开系统通知设置
+                    </Button>
+                  )}
+                  <Button size="md" variant="ghost" disabled={permissionBusy} onClick={() => void recheckPermission()}>
+                    重新检测
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
+        )}
+
+        {config.reminderEnabled && permission === 'granted' && (
+          <p className="mt-2 flex items-center gap-1.5 text-cap text-ink-3">
+            <Check className="h-3.5 w-3.5 text-success" />
+            通知已开启 · 已排期 {scheduled} 条
+          </p>
         )}
 
         <div className="mt-4 space-y-3">
@@ -468,21 +547,30 @@ export function MedicationView({ med, onBack }: MedicationViewProps) {
           导出 .ics 导入日历后，会得到一条「每 {state.stepDays} 天 {config.reminderTime}」的重复事件，
           由系统日历负责提醒，即使 App 被清理也不会漏。
         </p>
-        <Button
-          variant="outline"
-          size="md"
-          className="mt-3"
-          disabled={icsBusy}
-          onClick={() => void handleExportIcs()}
-        >
-          <CalendarPlus className="h-4 w-4" />
-          {icsBusy ? '正在生成…' : '导出到系统日历'}
-        </Button>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button
+            variant="primary"
+            size="md"
+            disabled={icsBusy}
+            onClick={() => void handleExportIcs('open')}
+          >
+            <CalendarPlus className="h-4 w-4" />
+            {icsBusy ? '正在生成…' : '用系统日历打开'}
+          </Button>
+          <Button
+            variant="outline"
+            size="md"
+            disabled={icsBusy}
+            onClick={() => void handleExportIcs('share')}
+          >
+            分享 / 保存文件
+          </Button>
+        </div>
         <ol className="mt-3 space-y-1 text-cap leading-relaxed text-ink-3">
-          <li>1. 点上方按钮生成 {MED_ICS_FILE_NAME}（原生端会弹出分享面板）。</li>
-          <li>2. 选择「保存到文件」，或直接在文件管理里点开这个 .ics 文件。</li>
-          <li>3. 在「打开方式」里选系统日历 → 确认导入（重复规则已写在文件里）。</li>
-          <li>4. 导入一次即可，日历会自己每 {state.stepDays} 天提醒同一个时间。</li>
+          <li>1. 点「用系统日历打开」，App 会直接唤起居中的日历导入界面（不走分享面板）。</li>
+          <li>2. 日历里确认导入后，会得到一条每 {state.stepDays} 天 {config.reminderTime} 的重复事件。</li>
+          <li>3. 若手机没有可响应的日历，用「分享 / 保存文件」把 {MED_ICS_DISPLAY_NAME} 存到本地，再用日历打开。</li>
+          <li>4. 重复导入不会产生重复事件（事件 ID 固定），改时间后重新导入即可覆盖。</li>
         </ol>
       </Card>
 

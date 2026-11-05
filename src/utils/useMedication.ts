@@ -5,11 +5,13 @@ import {
   buildDoseRecord, createDefaultMedicationConfig, getMedicationState, MED_CHANGED_EVENT, MedicationState,
 } from './medication';
 import {
-  getReminderPermission,
+  getReminderPermissionInfo,
   ReminderPermission,
-  requestReminderPermission,
+  ReminderPermissionInfo,
+  requestReminderPermissionInfo,
   syncMedicationReminders,
 } from './medicationReminder';
+import { openNotificationSettings as openSettingsPage } from './medicationNative';
 
 /**
  * 用药管理的状态中枢：一次 hook 同时服务「用药 Tab」与「全局到点提醒弹层」，
@@ -23,6 +25,12 @@ export interface MedicationController {
   state: MedicationState;
   now: number;
   permission: ReminderPermission;
+  /** 权限判定的完整信息（插件原始值 + 系统层面状态 + 错误），界面用于自诊断 */
+  permissionInfo: ReminderPermissionInfo;
+  /** 本次实际排上的系统通知条数 */
+  scheduled: number;
+  /** 排期失败原因（例如系统里关掉了本应用通知） */
+  syncError?: string;
   /** 开关打开且系统通知已授权，才算「真的会响」 */
   reminderActive: boolean;
   snoozeUntil: number;
@@ -30,7 +38,11 @@ export interface MedicationController {
   markTaken: (slotDate?: string) => void;
   skipSlot: (slotDate?: string) => void;
   removeDose: (id: string) => void;
-  requestPermission: () => Promise<ReminderPermission>;
+  requestPermission: () => Promise<ReminderPermissionInfo>;
+  /** 只回读状态、不弹系统对话框（从系统设置页返回时用） */
+  recheckPermission: () => Promise<ReminderPermissionInfo>;
+  /** 跳系统通知设置页：运行时权限被永久拒绝后，系统不会再弹窗，只能走这条路 */
+  openNotificationSettings: () => Promise<boolean>;
   snooze: (durationMs: number) => void;
   refresh: () => void;
 }
@@ -43,7 +55,13 @@ export function useMedication(): MedicationController {
   const [config, setConfig] = useState<MedicationConfig>(() => createDefaultMedicationConfig());
   const [doses, setDoses] = useState<MedicationDose[]>([]);
   const [now, setNow] = useState<number>(() => Date.now());
-  const [permission, setPermission] = useState<ReminderPermission>('prompt');
+  const [permissionInfo, setPermissionInfo] = useState<ReminderPermissionInfo>(() => ({
+    permission: 'prompt',
+    pluginPermission: 'prompt',
+    nativeEnabled: null,
+  }));
+  const [scheduled, setScheduled] = useState(0);
+  const [syncError, setSyncError] = useState<string | undefined>(undefined);
   const [snoozeUntil, setSnoozeUntil] = useState<number>(0);
   // 回到前台时 +1，触发一次通知重排（WebView 后台会暂停定时器，不能只靠 interval）
   const [resyncToken, setResyncToken] = useState(0);
@@ -70,8 +88,8 @@ export function useMedication(): MedicationController {
 
   useEffect(() => {
     let alive = true;
-    void getReminderPermission().then(result => {
-      if (alive) setPermission(result);
+    void getReminderPermissionInfo().then(result => {
+      if (alive) setPermissionInfo(result);
     });
     return () => {
       alive = false;
@@ -83,7 +101,16 @@ export function useMedication(): MedicationController {
     let alive = true;
     void syncMedicationReminders(config, doses).then(result => {
       if (!alive) return;
-      if (result.permission !== 'unsupported') setPermission(result.permission);
+      setScheduled(result.scheduled);
+      setSyncError(result.error);
+      if (result.permission !== 'unsupported') {
+        setPermissionInfo({
+          permission: result.permission,
+          pluginPermission: result.pluginPermission,
+          nativeEnabled: result.nativeEnabled,
+          error: result.error,
+        });
+      }
     });
     return () => {
       alive = false;
@@ -122,10 +149,23 @@ export function useMedication(): MedicationController {
   }, []);
 
   const requestPermission = useCallback(async () => {
-    const result = await requestReminderPermission();
-    setPermission(result);
+    const result = await requestReminderPermissionInfo();
+    setPermissionInfo(result);
     setResyncToken(value => value + 1);
     return result;
+  }, []);
+
+  const recheckPermission = useCallback(async () => {
+    const result = await getReminderPermissionInfo();
+    setPermissionInfo(result);
+    setResyncToken(value => value + 1);
+    return result;
+  }, []);
+
+  const openNotificationSettings = useCallback(async () => {
+    const opened = await openSettingsPage();
+    // 从系统设置页切回 App 时 visibilitychange 会再回读一次，这里不阻塞等待
+    return opened;
   }, []);
 
   const snooze = useCallback((durationMs: number) => {
@@ -158,14 +198,19 @@ export function useMedication(): MedicationController {
     doses,
     state,
     now,
-    permission,
-    reminderActive: config.reminderEnabled && permission === 'granted',
+    permission: permissionInfo.permission,
+    permissionInfo,
+    scheduled,
+    syncError,
+    reminderActive: config.reminderEnabled && permissionInfo.permission === 'granted',
     snoozeUntil,
     updateConfig,
     markTaken,
     skipSlot,
     removeDose,
     requestPermission,
+    recheckPermission,
+    openNotificationSettings,
     snooze,
     refresh,
   };

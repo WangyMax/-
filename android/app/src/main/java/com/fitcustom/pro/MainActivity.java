@@ -13,6 +13,8 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // 自研插件必须在 super.onCreate() 之前注册（Bridge 在 super 里组装）
+        registerPlugin(MedicationNativePlugin.class);
         super.onCreate(savedInstanceState);
 
         // Android 15+ (targetSdk 35+) 强制 edge-to-edge，WebView 会绘制到状态栏下方；
