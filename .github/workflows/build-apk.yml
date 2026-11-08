@@ -54,7 +54,19 @@ jobs:
       - name: Build Android Debug APK
         run: |
           cd android
-          ./gradlew assembleDebug --stacktrace
+          if ! ./gradlew assembleDebug --stacktrace > android-build.log 2>&1; then
+            cat android-build.log
+            python3 - <<'PY'
+          from pathlib import Path
+          log = Path('android-build.log').read_text(errors='replace')
+          marker = log.find('* What went wrong:')
+          detail = log[marker:marker + 6000] if marker >= 0 else log[-6000:]
+          detail = detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error title=Android build diagnosis::' + detail)
+          PY
+            exit 1
+          fi
+          cat android-build.log
           cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/FitCustomPro-v2.9.3.apk
 
       - name: Verify APK Signature and Upgrade Version
