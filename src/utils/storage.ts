@@ -598,41 +598,7 @@ export const StorageService = {
     }
     try {
       const parsed: WorkoutPlan[] = JSON.parse(raw);
-      // 确保4大计划中的关键预设属性与 INITIAL_PLANS 同步升级（若缺少 targetWeight 或缺少超级组配置）
-      let hasChanges = false;
-      const updated = parsed.map(plan => {
-        const initMatch = INITIAL_PLANS.find(p => p.id === plan.id);
-        if (initMatch) {
-          const freshExs = plan.exercises.map((ex, idx) => {
-            const initEx = initMatch.exercises[idx];
-            if (initEx && initEx.isDropSet && !ex.isDropSet) {
-              hasChanges = true;
-              return {
-                ...ex,
-                isDropSet: true,
-                dropStages: initEx.dropStages,
-              };
-            }
-            if (initEx && (!ex.targetWeight && initEx.targetWeight)) {
-              hasChanges = true;
-              return {
-                ...ex,
-                targetWeight: initEx.targetWeight,
-                targetUnit: initEx.targetUnit,
-                pulleyRatio: initEx.pulleyRatio,
-              };
-            }
-            return ex;
-          });
-          return { ...plan, exercises: freshExs };
-        }
-        return plan;
-      });
-      if (hasChanges) {
-        localStorage.setItem(STORAGE_KEYS.PLANS, JSON.stringify(updated));
-        cache.plans = updated;
-        return updated;
-      }
+      // 已保存的计划即用户配置；读取时不按内置数组位置补回重量、滑轮或递减模式。
       cache.plans = parsed;
       return parsed;
     } catch {
@@ -690,29 +656,7 @@ export const StorageService = {
 
     try {
       const parsed: WorkoutSession[] = JSON.parse(raw);
-      let needsSave = false;
-      const updated = parsed.map(sess => {
-        if (sess.date === '2026-10-08') {
-          const shoEx = sess.exercises.find(e => e.exerciseId === 'ex-sho-03');
-          if (shoEx && (!shoEx.sets[0]?.isDropSet || shoEx.sets.length > 4)) {
-            const initMatch = INITIAL_SESSIONS.find(s => s.id === 'sess-real-1008');
-            if (initMatch) {
-              const freshSho = initMatch.exercises.find(e => e.exerciseId === 'ex-sho-03');
-              if (freshSho) {
-                shoEx.sets = freshSho.sets;
-                shoEx.notes = freshSho.notes;
-                needsSave = true;
-              }
-            }
-          }
-        }
-        return sess;
-      });
-      if (needsSave) {
-        localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(updated));
-        cache.sessions = updated;
-        return updated;
-      }
+      // 历史是当次训练快照，不能因日期或动作 ID 命中种子数据而覆盖用户编辑。
       cache.sessions = parsed;
       return parsed;
     } catch {

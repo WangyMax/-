@@ -25,10 +25,10 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install Dependencies
@@ -37,7 +37,10 @@ jobs:
       - name: Build Web Application
         run: npm run build
 
-      - name: Verify Committed Web Assets
+      - name: Sync Fresh Web Application Into Android
+        run: npx cap sync android
+
+      - name: Verify Synced Web Assets
         run: |
           grep -- "--c-canvas" android/app/src/main/assets/public/assets/*.css
           grep "bg-canvas" android/app/src/main/assets/public/index.html
@@ -52,6 +55,14 @@ jobs:
         run: |
           cd android
           ./gradlew assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/FitCustomPro-v2.9.3.apk
+
+      - name: Verify APK Signature and Upgrade Version
+        run: |
+          signing_tool="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name apksigner | sort -V | tail -n 1)"
+          package_tool="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name aapt | sort -V | tail -n 1)"
+          "$signing_tool" verify --verbose --print-certs android/app/build/outputs/apk/debug/FitCustomPro-v2.9.3.apk
+          "$package_tool" dump badging android/app/build/outputs/apk/debug/FitCustomPro-v2.9.3.apk | grep "package: name='com.fitcustom.pro' versionCode='42' versionName='2.9.3'"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -64,34 +75,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.9.2
-          name: "FitCustom Pro v2.9.2 (通知权限自诊断 + 日历文件真正能被日历打开)"
+          tag_name: v2.9.3
+          name: "FitCustom Pro v2.9.3（训练交互与体重图表优化）"
           body: |
-            ### v2.9.2：修掉你反馈的两个问题
-            1. 通知权限「开了还提示没权限、点按钮没反应」
-               - 权限判定改为双路校验：既看 Capacitor 的运行时权限，也直接问系统 areNotificationsEnabled()，两者不一致时以系统为准。权限被永久拒绝（Android 13+ 二次拒绝后系统不再弹窗）现在能被正确识别，不会一直卡在「还没有通知权限」。
-               - 「开启通知权限」加了 6 秒超时保护与「请求中…」忙态：系统对话框没回音也不会看起来像没反应，超时后自动回读真实状态。
-               - 新增「打开系统通知设置」按钮（原生 intent 直达本应用通知设置页）和「重新检测」按钮；从设置页切回 App 会自动重新检测并重排提醒。
-               - 面板新增一行诊断信息（运行时权限 / 系统通知状态 / 已排期条数 / 错误），出问题截图一张即可定位。
-               - 通知正常时显示「通知已开启 · 已排期 N 条」，排期是否成功一眼可见。
-            2. 导出的 .ics「打开方式里没有日历、文件里只有一段文字」
-               - 根因一：文件名带中文（fitcustom-用药提醒.ics）导致 Capacitor Share 插件推断不出 MIME，intent 类型退化成 */*，分享面板里只剩文本类 App。现在写盘统一用 ASCII 名 fitcustom-medication.ics。
-               - 根因二：分享时同时传了 text，Share 插件会把 intent 类型改成 text/plain，接收方就把整个 intent 当成一段文字打开——你看到的「文件里只有一句话」正是这段 text。现在分享文件不再附带 text。
-               - 新增自研原生插件 MedicationNative（无第三方依赖）：用 ACTION_VIEW + text/calendar + FileProvider 直接唤起系统日历的导入界面，不再依赖分享面板（国内 ROM 的日历多数只注册 VIEW，不注册 SEND）。用药页因此有两个按钮：「用系统日历打开」（推荐）与「分享 / 保存文件」（兜底）。
-               - .ics 内容已逐项核对：DTSTART 浮动本地时间 12:00、DTEND 15 分钟、RRULE:FREQ=DAILY;INTERVAL=2、VALARM DISPLAY TRIGGER:-PT0M、UID 固定（重复导入覆盖而非堆叠），中文按 RFC 5545 折行且不劈字。
+            ### 本次更新
+            - 有氧与滑轮默认关闭，按需手动开启；关闭后同步清理不适用内容。
+            - 自重模式只填写次数，不显示重量输入。
+            - 重复动作沿用上次重量，本次次数留空；递减组可逐阶编辑、增删与复制重量。
+            - 重新设计体重周/月视图，按真实日期展示，支持点选查看数值。
+            - 改善输入焦点、抽屉滚动与页面动效，并修复切换后的残留状态。
+            - 构建时同步最新页面资源，确保安装包包含本次修改。
 
             ### 数据兼容
-            versionCode 41；签名与包名不变（fitcustom.keystore），覆盖安装保留计划、训练、体重、生活日志与用药数据。
+            versionCode 42；沿用原签名与包名 com.fitcustom.pro，支持从 v2.9.2 覆盖安装，无需卸载，保留本地数据。
 
-            ### 已包含历史版本
-            v2.9.1：用药入口移到计划分化页 + 默认 12:00 + 系统日历导出。
-            v2.9.0：新增用药管理（隔天服药记录与提醒），并修复超级组冷启动复活、历史自定义动作缺超级组开关、白屏无兜底、备份不含用药数据。
-            v2.8.19：日志记录 / 计划分化 / 动作库全部迁移新设计系统（灰阶 + 电蓝 token、统一 Sheet 与 SegmentedControl）。
-            v2.8.16：日志与体重修复——体重汇总按当天计算、历史训练支持有氧编辑、训练结束可选有氧时长。
-            v2.8.12：状态栏改为原生 insets 统一避让；真机导出 JSON 改为写入后调系统分享面板。
-            v2.8.11：修复超级组真机不生效，动作库全库可编辑，历史编辑一键切换超级组。
-            v2.8.10：动作库支持标记递减超级组与预设阶梯；历史新增动作默认 4 组。
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          files: android/app/build/outputs/apk/debug/FitCustomPro-v2.9.3.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true

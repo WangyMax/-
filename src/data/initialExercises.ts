@@ -60,7 +60,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: '龙门架绳索高位夹胸',
     category: 'chest',
     defaultUnit: 'plates',
-    defaultPulley: '2:1',
+    defaultPulley: 'none',
     notes: '龙门架滑轮，常见2:1双滑轮或1:1'
   },
   {
@@ -68,7 +68,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: '龙门架绳索低位夹胸',
     category: 'chest',
     defaultUnit: 'plates',
-    defaultPulley: '2:1',
+    defaultPulley: 'none',
   },
 
   // ===================== 背部 (Back) =====================
@@ -86,7 +86,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: '窄距划船 (器械/绳索)',
     category: 'back',
     defaultUnit: 'plates',
-    defaultPulley: '1:1',
+    defaultPulley: 'none',
     isFavorite: true,
     notes: '坐姿划船机，关注背阔肌与背部厚度'
   },
@@ -120,7 +120,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: '直臂绳索下压',
     category: 'back',
     defaultUnit: 'plates',
-    defaultPulley: '1:1',
+    defaultPulley: 'none',
     notes: '孤立激活背阔肌'
   },
   {
@@ -206,7 +206,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: '绳索过头臂屈伸',
     category: 'triceps',
     defaultUnit: 'plates',
-    defaultPulley: '2:1',
+    defaultPulley: 'none',
     isFavorite: true,
     notes: '龙门架下位/中位绳索，强化三头肌长头'
   },
@@ -215,7 +215,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: '绳索下压 (直杆/V柄/麻绳)',
     category: 'triceps',
     defaultUnit: 'plates',
-    defaultPulley: '2:1',
+    defaultPulley: 'none',
     isFavorite: true,
     notes: '高位绳索下压，强化外侧头与内侧头'
   },
@@ -266,7 +266,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: '绳索/哑铃锤式弯举',
     category: 'biceps',
     defaultUnit: 'plates',
-    defaultPulley: '2:1',
+    defaultPulley: 'none',
     isFavorite: true,
     notes: '强化肱肌与肱桡肌，增加手臂厚度'
   },
@@ -301,7 +301,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: '反向飞鸟 (双滑轮)',
     category: 'shoulder',
     defaultUnit: 'kg',
-    defaultPulley: '2:1',
+    defaultPulley: 'none',
     isFavorite: true,
     notes: '龙门架双滑轮交叉后束飞鸟，孤立三角肌后束'
   },
@@ -336,7 +336,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: 'Y 举',
     category: 'shoulder',
     defaultUnit: 'plates',
-    defaultPulley: '2:1',
+    defaultPulley: 'none',
     isFavorite: true,
     notes: '绳索/器械Y字推举，强化下斜方与中后束稳定'
   },
@@ -345,7 +345,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: '绳索面拉 (Face Pull)',
     category: 'shoulder',
     defaultUnit: 'plates',
-    defaultPulley: '2:1',
+    defaultPulley: 'none',
     notes: '后束与肩袖外旋健康动作'
   },
 
@@ -364,7 +364,7 @@ export const INITIAL_EXERCISES: Exercise[] = [
     name: '绳索跪姿卷腹',
     category: 'abs',
     defaultUnit: 'plates',
-    defaultPulley: '2:1',
+    defaultPulley: 'none',
     isFavorite: true,
     notes: '龙门架绳索下压卷腹'
   },

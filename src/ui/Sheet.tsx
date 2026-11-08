@@ -26,6 +26,8 @@ export function Sheet({
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useLockBodyScroll(open);
 
@@ -34,15 +36,35 @@ export function Sheet({
     previousFocus.current = document.activeElement as HTMLElement | null;
     const focusTimer = window.setTimeout(() => panelRef.current?.focus(), 0);
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeRef.current();
+      }
+      if (event.key === 'Tab' && panelRef.current) {
+        const controls = Array.from(panelRef.current.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]',
+        )).filter(element => element.getClientRects().length > 0);
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (!first) {
+          event.preventDefault();
+          panelRef.current.focus();
+        } else if (event.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panelRef.current)) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => {
       window.clearTimeout(focusTimer);
       document.removeEventListener('keydown', onKeyDown);
-      previousFocus.current?.focus();
+      if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true });
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -59,12 +81,12 @@ export function Sheet({
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
         className={cx(
-          'flex max-h-[calc(100dvh-56px)] w-full flex-col overflow-y-auto rounded-t-sheet bg-surface p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-sheet outline-none animate-sheet-up modal-scroll overscroll-contain sm:rounded-sheet',
+          'flex max-h-[calc(100dvh-56px)] w-full flex-col overflow-hidden rounded-t-sheet bg-surface p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-sheet outline-none animate-sheet-up sm:rounded-sheet',
           size === 'lg' ? 'max-w-lg' : 'max-w-md',
         )}
       >
         <div aria-hidden="true" className="mx-auto mb-3.5 h-1 w-10 rounded-full bg-line-strong" />
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex shrink-0 items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 id={titleId} className="text-h2 font-semibold text-ink">{title}</h2>
             {description && <p className="mt-0.5 text-sm2 text-ink-2">{description}</p>}
@@ -73,7 +95,7 @@ export function Sheet({
             <X className="h-5 w-5" />
           </IconButton>
         </div>
-        <div className="mt-4 min-h-0 flex-1">{children}</div>
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain modal-scroll">{children}</div>
         {footer && <div className="mt-4 shrink-0">{footer}</div>}
       </div>
     </div>

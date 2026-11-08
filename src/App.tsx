@@ -34,6 +34,10 @@ export function App() {
     setAllExercises(StorageService.getExercises());
   };
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }, [activeTab]);
+
   // 点击系统通知 → 直接落到「用药」页并清掉这条通知（默认只会打开上次所在的 Tab）
   useEffect(() => {
     let remove: (() => void) | undefined;
@@ -102,7 +106,7 @@ export function App() {
     <div className="min-h-screen bg-canvas text-ink flex flex-col font-sans">
       {/* 状态栏避让由 MainActivity 原生 insets 统一处理（含打孔/刘海与手势条），此处不再叠加 CSS 垫片，避免双倍留白 */}
       {/* 移动端视口容器 (限制在手机尺寸优雅居中，桌面端自适应居中) */}
-      <main className="flex-1 w-full max-w-md mx-auto px-4 pt-1 pb-8">
+      <main key={activeTab} className="page-view flex-1 w-full max-w-md mx-auto px-4 pt-1 pb-8">
         {activeTab === 'workout' && (
           <WorkoutView
             onOpenPlansTab={() => setActiveTab('plans')}
@@ -116,6 +120,7 @@ export function App() {
           <PlansView
             allExercises={allExercises}
             onStartPlan={handleStartPlanFromPlansTab}
+            onRefreshExercises={refreshExercises}
             medication={{
               due: med.state.isDue,
               summary: medSummary,
@@ -132,7 +137,12 @@ export function App() {
         )}
 
         {activeTab === 'journal' && (
-          <WeightJournalView allExercises={allExercises} initialSubTab="weight" />
+          <WeightJournalView
+            allExercises={allExercises}
+            initialSubTab="weight"
+            onRefreshExercises={refreshExercises}
+            onDataChanged={refreshExercises}
+          />
         )}
 
         {activeTab === 'medication' && (

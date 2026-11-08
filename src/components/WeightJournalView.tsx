@@ -13,7 +13,7 @@ import {
   MuscleCategory, ResistanceUnit, PulleyRatio
 } from '../types';
 import { StorageService } from '../utils/storage';
-import { todayLocalDate, shiftLocalDate, weekdayOf } from '../utils/date';
+import { diffLocalDays, todayLocalDate, shiftLocalDate, weekdayOf } from '../utils/date';
 import { MED_CHANGED_EVENT } from '../utils/medication';
 import {
   sessionVolumes, formatVolumeShort, sessionDurationMin,
@@ -21,11 +21,15 @@ import {
 } from '../utils/stats';
 import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 import { ConfirmSheet } from './ConfirmSheet';
+import { WeightTrendChart } from './WeightTrendChart';
+import { seedWeightsOnly, type WorkoutSetMode } from '../utils/trainingRules';
 import { Badge, Button, Card, IconButton, NumberText, SegmentedControl, Sheet, cx } from '../ui';
 
 interface WeightJournalViewProps {
   onDataChanged?: () => void;
   allExercises?: Exercise[];
+  /** 历史编辑里新建动作后通知 App 刷新 allExercises */
+  onRefreshExercises?: () => void;
   /** 打开时默认落在哪个子页签：底部导航第 4 项叫「每天记录体重」，默认进体重组 */
   initialSubTab?: 'training' | 'weight';
 }
@@ -113,6 +117,7 @@ const makeEditDefaultDropStages = (): DropStage[] =>
 export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   onDataChanged,
   allExercises,
+  onRefreshExercises,
   initialSubTab = 'training',
 }) => {
   // 当前子标签: 'training' | 'weight'
@@ -133,6 +138,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const [inputSlot, setInputSlot] = useState<'morning' | 'evening' | 'post-workout'>('morning');
   const [inputNote, setInputNote] = useState('');
   const [isEditingExisting, setIsEditingExisting] = useState(false);
+  const [showWeightDetails, setShowWeightDetails] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   // 备份区就近提示（导出/分享结果），5 秒后自动清空
   const [backupStatus, setBackupStatus] = useState<{
@@ -147,6 +153,14 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const [slotFilter, setSlotFilter] = useState<'all' | SlotKey>('all');
   // 体重打卡日历选中的日期
   const [selectedWeightDate, setSelectedWeightDate] = useState<string | null>(null);
+  // 历史体重行内编辑
+  const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
+  const [weightEditDraft, setWeightEditDraft] = useState<{
+    weight: string;
+    timeSlot: SlotKey;
+    note: string;
+  } | null>(null);
+  const [weightEditError, setWeightEditError] = useState<string | null>(null);
 
   // 体重曲线时间跨度视图: 'week' (周视图/7天) | 'month' (月视图/30天) | 'all' (全部)
   const [chartViewSpan, setChartViewSpan] = useState<'week' | 'month' | 'all'>('week');
@@ -159,6 +173,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
   // 历史训练编辑：正在编辑的会话深拷贝（同 id 写回，休息日仅可改备注）
   const [editingSession, setEditingSession] = useState<WorkoutSession | null>(null);
+  const [editingSessionOriginal, setEditingSessionOriginal] = useState<WorkoutSession | null>(null);
+  const [editSessionError, setEditSessionError] = useState<string | null>(null);
   // 历史编辑：当前打开规格抽屉（单位 + 滑轮）的动作索引
   const [editSpecExIdx, setEditSpecExIdx] = useState<number | null>(null);
 
@@ -171,11 +187,13 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const [historyCustomCategory, setHistoryCustomCategory] = useState<MuscleCategory>('chest');
   const [historyCustomUnit, setHistoryCustomUnit] = useState<ResistanceUnit>('plates');
   const [historyCustomPulley, setHistoryCustomPulley] = useState<PulleyRatio>('none');
+  const [historyCustomShowPulley, setHistoryCustomShowPulley] = useState(false);
   const [historyCustomUnilateral, setHistoryCustomUnilateral] = useState(false);
   // 历史新增动作也支持直接建成递减超级组（v2.9.0 补上 v2.8.11 的遗留缺口）
   const [historyCustomDropSet, setHistoryCustomDropSet] = useState(false);
   const [historyCustomNotes, setHistoryCustomNotes] = useState('');
   const [historyCustomError, setHistoryCustomError] = useState<string | null>(null);
+  const [editShowPulley, setEditShowPulley] = useState(false);
 
   useEffect(() => {
     refreshData();
@@ -234,6 +252,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       setInputNote('');
       setInputSlot('morning');
       setIsEditingExisting(false);
+      setShowWeightDetails(false);
     }
   }, [inputDate, weights]);
 
@@ -242,6 +261,12 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const handleAddLog = (e: React.FormEvent) => {
     e.preventDefault();
     if (isAlreadyLogged) return;
+
+    if (!inputDate) {
+      setFormError('请选择记录日期！');
+      setTimeout(() => setFormError(null), 2500);
+      return;
+    }
 
     const val = parseFloat(inputWeight);
     if (!val || val <= 0) {
@@ -258,6 +283,62 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     });
 
     setIsEditingExisting(false);
+    refreshData();
+    if (onDataChanged) onDataChanged();
+  };
+
+  const startEditWeight = (log: WeightLog) => {
+    setEditingWeightId(log.id);
+    setWeightEditDraft({
+      weight: String(log.weight),
+      timeSlot: log.timeSlot || 'morning',
+      note: log.note || '',
+    });
+    setFormError(null);
+    setWeightEditError(null);
+  };
+
+  const cancelEditWeight = () => {
+    setEditingWeightId(null);
+    setWeightEditDraft(null);
+    setFormError(null);
+    setWeightEditError(null);
+  };
+
+  const saveEditedWeight = () => {
+    if (!editingWeightId || !weightEditDraft) return;
+    const val = parseFloat(weightEditDraft.weight);
+    if (!val || val <= 0) {
+      setWeightEditError('请输入正确的体重数字。');
+      return;
+    }
+
+    const logs = StorageService.getWeightLogs();
+    const currentLog = logs.find(log => log.id === editingWeightId);
+    if (!currentLog) {
+      setWeightEditError('这条记录已不存在，请刷新后重试。');
+      return;
+    }
+    const conflict = logs.find(log =>
+      log.id !== editingWeightId
+      && log.date === currentLog.date
+      && (log.timeSlot || 'morning') === weightEditDraft.timeSlot,
+    );
+    if (conflict) {
+      setWeightEditError('该日期与时段已有一条记录，请保留原时段或删除重复记录。');
+      return;
+    }
+
+    StorageService.saveWeightLogs(logs.map(log => {
+      if (log.id !== editingWeightId) return log;
+      return {
+        ...log,
+        weight: val,
+        timeSlot: weightEditDraft.timeSlot,
+        note: weightEditDraft.note.trim(),
+      };
+    }));
+    cancelEditWeight();
     refreshData();
     if (onDataChanged) onDataChanged();
   };
@@ -312,9 +393,15 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const startEditSession = (sess: WorkoutSession) => {
     // 深拷贝，避免编辑过程中污染列表中的原始对象
     setEditingSession(JSON.parse(JSON.stringify(sess)) as WorkoutSession);
+    setEditingSessionOriginal(JSON.parse(JSON.stringify(sess)) as WorkoutSession);
+    setEditSessionError(null);
   };
 
-  const cancelEditSession = () => setEditingSession(null);
+  const cancelEditSession = () => {
+    setEditingSession(null);
+    setEditingSessionOriginal(null);
+    setEditSessionError(null);
+  };
 
   const saveEditSession = () => {
     if (!editingSession) return;
@@ -327,16 +414,80 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       normalized.cardioNotes = '';
     } else if (normalized.cardioCompleted) {
       const mins = Math.round(normalized.cardioMinutes || 0);
-      normalized.cardioMinutes = mins > 0 ? mins : 20;
-      normalized.cardioType = (normalized.cardioType || '').trim() || '跑步机坡度快走';
+      normalized.cardioMinutes = mins > 0 ? mins : 0;
+      normalized.cardioType = (normalized.cardioType || '').trim();
     } else {
       normalized.cardioMinutes = 0;
       normalized.cardioType = '';
       normalized.cardioNotes = '';
     }
+
+    const originalSets = new Map<string, WorkoutSession['exercises'][number]['sets'][number]>();
+    editingSessionOriginal?.exercises.forEach(exercise => {
+      exercise.sets.forEach(set => originalSets.set(set.id, set));
+    });
+
+    // 只拦截本次真正改过的组；历史里未动过的旧记录原样保留。
+    for (const exercise of normalized.exercises) {
+      const isBodyweight = exercise.currentUnit === 'bodyweight';
+      for (const set of exercise.sets) {
+        const original = originalSets.get(set.id);
+        const changed = !original || JSON.stringify(original) !== JSON.stringify(set);
+        if (!changed) continue;
+
+        const label = `${exercise.exerciseName} 第 ${set.setNumber} 组`;
+        if (set.isDropSet) {
+          if (!set.dropStages || set.dropStages.length === 0) {
+            setEditSessionError(`${label} 至少需要一个递减阶梯。`);
+            return;
+          }
+          for (let stageIndex = 0; stageIndex < set.dropStages.length; stageIndex++) {
+            const stage = set.dropStages[stageIndex];
+            if (stage.reps <= 0) {
+              setEditSessionError(`${label} 第 ${stageIndex + 1} 阶请填写次数。`);
+              return;
+            }
+            if (!isBodyweight && (!Number.isFinite(stage.weightOrPlates) || stage.weightOrPlates < 0)) {
+              setEditSessionError(`${label} 第 ${stageIndex + 1} 阶重量或片数不能为负数。`);
+              return;
+            }
+          }
+        } else if (set.unilateral) {
+          const left = set.left || { weight: set.weightOrPlates, reps: set.reps };
+          const right = set.right || { weight: set.weightOrPlates, reps: set.reps };
+          if (left.reps <= 0 || right.reps <= 0) {
+            setEditSessionError(`${label} 请填写左右两侧次数。`);
+            return;
+          }
+          if (!isBodyweight && (!Number.isFinite(left.weight) || !Number.isFinite(right.weight) || left.weight < 0 || right.weight < 0)) {
+            setEditSessionError(`${label} 左右两侧重量或片数不能为负数。`);
+            return;
+          }
+        } else {
+          if (set.reps <= 0) {
+            setEditSessionError(`${label} 请填写次数。`);
+            return;
+          }
+          if (!isBodyweight && (!Number.isFinite(set.weightOrPlates) || set.weightOrPlates < 0)) {
+            setEditSessionError(`${label} 重量或片数不能为负数。`);
+            return;
+          }
+        }
+
+        if (!original || !original.completed) set.completed = true;
+      }
+    }
+
+    const cardioWasChanged = normalized.cardioCompleted !== Boolean(editingSessionOriginal?.cardioCompleted)
+      || normalized.cardioMinutes !== (editingSessionOriginal?.cardioMinutes || 0);
+    if (!normalized.isRestDay && normalized.cardioCompleted && cardioWasChanged && normalized.cardioMinutes <= 0) {
+      setEditSessionError('已开启有氧，请填写时长；不需要有氧可切回“无有氧”。');
+      return;
+    }
+
     // addSession 对同 id 做原地替换，因此编辑是覆盖写回而非新增
     StorageService.addSession(normalized);
-    setEditingSession(null);
+    cancelEditSession();
     refreshData();
     if (onDataChanged) onDataChanged();
     setImportStatus('已保存历史记录修改');
@@ -345,6 +496,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
   // 在编辑草稿上做不可变更新
   const patchEditing = (fn: (draft: WorkoutSession) => void) => {
+    setEditSessionError(null);
     setEditingSession(prev => {
       if (!prev) return prev;
       const draft = JSON.parse(JSON.stringify(prev)) as WorkoutSession;
@@ -394,8 +546,27 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     patchEditing(d => {
       const ex = d.exercises[exIdx];
       if (!ex) return;
+      const unitChanged = ex.currentUnit !== unit;
       ex.currentUnit = unit;
-      ex.sets.forEach(s => { s.unit = unit; });
+      if (unit === 'bodyweight') {
+        ex.pulleyRatio = 'none';
+      }
+      ex.sets.forEach(s => {
+        s.unit = unit;
+        if (unit === 'bodyweight' || unitChanged) {
+          // 自重不保存任何伪重量或滑轮残留。
+          s.weightOrPlates = 0;
+          if (unit === 'bodyweight') s.pulleyRatio = 'none';
+          if (s.left) s.left.weight = 0;
+          if (s.right) s.right.weight = 0;
+          s.dropStages?.forEach(stage => {
+            stage.weightOrPlates = 0;
+            stage.unit = unit;
+          });
+        } else {
+          s.dropStages?.forEach(stage => { stage.unit = unit; });
+        }
+      });
     });
 
   // 历史编辑：切换滑轮比例（整组同步）——普通 / 单滑轮 1:1 / 双滑轮 2:1
@@ -403,11 +574,12 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     patchEditing(d => {
       const ex = d.exercises[exIdx];
       if (!ex) return;
+      if (ex.currentUnit === 'bodyweight') return;
       ex.pulleyRatio = ratio;
       ex.sets.forEach(s => { s.pulleyRatio = ratio; });
     });
 
-  // 历史编辑：切换单双侧；切到单侧时左右默认取主字段值，切回双侧保留数据仅不再分侧展示
+  // 历史编辑：切到单侧时左右取主字段；切回双侧后移除不再使用的左右字段。
   // 单侧与超级组互斥：切到单侧时清除该动作各组的超级组标记与阶梯
   const editToggleUnilateral = (exIdx: number, on: boolean) =>
     patchEditing(d => {
@@ -420,16 +592,18 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             s.dropStages = undefined;
           }
           s.unilateral = true;
-          if (!s.left) s.left = { weight: s.weightOrPlates, reps: s.reps };
-          if (!s.right) s.right = { weight: s.weightOrPlates, reps: s.reps };
+          if (!s.left) s.left = { weight: ex.currentUnit === 'bodyweight' ? 0 : s.weightOrPlates, reps: s.reps };
+          if (!s.right) s.right = { weight: ex.currentUnit === 'bodyweight' ? 0 : s.weightOrPlates, reps: s.reps };
         } else {
           s.unilateral = undefined;
+          s.left = undefined;
+          s.right = undefined;
         }
       });
     });
 
-  // 历史编辑：切换递减超级组（整组动作；开启时每组深拷贝一份默认四阶）
-  // 超级组与单侧互斥：开启超级组时清除单侧标记与左右值，组单位统一为 kg
+  // 历史编辑：切换递减超级组。开启时沿用当前组记录作为第一阶，
+  // 不凭空生成一串“已完成”的默认阶梯；用户再按需加阶或删阶。
   const editToggleDropSet = (exIdx: number, on: boolean) =>
     patchEditing(d => {
       const ex = d.exercises[exIdx];
@@ -439,12 +613,21 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           s.left = undefined;
           s.right = undefined;
           s.isDropSet = true;
-          const stages = makeEditDefaultDropStages();
-          s.dropStages = stages;
-          s.unit = 'kg';
-          s.weightOrPlates = stages[0].weightOrPlates;
-          s.reps = stages[0].reps;
+          if (!s.dropStages || s.dropStages.length === 0) {
+            s.dropStages = [{
+              id: `edit-stg-${Date.now()}-${s.setNumber}`,
+              weightOrPlates: ex.currentUnit === 'bodyweight' ? 0 : s.weightOrPlates,
+              unit: ex.currentUnit,
+              reps: s.reps,
+            }];
+          }
+          s.unit = ex.currentUnit;
+          s.weightOrPlates = s.dropStages[0]?.weightOrPlates || 0;
+          s.reps = s.dropStages[0]?.reps || 0;
         } else {
+          s.weightOrPlates = s.dropStages?.[0]?.weightOrPlates ?? s.weightOrPlates;
+          s.reps = s.dropStages?.[0]?.reps ?? s.reps;
+          s.unit = ex.currentUnit;
           s.isDropSet = undefined;
           s.dropStages = undefined;
         }
@@ -452,14 +635,57 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       if (on) ex.isUnilateral = undefined;
     });
 
+  const editDropStageField = (
+    exIdx: number,
+    setIdx: number,
+    stageIdx: number,
+    field: 'weightOrPlates' | 'reps',
+    value: number,
+  ) =>
+    patchEditing(d => {
+      const exercise = d.exercises[exIdx];
+      const set = exercise.sets[setIdx];
+      const stage = set.dropStages?.[stageIdx];
+      if (!stage) return;
+      stage[field] = Math.max(0, value);
+      stage.unit = exercise.currentUnit === 'bodyweight' ? 'bodyweight' : exercise.currentUnit;
+      if (stageIdx === 0) {
+        set.weightOrPlates = stage.weightOrPlates;
+        set.reps = stage.reps;
+        set.unit = stage.unit;
+      }
+    });
+
+  const editAddDropStage = (exIdx: number, setIdx: number) =>
+    patchEditing(d => {
+      const exercise = d.exercises[exIdx];
+      const set = exercise.sets[setIdx];
+      if (!set.dropStages) return;
+      const last = set.dropStages[set.dropStages.length - 1];
+      set.dropStages.push({
+        id: `edit-stg-${Date.now()}-${set.setNumber}-${set.dropStages.length + 1}`,
+        weightOrPlates: last?.weightOrPlates || 0,
+        unit: exercise.currentUnit,
+        reps: 0,
+      });
+    });
+
+  const editRemoveDropStage = (exIdx: number, setIdx: number, stageIdx: number) =>
+    patchEditing(d => {
+      const exercise = d.exercises[exIdx];
+      const set = exercise.sets[setIdx];
+      if (!set.dropStages || set.dropStages.length <= 1) return;
+      set.dropStages.splice(stageIdx, 1);
+      set.weightOrPlates = set.dropStages[0]?.weightOrPlates || 0;
+      set.reps = set.dropStages[0]?.reps || 0;
+      set.unit = exercise.currentUnit;
+    });
+
   // 历史编辑：有氧开关与明细；无有氧时清空时长/类型/备注，保证展示与保存一致
   const editCardioMode = (enabled: boolean) =>
     patchEditing(d => {
       d.cardioCompleted = enabled;
-      if (enabled) {
-        d.cardioMinutes = d.cardioMinutes && d.cardioMinutes > 0 ? d.cardioMinutes : 20;
-        d.cardioType = (d.cardioType || '').trim() || '跑步机坡度快走';
-      } else {
+      if (!enabled) {
         d.cardioMinutes = 0;
         d.cardioType = '';
         d.cardioNotes = '';
@@ -472,7 +698,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const editCardioNotes = (val: string) =>
     patchEditing(d => { d.cardioNotes = val; });
 
-  // 历史编辑：加一组（复制末组，单侧复制左右）
+  // 历史编辑：加一组（沿用末组重量，次数留空，完成状态留待填写后再成立）
   const editAddSet = (exIdx: number) =>
     patchEditing(d => {
       const ex = d.exercises[exIdx];
@@ -481,7 +707,14 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       const copy = JSON.parse(JSON.stringify(last));
       copy.id = `s-edit-${Date.now()}`;
       copy.setNumber = ex.sets.length + 1;
-      copy.completed = true;
+      copy.reps = 0;
+      copy.completed = false;
+      if (copy.left) copy.left.reps = 0;
+      if (copy.right) copy.right.reps = 0;
+      copy.dropStages?.forEach((stage: DropStage, stageIndex: number) => {
+        stage.id = `edit-stg-${Date.now()}-${copy.setNumber}-${stageIndex}`;
+        stage.reps = 0;
+      });
       ex.sets.push(copy);
     });
 
@@ -506,7 +739,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       ex.exerciseName = neo.name;
       ex.category = neo.category;
       ex.currentUnit = neo.defaultUnit;
-      ex.pulleyRatio = neo.defaultPulley;
+      ex.pulleyRatio = 'none';
       // 超级组不支持分侧记录
       ex.isUnilateral = asDrop ? undefined : (neo.isUnilateral || undefined);
       ex.sets = Array.from({ length: n }, (_, i) => {
@@ -517,21 +750,25 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           id: `s-edit-${Date.now()}-${i}`,
           setNumber: i + 1,
           unit: neo.defaultUnit,
-          weightOrPlates: w,
+          weightOrPlates: neo.defaultUnit === 'bodyweight' || old?.unit !== neo.defaultUnit ? 0 : w,
           reps: r,
           completed: true,
-          pulleyRatio: neo.defaultPulley,
+          pulleyRatio: 'none' as PulleyRatio,
         };
-        if (asDrop) {
+        if (asDrop && stages) {
           // 每个大组深拷贝一份阶梯，避免各大组共享同一数组引用
           const copiedStages: DropStage[] = JSON.parse(JSON.stringify(stages));
           return {
             ...base,
-            unit: 'kg' as ResistanceUnit,
-            weightOrPlates: copiedStages[0]?.weightOrPlates ?? 10,
+            unit: neo.defaultUnit,
+            weightOrPlates: neo.defaultUnit === 'bodyweight' ? 0 : (copiedStages[0]?.weightOrPlates ?? 10),
             reps: copiedStages[0]?.reps ?? 12,
             isDropSet: true,
-            dropStages: copiedStages,
+            dropStages: copiedStages.map(stage => ({
+              ...stage,
+              unit: neo.defaultUnit,
+              weightOrPlates: neo.defaultUnit === 'bodyweight' ? 0 : stage.weightOrPlates,
+            })),
           };
         }
         if (neo.isUnilateral) {
@@ -539,7 +776,12 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
           const lr = old?.left?.reps ?? r;
           const rw = old?.right?.weight ?? w;
           const rr = old?.right?.reps ?? r;
-          return { ...base, unilateral: true, left: { weight: lw, reps: lr }, right: { weight: rw, reps: rr } };
+          return {
+            ...base,
+            unilateral: true,
+            left: { weight: neo.defaultUnit === 'bodyweight' || old?.unit !== neo.defaultUnit ? 0 : lw, reps: lr },
+            right: { weight: neo.defaultUnit === 'bodyweight' || old?.unit !== neo.defaultUnit ? 0 : rw, reps: rr },
+          };
         }
         return base;
       });
@@ -550,34 +792,52 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   const [addExSearch, setAddExSearch] = useState('');
   const editAddExercise = (neo: { id: string; name: string; category: WorkoutSession['exercises'][number]['category']; defaultUnit: WorkoutSession['exercises'][number]['currentUnit']; defaultPulley: WorkoutSession['exercises'][number]['pulleyRatio']; isUnilateral?: boolean; isDropSet?: boolean; dropStages?: DropStage[] }) =>
     patchEditing(d => {
-      const w = neo.defaultUnit === 'plates' ? 10 : 30;
+      const recent = StorageService.getLastExerciseLog(neo.id);
       // 动作库预设阶梯优先；无阶梯时超级组标记视为无效，回落普通组
       const stages = neo.dropStages && neo.dropStages.length > 0 ? neo.dropStages : undefined;
       const asDrop = Boolean(neo.isDropSet && stages);
+      const mode: WorkoutSetMode = asDrop ? 'drop' : neo.isUnilateral ? 'unilateral' : 'standard';
+      const recentSets = (recent?.sets || []).filter(set => set.completed && seedWeightsOnly(set, neo.defaultUnit, mode));
       const sets = Array.from({ length: 4 }, (_, i) => {
+        const seed = seedWeightsOnly(recentSets[i] || recentSets[recentSets.length - 1], neo.defaultUnit, mode);
+        const setWeight = seed?.weightOrPlates ?? 0;
         const base = {
           id: `s-edit-${Date.now()}-${i + 1}`,
           setNumber: i + 1,
           unit: neo.defaultUnit,
-          weightOrPlates: w,
-          reps: 12,
-          completed: true,
-          pulleyRatio: neo.defaultPulley,
+          weightOrPlates: setWeight,
+          reps: 0,
+          completed: false,
+          pulleyRatio: 'none' as PulleyRatio,
         };
-        if (asDrop) {
+        if (asDrop && stages) {
           // 每个大组深拷贝一份阶梯，避免各大组共享同一数组引用
-          const copiedStages: DropStage[] = JSON.parse(JSON.stringify(stages));
+          const copiedStages: DropStage[] = stages.map((stage, stageIndex) => ({
+            ...stage,
+            id: `edit-stg-${Date.now()}-${i}-${stageIndex}`,
+            unit: neo.defaultUnit,
+            weightOrPlates: neo.defaultUnit === 'bodyweight'
+              ? 0
+              : ((seed?.dropStages?.length === stages.length ? seed.dropStages[stageIndex]?.weightOrPlates : undefined)
+                ?? (stage.unit === neo.defaultUnit ? stage.weightOrPlates : 0)),
+            reps: 0,
+          }));
           return {
             ...base,
-            unit: 'kg' as ResistanceUnit,
-            weightOrPlates: copiedStages[0]?.weightOrPlates ?? 10,
-            reps: copiedStages[0]?.reps ?? 12,
+            unit: neo.defaultUnit,
+            weightOrPlates: copiedStages[0]?.weightOrPlates ?? 0,
+            reps: 0,
             isDropSet: true,
             dropStages: copiedStages,
           };
         }
         if (neo.isUnilateral) {
-          return { ...base, unilateral: true, left: { weight: w, reps: 12 }, right: { weight: w, reps: 12 } };
+          return {
+            ...base,
+            unilateral: true,
+            left: { weight: seed?.left?.weight ?? setWeight, reps: 0 },
+            right: { weight: seed?.right?.weight ?? setWeight, reps: 0 },
+          };
         }
         return base;
       });
@@ -585,7 +845,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         exerciseId: neo.id,
         exerciseName: neo.name,
         category: neo.category,
-        pulleyRatio: neo.defaultPulley,
+        pulleyRatio: 'none',
         currentUnit: neo.defaultUnit,
         // 超级组不支持分侧记录
         isUnilateral: asDrop ? undefined : (neo.isUnilateral || undefined),
@@ -721,7 +981,9 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   // 汇总栏只反映今天：没有今天的记录时保持空，不用上一次的数据冒充
   const todayWeightLog = weights.find(w => w.date === todayStr);
   const latestWeight = todayWeightLog?.weight;
-  const previousWeight = weights.find(w => w.date < todayStr)?.weight;
+  const previousWeight = useMemo(() => weights
+    .filter(w => w.date < todayStr)
+    .sort((a, b) => b.date.localeCompare(a.date))[0]?.weight, [weights, todayStr]);
   const weightDiff = latestWeight && previousWeight ? (latestWeight - previousWeight).toFixed(1) : null;
 
   // 距目标还差
@@ -733,13 +995,13 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   // 趋势洞察：近 7 天均值 vs 再前 7 天均值
   const trendInsight = useMemo(() => {
     if (weights.length < 2) return null;
-    const sorted = [...weights].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    const lastTs = new Date(sorted[sorted.length - 1].date).getTime();
-    const day = 86400000;
-    const recent = sorted.filter(w => new Date(w.date).getTime() > lastTs - 7 * day);
-    const prev = sorted.filter(w => {
-      const t = new Date(w.date).getTime();
-      return t <= lastTs - 7 * day && t > lastTs - 14 * day;
+    const recent = weights.filter(w => {
+      const offset = diffLocalDays(w.date, todayStr);
+      return offset >= 0 && offset <= 6;
+    });
+    const prev = weights.filter(w => {
+      const offset = diffLocalDays(w.date, todayStr);
+      return offset >= 7 && offset <= 13;
     });
     if (recent.length === 0 || prev.length === 0) return null;
     const avg = (arr: WeightLog[]) => arr.reduce((a, b) => a + b.weight, 0) / arr.length;
@@ -747,7 +1009,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     if (delta < -0.05) return { text: `稳步下降中，近7天均值比之前一周低 ${Math.abs(delta)}kg，继续保持`, good: true };
     if (delta > 0.05) return { text: `近7天均值比之前一周高 ${delta}kg，注意饮食与训练量`, good: false };
     return { text: '体重保持平稳，波动在正常范围内', good: true };
-  }, [weights]);
+  }, [weights, todayStr]);
 
   // 体重打卡日历：近 6 周（42 天）
   const weightCal = useMemo(() => {
@@ -774,25 +1036,20 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     });
   }, [weights, slotFilter, selectedWeightDate]);
 
-  // 根据当前视图筛选体重数据并按日期升序排列供画曲线
+  const chartWindowStart = shiftLocalDate(todayStr, chartViewSpan === 'month' ? -29 : -6);
+
+  // 周/月窗口以真实今天为终点；旧记录不会因“最近一次打卡”较旧而被挪进本周。
   const filteredChartWeights = useMemo(() => {
-    if (weights.length === 0) return [];
-    const sorted = [...weights].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const sorted = [...weights]
+      .filter(log => log.date <= todayStr)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
 
     if (chartViewSpan === 'all') {
       return sorted;
     }
 
-    // 周视图取近 7 天，月视图取近 30 天
-    const daysLimit = chartViewSpan === 'week' ? 7 : 30;
-    // 取最新记录的日期作为基准时间（防止历史预置日期距今天数过大导致过滤为空）
-    const latestTimestamp = new Date(sorted[sorted.length - 1].date).getTime();
-    const cutoffTime = latestTimestamp - (daysLimit - 1) * 24 * 60 * 60 * 1000;
-
-    const inRange = sorted.filter(w => new Date(w.date).getTime() >= cutoffTime);
-    if (inRange.length > 0) return inRange;
-    return sorted.slice(-daysLimit);
-  }, [weights, chartViewSpan]);
+    return sorted.filter(log => log.date >= chartWindowStart && log.date <= todayStr);
+  }, [weights, chartViewSpan, chartWindowStart, todayStr]);
 
   // 计算区间曲线的统计指标（最高、最低、均值、波动差值）
   const chartStats = useMemo(() => {
@@ -801,95 +1058,11 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
     const min = Math.min(...vals);
     const max = Math.max(...vals);
     const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
-    const netChange = (vals[vals.length - 1] - vals[0]).toFixed(1);
-    return { min, max, avg, netChange: parseFloat(netChange) };
+    const netChange = vals.length > 1
+      ? parseFloat((vals[vals.length - 1] - vals[0]).toFixed(1))
+      : null;
+    return { min, max, avg, netChange };
   }, [filteredChartWeights]);
-
-  // 生成高保真 SVG 平滑贝塞尔曲线路径（含目标体重虚线）
-  const svgData = useMemo(() => {
-    const list = filteredChartWeights;
-    const width = 360;
-    const height = 150;
-    const padL = 36;
-    const padR = 24;
-    const padT = 24;
-    const padB = 26;
-
-    if (list.length === 0) return null;
-
-    const chartW = width - padL - padR;
-    const chartH = height - padT - padB;
-
-    const vals = list.map(d => d.weight);
-    let minVal = Math.min(...vals);
-    let maxVal = Math.max(...vals);
-    // 目标线纳入纵轴范围
-    if (weightGoal !== null) {
-      minVal = Math.min(minVal, weightGoal);
-      maxVal = Math.max(maxVal, weightGoal);
-    }
-    if (maxVal === minVal) {
-      minVal -= 1;
-      maxVal += 1;
-    } else {
-      const margin = (maxVal - minVal) * 0.18;
-      minVal -= margin;
-      maxVal += margin;
-    }
-    const yOf = (v: number) => padT + chartH - ((v - minVal) / (maxVal - minVal)) * chartH;
-
-    const points = list.map((item, idx) => {
-      let x: number;
-      if (list.length === 1) {
-        x = padL + chartW / 2;
-      } else if (chartViewSpan === 'month') {
-        const startOffset = padL + chartW * 0.2;
-        const availableW = chartW * 0.75;
-        x = startOffset + (idx / (list.length - 1)) * availableW;
-      } else {
-        x = padL + (idx / (list.length - 1)) * chartW;
-      }
-      return { x, y: yOf(item.weight), weight: item.weight, date: item.date.slice(5) };
-    });
-
-    const goalY = weightGoal !== null ? yOf(weightGoal) : null;
-
-    if (points.length === 1) {
-      const p = points[0];
-      return {
-        width, height, points, goalY,
-        linePath: `M ${padL} ${p.y} L ${width - padR} ${p.y}`,
-        areaPath: `M ${padL} ${p.y} L ${width - padR} ${p.y} L ${width - padR} ${height - padB} L ${padL} ${height - padB} Z`,
-        midVal: ((minVal + maxVal) / 2).toFixed(1),
-        minVal: minVal.toFixed(1),
-        maxVal: maxVal.toFixed(1),
-      };
-    }
-
-    let linePath = `M ${points[0].x} ${points[0].y}`;
-    for (let i = 0; i < points.length - 1; i++) {
-      const p0 = points[i];
-      const p1 = points[i + 1];
-      const dx = (p1.x - p0.x) * (chartViewSpan === 'month' ? 0.35 : 0.45);
-      const cp1x = p0.x + dx;
-      const cp1y = p0.y;
-      const cp2x = p1.x - dx;
-      const cp2y = p1.y;
-      linePath += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p1.x} ${p1.y}`;
-    }
-
-    const lastP = points[points.length - 1];
-    const firstP = points[0];
-    const areaPath = `${linePath} L ${lastP.x} ${height - padB} L ${firstP.x} ${height - padB} Z`;
-
-    return {
-      width, height, points, goalY,
-      linePath, areaPath,
-      midVal: ((minVal + maxVal) / 2).toFixed(1),
-      minVal: minVal.toFixed(1),
-      maxVal: maxVal.toFixed(1),
-    };
-  }, [filteredChartWeights, chartViewSpan, weightGoal]);
 
   // 日历格子：规范 5.11 —— 不用状态圆点，直接给日期数字着色；
   // 今天用 1.5px accent 内描边标记，不覆盖状态色；网格保持中性。
@@ -1156,7 +1329,8 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                           <Badge className="max-w-full">
                             <Flame className="h-3 w-3 shrink-0" aria-hidden="true" />
                             <span className="truncate">
-                              有氧{sess.cardioMinutes || 20}m{sess.cardioType ? ` · ${sess.cardioType}` : ''}
+                              有氧{sess.cardioMinutes > 0 ? `${sess.cardioMinutes}m` : '已记录'}
+                              {sess.cardioType ? ` · ${sess.cardioType}` : ''}
                             </span>
                           </Badge>
                         ) : (
@@ -1210,7 +1384,9 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                         {sess.exercises.map((e, idx) => {
                           const completedSets = e.sets.filter(s => s.completed);
                           const unitStr = e.currentUnit === 'plates' ? '片' : e.currentUnit === 'assisted' ? '助力' : e.currentUnit === 'bodyweight' ? '自重' : 'kg';
-                          const pulleyStr = e.pulleyRatio && e.pulleyRatio !== 'none' ? e.pulleyRatio : null;
+                          const pulleyStr = e.currentUnit !== 'bodyweight' && e.pulleyRatio && e.pulleyRatio !== 'none'
+                            ? e.pulleyRatio
+                            : null;
 
                           return (
                             <div key={idx} className="rounded-ctl border border-line bg-surface-subtle/50 p-2.5">
@@ -1242,17 +1418,22 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                                           <Badge tone="success">{s.dropStages.length}阶递减全部完成</Badge>
                                         </div>
                                         <div className="flex flex-wrap items-center gap-1.5">
-                                          {s.dropStages.map((stg, stgIdx) => (
-                                            <span
-                                              key={stgIdx}
-                                              className="inline-flex items-center gap-1 rounded-[6px] bg-surface-subtle px-2 py-0.5 text-sm2 tabular-nums text-ink"
-                                            >
-                                              {stg.weightOrPlates}{stg.unit || 'kg'} × {stg.reps}次
-                                              {stgIdx < s.dropStages!.length - 1 && (
-                                                <span className="text-ink-3" aria-hidden="true">→</span>
-                                              )}
-                                            </span>
-                                          ))}
+                                          {s.dropStages.map((stg, stgIdx) => {
+                                            const isBodyweight = e.currentUnit === 'bodyweight' || stg.unit === 'bodyweight';
+                                            return (
+                                              <span
+                                                key={stgIdx}
+                                                className="inline-flex items-center gap-1 rounded-[6px] bg-surface-subtle px-2 py-0.5 text-sm2 tabular-nums text-ink"
+                                              >
+                                                {isBodyweight
+                                                  ? `${stg.reps}次`
+                                                  : `${stg.weightOrPlates}${stg.unit || 'kg'} × ${stg.reps}次`}
+                                                {stgIdx < s.dropStages!.length - 1 && (
+                                                  <span className="text-ink-3" aria-hidden="true">→</span>
+                                                )}
+                                              </span>
+                                            );
+                                          })}
                                         </div>
                                       </div>
                                     );
@@ -1263,9 +1444,13 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                                       key={sIdx}
                                       className="rounded-[6px] border border-line bg-surface px-2 py-0.5 text-sm2 tabular-nums text-ink-2"
                                     >
-                                      {s.unilateral && s.left && s.right
-                                        ? `左${s.left.weight}×${s.left.reps} / 右${s.right.weight}×${s.right.reps}${unitStr}`
-                                        : `${s.weightOrPlates}${unitStr} × ${s.reps}次`}
+                                      {e.currentUnit === 'bodyweight' || s.unit === 'bodyweight'
+                                        ? (s.unilateral && s.left && s.right
+                                          ? `左 ${s.left.reps}次 / 右 ${s.right.reps}次`
+                                          : `${s.reps}次`)
+                                        : (s.unilateral && s.left && s.right
+                                          ? `左${s.left.weight}×${s.left.reps} / 右${s.right.weight}×${s.right.reps}${unitStr}`
+                                          : `${s.weightOrPlates}${unitStr} × ${s.reps}次`)}
                                     </span>
                                   );
                                 })}
@@ -1284,7 +1469,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                         <div className="flex items-start gap-1.5 rounded-ctl bg-surface-subtle px-3 py-2 text-sm2 text-ink-2">
                           <Flame className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
                           <span>
-                            有氧 {sess.cardioMinutes || 20} 分钟
+                            {sess.cardioMinutes > 0 ? `有氧 ${sess.cardioMinutes} 分钟` : '有氧已记录'}
                             {sess.cardioType ? ` · ${sess.cardioType}` : ''}
                             {sess.cardioNotes ? ` · ${sess.cardioNotes}` : ''}
                           </span>
@@ -1321,20 +1506,23 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </div>
           )}
 
-          {/* 打卡今日体重与饮食卡片 */}
+          {/* 体重表单：先完成高频的日期 + 体重，时段和日记按需展开 */}
           <Card className="p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2">
                 <Scale className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
-                <h3 className="truncate text-h2 font-semibold text-ink">打卡今日体重与饮食</h3>
+                <h3 className="truncate text-h2 font-semibold text-ink">记录体重</h3>
               </div>
               {existingTodayLog && !isEditingExisting && (
                 <button
                   type="button"
-                  onClick={() => setIsEditingExisting(true)}
+                  onClick={() => {
+                    setIsEditingExisting(true);
+                    setShowWeightDetails(true);
+                  }}
                   className="h-11 shrink-0 px-1 text-sm2 font-semibold text-accent"
                 >
-                  修改该日打卡
+                  修改该日记录
                 </button>
               )}
             </div>
@@ -1347,6 +1535,17 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
             <form onSubmit={handleAddLog} className="space-y-3">
               <div>
+                <label htmlFor="weight-date" className="mb-1 block text-cap font-semibold text-ink-2">日期</label>
+                <input
+                  id="weight-date"
+                  type="date"
+                  value={inputDate}
+                  onChange={(e) => setInputDate(e.target.value)}
+                  className={cx(fieldCls, 'tabular-nums')}
+                />
+              </div>
+
+              <div>
                 <label htmlFor="weight-input" className="mb-1 block text-cap font-semibold text-ink-2">体重 (kg)</label>
                 <div className="relative">
                   <input
@@ -1357,58 +1556,70 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                     value={inputWeight}
                     disabled={isAlreadyLogged}
                     onChange={(e) => setInputWeight(e.target.value)}
-                    className={cx(fieldCls, 'pr-10 tabular-nums disabled:opacity-60', isAlreadyLogged && 'bg-surface-subtle text-ink-3')}
+                    placeholder="例如 63.5"
+                    className={cx(
+                      fieldCls,
+                      'h-14 pr-12 text-[24px] font-semibold tabular-nums disabled:opacity-60',
+                      isAlreadyLogged && 'bg-surface-subtle text-ink-3',
+                    )}
                   />
-                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm2 font-semibold text-ink-3">kg</span>
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-body font-semibold text-ink-3">kg</span>
                 </div>
               </div>
 
-              <div>
-                <p className="mb-1.5 text-cap font-semibold text-ink-2">记录时段</p>
-                <SegmentedControl
-                  label="记录时段"
-                  value={inputSlot}
-                  onChange={setInputSlot}
-                  options={SLOT_OPTIONS}
-                  disabled={isAlreadyLogged}
-                />
-              </div>
+              <button
+                type="button"
+                onClick={() => setShowWeightDetails(value => !value)}
+                aria-expanded={showWeightDetails}
+                className="flex min-h-11 w-full items-center justify-between gap-2 rounded-ctl px-1 text-left"
+              >
+                <span>
+                  <span className="block text-sm2 font-semibold text-ink-2">补充时段与备注</span>
+                  <span className="block text-cap text-ink-3">可选，不影响快速记录体重</span>
+                </span>
+                {showWeightDetails
+                  ? <ChevronUp className="h-4 w-4 text-ink-3" aria-hidden="true" />
+                  : <ChevronDown className="h-4 w-4 text-ink-3" aria-hidden="true" />}
+              </button>
 
-              <div>
-                <label htmlFor="weight-note" className="mb-1 block text-cap font-semibold text-ink-2">
-                  饮食与生活日记 (饮食摄入、精神状态等)
-                </label>
-                <input
-                  id="weight-note"
-                  type="text"
-                  value={inputNote}
-                  disabled={isAlreadyLogged}
-                  onChange={(e) => setInputNote(e.target.value)}
-                  placeholder="例如: 晚上吃了鸡公煲，蛋白质充足；昨晚深蹲膝盖微酸..."
-                  className={cx(fieldCls, 'disabled:opacity-60', isAlreadyLogged && 'bg-surface-subtle text-ink-3')}
-                />
-              </div>
+              {showWeightDetails && (
+                <div className="animate-card-in space-y-3 rounded-ctl border border-line bg-surface-subtle/55 p-3">
+                  <div>
+                    <p className="mb-1.5 text-cap font-semibold text-ink-2">记录时段</p>
+                    <SegmentedControl
+                      label="记录时段"
+                      value={inputSlot}
+                      onChange={setInputSlot}
+                      options={SLOT_OPTIONS}
+                      disabled={isAlreadyLogged}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="weight-note" className="mb-1 block text-cap font-semibold text-ink-2">
+                      饮食与生活日记
+                    </label>
+                    <textarea
+                      id="weight-note"
+                      rows={2}
+                      value={inputNote}
+                      disabled={isAlreadyLogged}
+                      onChange={(e) => setInputNote(e.target.value)}
+                      placeholder="饮食、睡眠或身体感受（可留空）"
+                      className="w-full rounded-ctl border border-line bg-surface px-3 py-2.5 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent/15 disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+              )}
 
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <input
-                  type="date"
-                  aria-label="打卡日期"
-                  value={inputDate}
-                  onChange={(e) => setInputDate(e.target.value)}
-                  className="h-11 min-w-0 rounded-ctl border border-line bg-surface-subtle px-2.5 text-sm2 text-ink focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15"
-                />
-
-                {isAlreadyLogged ? (
-                  <Button variant="secondary" disabled>
-                    <Check className="h-4 w-4" aria-hidden="true" /> 今日已打卡
-                  </Button>
-                ) : (
-                  // 每日高频动作用 primary；备份导出在页面底部另一屏，同为 primary 不构成同屏冲突
-                  <Button type="submit" variant="primary">
-                    <Plus className="h-4 w-4" aria-hidden="true" /> 记录打卡
-                  </Button>
-                )}
-              </div>
+              {isAlreadyLogged ? (
+                <Button type="button" variant="secondary" block disabled>
+                  <Check className="h-4 w-4" aria-hidden="true" /> 该日已有记录
+                </Button>
+              ) : (
+                <Button type="submit" variant="primary" size="lg" block>
+                  <Plus className="h-4 w-4" aria-hidden="true" /> 保存体重
+                </Button>
+              )}
             </form>
           </Card>
 
@@ -1524,13 +1735,13 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 <span className="flex items-center gap-1.5 text-h2 font-semibold text-ink">
                   <TrendingDown className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" /> 体重波动曲线
                 </span>
-                <span className="text-cap text-ink-3">平滑贝塞尔走势{weightGoal !== null ? ' · 蓝色虚线为目标' : ''}</span>
+                <span className="text-cap text-ink-3">记录点按真实日期排列 · 点击或键盘选择查看详情</span>
               </div>
 
               {/* 周期切换: 周视图 / 月视图 / 全部 */}
               <SegmentedControl
                 label="曲线周期"
-                className="w-[168px] shrink-0"
+                className="w-full sm:w-[168px]"
                 value={chartViewSpan}
                 onChange={setChartViewSpan}
                 options={CHART_SPAN_OPTIONS}
@@ -1540,9 +1751,11 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             {/* 动态视图说明横幅 */}
             <div className="flex items-center justify-between gap-2 rounded-ctl bg-surface-subtle px-3 py-2 text-sm2 text-ink-2">
               <span>
-                {chartViewSpan === 'week' && '周视图：近7日走势'}
-                {chartViewSpan === 'month' && '月视图：过去30天走势'}
-                {chartViewSpan === 'all' && '全部历史：全周期累计数据'}
+                {chartViewSpan === 'week' && `近7天 · ${chartWindowStart.slice(5).replace('-', '/')}–${todayStr.slice(5).replace('-', '/')}`}
+                {chartViewSpan === 'month' && `近30天 · ${chartWindowStart.slice(5).replace('-', '/')}–${todayStr.slice(5).replace('-', '/')}`}
+                {chartViewSpan === 'all' && (filteredChartWeights.length > 0
+                  ? `全部记录 · ${filteredChartWeights[0].date.slice(5).replace('-', '/')}–${filteredChartWeights[filteredChartWeights.length - 1].date.slice(5).replace('-', '/')}`
+                  : '全部记录 · 暂无数据')}
               </span>
               <NumberText size="sm" className="shrink-0 text-ink-3">
                 {filteredChartWeights.length} 条
@@ -1568,98 +1781,30 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                   <span className="block text-cap text-ink-3">净变</span>
                   <NumberText
                     size="sm"
-                    className={chartStats.netChange > 0 ? 'text-warning' : chartStats.netChange < 0 ? 'text-success' : 'text-ink-2'}
+                    className={chartStats.netChange === null
+                      ? 'text-ink-3'
+                      : chartStats.netChange > 0
+                        ? 'text-warning'
+                        : chartStats.netChange < 0
+                          ? 'text-success'
+                          : 'text-ink-2'}
                   >
-                    {chartStats.netChange > 0 ? `+${chartStats.netChange}` : chartStats.netChange}kg
+                    {chartStats.netChange === null
+                      ? '—'
+                      : `${chartStats.netChange > 0 ? '+' : ''}${chartStats.netChange}kg`}
                   </NumberText>
                 </div>
               </div>
             )}
 
-            {/* SVG 矢量平滑折线走势图 */}
-            {svgData && svgData.points.length > 0 ? (
-              <div className="w-full overflow-hidden pt-1">
-                <svg
-                  viewBox={`0 0 ${svgData.width} ${svgData.height}`}
-                  className="h-36 w-full select-none"
-                  role="img"
-                  aria-label={`体重走势，共 ${svgData.points.length} 个记录点`}
-                >
-                  <defs>
-                    <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="rgb(var(--c-success))" stopOpacity="0.22" />
-                      <stop offset="100%" stopColor="rgb(var(--c-success))" stopOpacity="0.0" />
-                    </linearGradient>
-                  </defs>
-
-                  {/* 背景参考横虚线 */}
-                  <line x1="36" y1="30" x2="336" y2="30" stroke="rgb(var(--c-line))" strokeDasharray="3 3" strokeWidth="1" />
-                  <line x1="36" y1="75" x2="336" y2="75" stroke="rgb(var(--c-line))" strokeDasharray="3 3" strokeWidth="1" />
-                  <line x1="36" y1="120" x2="336" y2="120" stroke="rgb(var(--c-line))" strokeDasharray="3 3" strokeWidth="1" />
-
-                  {/* 目标体重虚线 */}
-                  {svgData.goalY !== null && weightGoal !== null && (
-                    <g>
-                      <line
-                        x1="36" y1={svgData.goalY} x2="336" y2={svgData.goalY}
-                        stroke="rgb(var(--c-accent))" strokeDasharray="5 4" strokeWidth="1.5"
-                      />
-                      <text
-                        x="336" y={svgData.goalY - 5}
-                        textAnchor="end" fontSize="12" fontWeight="600"
-                        fill="rgb(var(--c-accent))"
-                      >
-                        目标 {weightGoal}
-                      </text>
-                    </g>
-                  )}
-
-                  {/* 面积渐变填充 */}
-                  <path d={svgData.areaPath} fill="url(#weightGradient)" />
-
-                  {/* 平滑贝塞尔曲线 */}
-                  <path
-                    d={svgData.linePath}
-                    fill="none"
-                    stroke="rgb(var(--c-success))"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-
-                  {/* 节点高亮圆点与文字标注 */}
-                  {svgData.points.map((p, idx) => (
-                    <g key={idx}>
-                      <circle cx={p.x} cy={p.y} r="5" fill="rgb(var(--c-success))" fillOpacity="0.15" />
-                      <circle cx={p.x} cy={p.y} r="3" fill="rgb(var(--c-success))" stroke="rgb(var(--c-surface))" strokeWidth="1.5" />
-                      <text
-                        x={p.x}
-                        y={p.y - 8}
-                        textAnchor="middle"
-                        fontSize="12"
-                        fontWeight="600"
-                        fill="rgb(var(--c-ink))"
-                      >
-                        {p.weight}
-                      </text>
-                      <text
-                        x={p.x}
-                        y={svgData.height - 8}
-                        textAnchor="middle"
-                        fontSize="12"
-                        fill="rgb(var(--c-ink-3))"
-                      >
-                        {p.date}
-                      </text>
-                    </g>
-                  ))}
-                </svg>
-              </div>
-            ) : (
-              <div className="rounded-ctl bg-surface-subtle px-4 py-8 text-center text-body text-ink-2">
-                该周期内暂无体重数据
-              </div>
-            )}
+            <WeightTrendChart
+              logs={filteredChartWeights}
+              span={chartViewSpan}
+              today={todayStr}
+              rangeStart={chartWindowStart}
+              goal={weightGoal}
+              slotLabel={(slot) => SLOT_SHORT[slot || 'morning']}
+            />
           </Card>
 
           {renderWeightCal()}
@@ -1681,46 +1826,126 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </div>
 
             <div className="space-y-2">
-              {visibleWeights.map((log) => (
-                <Card key={log.id} className="flex items-start justify-between gap-3 p-3">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <NumberText size="md" className="text-ink">{log.weight} kg</NumberText>
-                      <button
-                        type="button"
-                        onClick={() => setSlotFilter(log.timeSlot || 'morning')}
-                        className="h-11 rounded-full bg-surface-subtle px-3 text-cap font-semibold text-ink-2"
-                        title="按此时段过滤"
-                      >
-                        {SLOT_SHORT[log.timeSlot || 'morning']}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setInputDate(log.date)}
-                        className="h-11 px-2 text-sm2 font-medium text-ink-3 underline"
-                        title="跳到该日期打卡"
-                      >
-                        {log.date}
-                      </button>
+              {visibleWeights.map((log) => {
+                const isEditing = editingWeightId === log.id && weightEditDraft !== null;
+                if (isEditing) {
+                  return (
+                    <Card key={log.id} className="animate-card-in space-y-3 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="text-body font-semibold text-ink">编辑 {log.date}</h4>
+                        <button
+                          type="button"
+                          onClick={cancelEditWeight}
+                          className="min-h-11 px-1 text-sm2 font-semibold text-ink-3"
+                        >
+                          取消
+                        </button>
+                      </div>
+
+                      {weightEditError && (
+                        <p className="rounded-ctl bg-danger-soft px-3 py-2 text-sm2 font-semibold text-danger">
+                          {weightEditError}
+                        </p>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label htmlFor={`edit-weight-${log.id}`} className="mb-1 block text-cap font-semibold text-ink-2">体重 (kg)</label>
+                          <input
+                            id={`edit-weight-${log.id}`}
+                            type="number"
+                            inputMode="decimal"
+                            step="0.1"
+                            value={weightEditDraft.weight}
+                            onChange={(event) => {
+                              setWeightEditDraft(draft => draft ? { ...draft, weight: event.target.value } : draft);
+                              setWeightEditError(null);
+                            }}
+                            className={cx(fieldCls, 'tabular-nums')}
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor={`edit-weight-slot-${log.id}`} className="mb-1 block text-cap font-semibold text-ink-2">时段</label>
+                          <select
+                            id={`edit-weight-slot-${log.id}`}
+                            value={weightEditDraft.timeSlot}
+                            onChange={(event) => {
+                              setWeightEditDraft(draft => draft ? { ...draft, timeSlot: event.target.value as SlotKey } : draft);
+                              setWeightEditError(null);
+                            }}
+                            className={fieldCls}
+                          >
+                            {SLOT_OPTIONS.map(option => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label htmlFor={`edit-weight-note-${log.id}`} className="mb-1 block text-cap font-semibold text-ink-2">备注</label>
+                        <textarea
+                          id={`edit-weight-note-${log.id}`}
+                          rows={2}
+                          value={weightEditDraft.note}
+                          onChange={(event) => setWeightEditDraft(draft => draft ? { ...draft, note: event.target.value } : draft)}
+                          placeholder="饮食、睡眠或身体感受（可留空）"
+                          className="w-full rounded-ctl border border-line bg-surface-subtle px-3 py-2.5 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent/15"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button variant="secondary" onClick={cancelEditWeight}>取消</Button>
+                        <Button variant="primary" onClick={saveEditedWeight}>保存修改</Button>
+                      </div>
+                    </Card>
+                  );
+                }
+
+                return (
+                  <Card key={log.id} className="flex items-start justify-between gap-3 p-3">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <NumberText size="md" className="text-ink">{log.weight} kg</NumberText>
+                        <button
+                          type="button"
+                          onClick={() => setSlotFilter(log.timeSlot || 'morning')}
+                          className="h-11 rounded-full bg-surface-subtle px-3 text-cap font-semibold text-ink-2"
+                          title="按此时段过滤"
+                        >
+                          {SLOT_SHORT[log.timeSlot || 'morning']}
+                        </button>
+                        <span className="inline-flex min-h-11 items-center px-2 text-sm2 font-medium text-ink-3">
+                          {log.date}
+                        </span>
+                      </div>
+
+                      {log.note && (
+                        <div className="flex items-start gap-1.5 rounded-ctl bg-surface-subtle px-2.5 py-1.5 text-sm2 text-ink-2">
+                          <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+                          <span>{log.note}</span>
+                        </div>
+                      )}
                     </div>
 
-                    {log.note && (
-                      <div className="flex items-start gap-1.5 rounded-ctl bg-surface-subtle px-2.5 py-1.5 text-sm2 text-ink-2">
-                        <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
-                        <span>{log.note}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <IconButton
-                    label="删除此条体重记录"
-                    tone="danger"
-                    onClick={() => promptDeleteWeight(log.id, log.date, log.weight)}
-                  >
-                    <Trash2 className="h-[18px] w-[18px]" />
-                  </IconButton>
-                </Card>
-              ))}
+                    <span className="flex shrink-0 items-center">
+                      <IconButton
+                        label={`编辑 ${log.date} 体重记录`}
+                        onClick={() => startEditWeight(log)}
+                      >
+                        <Pencil className="h-[18px] w-[18px]" />
+                      </IconButton>
+                      <IconButton
+                        label="删除此条体重记录"
+                        tone="danger"
+                        onClick={() => promptDeleteWeight(log.id, log.date, log.weight)}
+                      >
+                        <Trash2 className="h-[18px] w-[18px]" />
+                      </IconButton>
+                    </span>
+                  </Card>
+                );
+              })}
               {visibleWeights.length === 0 && (
                 <Card className="px-4 py-8 text-center">
                   <p className="text-body text-ink-2">当前筛选下没有记录</p>
@@ -1801,6 +2026,15 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         {editingSession && (() => {
           return (
             <div className="space-y-3">
+              {editSessionError && (
+                <p
+                  role="alert"
+                  className="rounded-ctl bg-danger-soft px-3 py-2 text-sm2 font-semibold text-danger"
+                >
+                  {editSessionError}
+                </p>
+              )}
+
               <div>
                 <label htmlFor="edit-session-name" className="mb-1 block text-cap font-semibold text-ink-2">训练记录名称</label>
                 <input
@@ -1833,7 +2067,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       <Flame className="h-4 w-4 text-ink-3" aria-hidden="true" /> 有氧
                     </span>
                     <span className="text-sm2 text-ink-3">
-                      {editingSession.cardioCompleted ? '有有氧' : '无有氧'}
+                      {editingSession.cardioCompleted ? '已手动添加' : '默认关闭'}
                     </span>
                   </div>
                   <SegmentedControl
@@ -1887,6 +2121,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 const unitStr = e.currentUnit === 'plates' ? '片'
                   : e.currentUnit === 'assisted' ? '助力'
                   : e.currentUnit === 'bodyweight' ? '自重' : 'kg';
+                const isBodyweight = e.currentUnit === 'bodyweight';
                 // 该动作是否已按超级组编排（任一组带超级组标记）
                 const isDrop = e.sets.some(s => s.isDropSet);
                 return (
@@ -1906,13 +2141,19 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                     {/* 规格胶囊：展示当前计量单位与滑轮，点击打开规格抽屉 */}
                     <button
                       type="button"
-                      onClick={() => setEditSpecExIdx(exIdx)}
+                      onClick={() => {
+                        setEditSpecExIdx(exIdx);
+                        setEditShowPulley(e.currentUnit !== 'bodyweight' && e.pulleyRatio !== 'none');
+                      }}
                       className="flex h-11 w-full items-center gap-2 rounded-ctl border border-line bg-surface px-3 text-left transition-colors active:bg-surface-strong"
                     >
                       <Layers className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
                       <span className="shrink-0 text-cap font-semibold text-ink-3">规格</span>
                       <span className="min-w-0 flex-1 truncate text-sm2 font-semibold text-ink-2">
-                        {EDIT_UNIT_SHORT[e.currentUnit]} · {EDIT_PULLEY_SHORT[e.pulleyRatio]}{e.pulleyRatio !== 'none' ? ` (${e.pulleyRatio})` : ''}
+                        {EDIT_UNIT_SHORT[e.currentUnit]}
+                        {e.currentUnit !== 'bodyweight' && e.pulleyRatio !== 'none'
+                          ? ` · ${EDIT_PULLEY_SHORT[e.pulleyRatio]} (${e.pulleyRatio})`
+                          : ''}
                       </span>
                       <Pencil className="h-3.5 w-3.5 shrink-0 text-ink-3" aria-hidden="true" />
                     </button>
@@ -1939,31 +2180,35 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       >
                         {isDrop ? '取消超级组' : '设为超级组'}
                       </button>
-                      <span className="flex-1" />
-                      <button
-                        type="button"
-                        onClick={() => { setReplaceExIdx(exIdx); setReplaceSearch(''); }}
-                        className="h-11 px-1 text-sm2 font-semibold text-ink-2 underline"
-                      >
-                        换动作
-                      </button>
-                      {editingSession.exercises.length > 1 && (
+                      <span className="ml-auto flex items-center">
                         <button
                           type="button"
-                          onClick={() => editRemoveExercise(exIdx)}
-                          className="h-11 px-1 text-sm2 text-ink-3 underline hover:text-danger"
+                          onClick={() => { setReplaceExIdx(exIdx); setReplaceSearch(''); }}
+                          className="h-11 px-1 text-sm2 font-semibold text-ink-2 underline"
                         >
-                          删动作
+                          换动作
                         </button>
-                      )}
+                        {editingSession.exercises.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => editRemoveExercise(exIdx)}
+                            className="h-11 px-1 text-sm2 text-ink-3 underline hover:text-danger"
+                          >
+                            删动作
+                          </button>
+                        )}
+                      </span>
                     </div>
 
                     {/* 组行：普通 / 左右独立 / 超级组阶梯 */}
                     <div className="space-y-2">
                       {!isDrop && !e.isUnilateral && (
-                        <div className="grid grid-cols-[32px_1fr_64px_44px] items-center gap-2 px-2 text-center text-cap font-semibold text-ink-3">
+                        <div className={cx(
+                          'grid items-center gap-2 px-2 text-center text-cap font-semibold text-ink-3',
+                          isBodyweight ? 'grid-cols-[32px_1fr_44px]' : 'grid-cols-[32px_1fr_64px_44px]',
+                        )}>
                           <span>组</span>
-                          <span>{unitStr}</span>
+                          {!isBodyweight && <span>{unitStr}</span>}
                           <span>次</span>
                           <span />
                         </div>
@@ -1981,7 +2226,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       {e.sets.map((s, setIdx) => {
                         if (s.isDropSet && s.dropStages && s.dropStages.length > 0) {
                           return (
-                            <div key={setIdx} className="rounded-ctl border border-line bg-surface px-3 py-2">
+                            <div key={setIdx} className="rounded-ctl border border-line bg-surface px-2.5 py-2">
                               <div className="flex items-center justify-between gap-2">
                                 <span className="flex items-center gap-1.5 text-sm2 font-semibold text-ink">
                                   <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-surface-subtle text-cap font-semibold text-ink-3 tabular-nums">
@@ -2001,18 +2246,66 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                                   </IconButton>
                                 </span>
                               </div>
-                              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                              <div className="mt-1.5 space-y-1.5">
                                 {s.dropStages.map((stg, stgIdx) => (
-                                  <span
-                                    key={stgIdx}
-                                    className="inline-flex items-center gap-1 rounded-[6px] bg-surface-subtle px-2 py-1 text-sm2 tabular-nums text-ink-2"
-                                  >
-                                    {stg.weightOrPlates}{stg.unit || 'kg'} × {stg.reps}次
-                                    {stgIdx < s.dropStages!.length - 1 && (
-                                      <span className="text-ink-3" aria-hidden="true">→</span>
+                                  <div
+                                    key={stg.id}
+                                    className={cx(
+                                      'grid items-center gap-1.5 rounded-[8px] bg-surface-subtle px-1.5 py-1',
+                                      isBodyweight
+                                        ? 'grid-cols-[20px_minmax(0,1fr)_38px]'
+                                        : 'grid-cols-[20px_minmax(0,1fr)_minmax(0,1fr)_38px]',
                                     )}
-                                  </span>
+                                  >
+                                    <span className="text-center text-cap font-semibold tabular-nums text-ink-3">
+                                      {stgIdx + 1}
+                                    </span>
+                                    {!isBodyweight && (
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        min={0}
+                                        aria-label={`第 ${s.setNumber} 大组第 ${stgIdx + 1} 阶重量或片数`}
+                                        value={stg.weightOrPlates || ''}
+                                        onChange={(event) => editDropStageField(
+                                          exIdx, setIdx, stgIdx, 'weightOrPlates', parseFloat(event.target.value) || 0,
+                                        )}
+                                        placeholder={unitStr}
+                                        className="h-10 min-w-0 rounded-[7px] bg-surface px-1 text-center text-[16px] font-semibold tabular-nums text-ink placeholder:text-ink-disabled focus:outline-none focus:ring-2 focus:ring-accent/30"
+                                      />
+                                    )}
+                                    <span className="flex min-w-0 items-center gap-1 rounded-[7px] bg-surface px-1">
+                                      <input
+                                        type="number"
+                                        inputMode="numeric"
+                                        min={0}
+                                        aria-label={`第 ${s.setNumber} 大组第 ${stgIdx + 1} 阶次数`}
+                                        value={stg.reps || ''}
+                                        onChange={(event) => editDropStageField(
+                                          exIdx, setIdx, stgIdx, 'reps', parseInt(event.target.value, 10) || 0,
+                                        )}
+                                        placeholder="次数"
+                                        className="h-10 min-w-0 flex-1 bg-transparent text-center text-[16px] font-semibold tabular-nums text-ink placeholder:text-ink-disabled focus:outline-none"
+                                      />
+                                      <span className="shrink-0 text-cap text-ink-3">次</span>
+                                    </span>
+                                    <IconButton
+                                      label={`删除第 ${s.setNumber} 大组第 ${stgIdx + 1} 阶`}
+                                      onClick={() => editRemoveDropStage(exIdx, setIdx, stgIdx)}
+                                      disabled={s.dropStages!.length <= 1}
+                                      className="justify-self-center hover:text-danger disabled:opacity-30"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </IconButton>
+                                  </div>
                                 ))}
+                                <button
+                                  type="button"
+                                  onClick={() => editAddDropStage(exIdx, setIdx)}
+                                  className="flex h-10 w-full items-center justify-center gap-1 rounded-[8px] border border-dashed border-line-strong text-cap font-semibold text-accent"
+                                >
+                                  <Plus className="h-3.5 w-3.5" aria-hidden="true" /> 加一阶
+                                </button>
                               </div>
                             </div>
                           );
@@ -2025,14 +2318,16 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                             return (
                               <div className="flex min-w-0 items-center justify-center gap-0.5">
                                 <div className="flex min-w-[44px] flex-col items-center">
-                                  <input
-                                    type="number"
-                                    inputMode="decimal"
-                                    aria-label={`第 ${s.setNumber} 组${label}侧重量`}
-                                    value={sd.weight || ''}
-                                    onChange={(ev) => editUnilateralField(exIdx, setIdx, side, 'weight', parseFloat(ev.target.value) || 0)}
-                                    className="w-11 bg-transparent text-center text-[16px] font-semibold tabular-nums text-ink focus:outline-none"
-                                  />
+                                  {!isBodyweight && (
+                                    <input
+                                      type="number"
+                                      inputMode="decimal"
+                                      aria-label={`第 ${s.setNumber} 组${label}侧重量`}
+                                      value={sd.weight || ''}
+                                      onChange={(ev) => editUnilateralField(exIdx, setIdx, side, 'weight', parseFloat(ev.target.value) || 0)}
+                                      className="w-11 bg-transparent text-center text-[16px] font-semibold tabular-nums text-ink focus:outline-none"
+                                    />
+                                  )}
                                   <span className="mt-0.5 inline-flex items-center gap-0.5 rounded-[6px] bg-surface-subtle px-1 py-0.5">
                                     <input
                                       type="number"
@@ -2074,19 +2369,24 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                         return (
                           <div
                             key={setIdx}
-                            className="grid h-14 grid-cols-[32px_1fr_64px_44px] items-center gap-2 rounded-ctl border border-line bg-surface px-2"
+                            className={cx(
+                              'grid h-14 items-center gap-2 rounded-ctl border border-line bg-surface px-2',
+                              isBodyweight ? 'grid-cols-[32px_1fr_44px]' : 'grid-cols-[32px_1fr_64px_44px]',
+                            )}
                           >
                             <span className="flex h-7 w-7 items-center justify-center justify-self-center rounded-[8px] bg-success-soft text-sm2 font-semibold tabular-nums text-success">
                               {s.setNumber}
                             </span>
-                            <input
-                              type="number"
-                              inputMode="decimal"
-                              aria-label={`第 ${s.setNumber} 组重量`}
-                              value={s.weightOrPlates || ''}
-                              onChange={(ev) => editSetField(exIdx, setIdx, 'weightOrPlates', parseFloat(ev.target.value) || 0)}
-                              className="mx-auto w-[52px] bg-transparent text-center text-[20px] font-semibold tabular-nums text-ink focus:outline-none"
-                            />
+                            {!isBodyweight && (
+                              <input
+                                type="number"
+                                inputMode="decimal"
+                                aria-label={`第 ${s.setNumber} 组重量`}
+                                value={s.weightOrPlates || ''}
+                                onChange={(ev) => editSetField(exIdx, setIdx, 'weightOrPlates', parseFloat(ev.target.value) || 0)}
+                                className="mx-auto h-11 w-[52px] rounded-[8px] bg-surface-subtle text-center text-[18px] font-semibold tabular-nums text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-accent/30"
+                              />
+                            )}
                             <input
                               type="number"
                               inputMode="numeric"
@@ -2145,14 +2445,25 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         })()}
       </Sheet>
 
-      {/* 历史编辑：规格抽屉（单位 + 滑轮），镜像开练页规格抽屉 */}
+      {/* 历史编辑：规格抽屉（单位；滑轮记录按需展开） */}
       <Sheet
         open={editingSession !== null && editSpecExIdx !== null && Boolean(editingSession.exercises[editSpecExIdx])}
-        onClose={() => setEditSpecExIdx(null)}
+        onClose={() => {
+          setEditSpecExIdx(null);
+          setEditShowPulley(false);
+        }}
         title="动作规格"
         description={editingSession && editSpecExIdx !== null ? editingSession.exercises[editSpecExIdx]?.exerciseName : undefined}
         footer={
-          <Button variant="primary" size="lg" block onClick={() => setEditSpecExIdx(null)}>
+          <Button
+            variant="primary"
+            size="lg"
+            block
+            onClick={() => {
+              setEditSpecExIdx(null);
+              setEditShowPulley(false);
+            }}
+          >
             完成
           </Button>
         }
@@ -2169,15 +2480,44 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 options={EDIT_UNIT_OPTIONS}
               />
 
-              <p className="mb-1.5 mt-4 text-cap font-semibold text-ink-3">滑轮比例</p>
-              <SegmentedControl
-                label="滑轮比例"
-                value={specEx.pulleyRatio}
-                onChange={(ratio) => editChangePulley(editSpecExIdx, ratio)}
-                options={EDIT_PULLEY_OPTIONS}
-              />
+              {specEx.currentUnit !== 'bodyweight' && (
+                <div className="mt-4 space-y-2">
+                  <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface-subtle/60 px-3">
+                    <span>
+                      <span className="block text-sm2 font-semibold text-ink">滑轮记录</span>
+                      <span className="block text-cap text-ink-3">默认关闭，需要时再选择单滑轮或双滑轮</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={editShowPulley}
+                      onChange={(event) => {
+                        setEditShowPulley(event.target.checked);
+                        editChangePulley(
+                          editSpecExIdx,
+                          event.target.checked
+                            ? (specEx.pulleyRatio === 'none' ? '1:1' : specEx.pulleyRatio)
+                            : 'none',
+                        );
+                      }}
+                      className="h-5 w-5 shrink-0 accent-accent"
+                    />
+                  </label>
+                  {editShowPulley && (
+                    <SegmentedControl
+                      label="滑轮比例"
+                      value={specEx.pulleyRatio === 'none' ? '1:1' : specEx.pulleyRatio}
+                      onChange={(ratio) => editChangePulley(editSpecExIdx, ratio)}
+                      options={EDIT_PULLEY_OPTIONS.filter(option => option.value !== 'none')}
+                    />
+                  )}
+                </div>
+              )}
 
-              <p className="mt-3 text-cap text-ink-3">修改后该动作所有组同步</p>
+              <p className="mt-3 text-cap text-ink-3">
+                {specEx.currentUnit === 'bodyweight'
+                  ? '自重模式只记录次数，不保存重量与滑轮。'
+                  : '修改后该动作所有组同步。'}
+              </p>
             </div>
           );
         })()}
@@ -2281,7 +2621,14 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                     <select
                       id="history-custom-unit"
                       value={historyCustomUnit}
-                      onChange={(e) => setHistoryCustomUnit(e.target.value as ResistanceUnit)}
+                      onChange={(e) => {
+                        const unit = e.target.value as ResistanceUnit;
+                        setHistoryCustomUnit(unit);
+                        if (unit === 'bodyweight') {
+                          setHistoryCustomPulley('none');
+                          setHistoryCustomShowPulley(false);
+                        }
+                      }}
                       className={fieldCls}
                     >
                       <option value="plates">插销 (片)</option>
@@ -2291,19 +2638,37 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                     </select>
                   </div>
                 </div>
-                <div>
-                  <label htmlFor="history-custom-pulley" className="mb-1 block text-cap font-semibold text-ink-2">滑轮类型</label>
-                  <select
-                    id="history-custom-pulley"
-                    value={historyCustomPulley}
-                    onChange={(e) => setHistoryCustomPulley(e.target.value as PulleyRatio)}
-                    className={fieldCls}
-                  >
-                    <option value="none">普通固定器械/自由重量</option>
-                    <option value="1:1">单滑轮 1:1</option>
-                    <option value="2:1">双滑轮 2:1</option>
-                  </select>
-                </div>
+                {historyCustomUnit !== 'bodyweight' && (
+                  <div className="space-y-2">
+                    <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
+                      <span>
+                        <span className="block text-sm2 font-semibold text-ink">滑轮记录</span>
+                        <span className="block text-cap text-ink-3">默认关闭，仅手动开启时选择单滑轮或双滑轮</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={historyCustomShowPulley}
+                        onChange={(e) => {
+                          setHistoryCustomShowPulley(e.target.checked);
+                          setHistoryCustomPulley(e.target.checked ? '1:1' : 'none');
+                        }}
+                        className="h-4 w-4 shrink-0 accent-accent"
+                      />
+                    </label>
+                    {historyCustomShowPulley && (
+                      <select
+                        id="history-custom-pulley"
+                        aria-label="滑轮类型"
+                        value={historyCustomPulley === 'none' ? '1:1' : historyCustomPulley}
+                        onChange={(e) => setHistoryCustomPulley(e.target.value as PulleyRatio)}
+                        className={fieldCls}
+                      >
+                        <option value="1:1">单滑轮 1:1</option>
+                        <option value="2:1">双滑轮 2:1</option>
+                      </select>
+                    )}
+                  </div>
+                )}
                 <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
                   <span className="min-w-0">
                     <span className="block text-sm2 font-semibold text-ink">左右独立动作（单侧）</span>
@@ -2338,7 +2703,15 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 <div className="grid grid-cols-2 gap-2">
                   <Button
                     variant="secondary"
-                    onClick={() => { setHistoryCustomName(''); setHistoryCustomNotes(''); setHistoryCustomUnilateral(false); setHistoryCustomDropSet(false); setHistoryCustomError(null); }}
+                    onClick={() => {
+                      setHistoryCustomName('');
+                      setHistoryCustomNotes('');
+                      setHistoryCustomUnilateral(false);
+                      setHistoryCustomDropSet(false);
+                      setHistoryCustomPulley('none');
+                      setHistoryCustomShowPulley(false);
+                      setHistoryCustomError(null);
+                    }}
                   >
                     清空
                   </Button>
@@ -2346,14 +2719,21 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                     variant="primary"
                     onClick={() => {
                       if (!historyCustomName.trim()) { setHistoryCustomError('请输入动作名称'); return; }
+                      const customDropStages = makeEditDefaultDropStages().map(stage => ({
+                        ...stage,
+                        unit: historyCustomUnit,
+                        weightOrPlates: historyCustomUnit === 'bodyweight' ? 0 : stage.weightOrPlates,
+                      }));
                       const created = StorageService.addCustomExercise({
                         name: historyCustomName.trim(),
                         category: historyCustomCategory,
-                        defaultUnit: historyCustomDropSet ? 'kg' : historyCustomUnit,
-                        defaultPulley: historyCustomPulley,
+                        defaultUnit: historyCustomUnit,
+                        defaultPulley: historyCustomUnit === 'bodyweight' || !historyCustomShowPulley
+                          ? 'none'
+                          : historyCustomPulley,
                         isUnilateral: historyCustomDropSet ? undefined : (historyCustomUnilateral || undefined),
                         isDropSet: historyCustomDropSet || undefined,
-                        dropStages: historyCustomDropSet ? makeEditDefaultDropStages() : undefined,
+                        dropStages: historyCustomDropSet ? customDropStages : undefined,
                         notes: historyCustomNotes.trim() || undefined,
                         isFavorite: true,
                       });
@@ -2361,8 +2741,11 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       setHistoryCustomNotes('');
                       setHistoryCustomUnilateral(false);
                       setHistoryCustomDropSet(false);
+                      setHistoryCustomPulley('none');
+                      setHistoryCustomShowPulley(false);
                       setHistoryCustomError(null);
                       setShowHistoryCustomForm(false);
+                      onRefreshExercises?.();
                       pick(created);
                     }}
                   >

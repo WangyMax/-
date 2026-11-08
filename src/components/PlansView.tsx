@@ -5,11 +5,12 @@ import {
 } from 'lucide-react';
 import {
   WorkoutPlan, Exercise, PlanExerciseTarget, CATEGORY_LABELS, UNIT_LABELS,
-  ResistanceUnit, PulleyRatio
+  ResistanceUnit, DropStage
 } from '../types';
 import { StorageService } from '../utils/storage';
+import { formatDropStagesSummary, requiresWeightInput } from '../utils/trainingRules';
 import { ConfirmSheet } from './ConfirmSheet';
-import { Badge, Button, Card, IconButton, SegmentedControl, Sheet, cx } from '../ui';
+import { Badge, Button, Card, IconButton, Sheet, cx } from '../ui';
 
 interface PlansViewProps {
   allExercises: Exercise[];
@@ -25,22 +26,43 @@ interface PlansViewProps {
 
 const fieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
 const compactFieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-3 text-sm2 text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
-const compactSelectCls = 'h-11 rounded-ctl border border-line bg-surface-subtle px-2 text-sm2 text-ink focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
 const compactNumCls = 'h-11 rounded-[8px] border border-line bg-surface px-1 text-center text-sm2 font-semibold tabular-nums text-ink focus:border-accent focus:outline-none';
 // 计划内每个动作的数字预设框：与 fieldCls 同源，但用等宽数字并居中
 const numFieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-2 text-center text-body font-semibold tabular-nums text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
 
-type CardioOptionValue = '0' | '15' | '20' | '30' | 'custom';
-
-const CARDIO_OPTIONS: ReadonlyArray<{ value: CardioOptionValue; label: string }> = [
-  { value: '0', label: '无有氧' },
-  { value: '15', label: '15分' },
-  { value: '20', label: '20分' },
-  { value: '30', label: '30分' },
-];
-
 // 计划名沿用了数据里的彩色 emoji，展示时统一成单色加号（不改数据）
 const displayPlanName = (name: string) => name.replace(/➕/g, '+');
+
+const makeDefaultPlanDropStages = (unit: ResistanceUnit): DropStage[] => {
+  const weights = unit === 'plates' ? [10, 8, 6, 4] : [10, 7.5, 5, 2.5];
+  const reps = [12, 12, 10, 12];
+  return weights.map((weightOrPlates, index) => ({
+    id: `stg-${Date.now()}-${index}`,
+    weightOrPlates: unit === 'bodyweight' ? 0 : weightOrPlates,
+    unit,
+    reps: reps[index],
+  }));
+};
+
+const formatPlanExerciseSummary = (
+  pe: PlanExerciseTarget,
+  isDrop: boolean,
+): string => {
+  const unit = pe.targetUnit || 'kg';
+  if (isDrop) {
+    return `${pe.targetSets} 大组 · ${formatDropStagesSummary(pe.dropStages || [])}`;
+  }
+
+  const reps = pe.targetReps || 12;
+  if (!requiresWeightInput(unit)) return `${pe.targetSets}组 · ${reps}次 · 自重`;
+  const load = pe.targetWeight !== undefined && pe.targetWeight > 0
+    ? `${pe.targetWeight}${unit === 'plates' ? '片' : unit === 'assisted' ? 'kg助力' : 'kg'}`
+    : null;
+  return `${pe.targetSets}组 · ${reps}次${load ? ` · ${load}` : ''}`;
+};
+
+const isExplicitPlanDropSet = (pe: PlanExerciseTarget): boolean =>
+  pe.isDropSet === true || (pe.isDropSet === undefined && Boolean(pe.dropStages?.length));
 
 export const PlansView: React.FC<PlansViewProps> = ({
   allExercises,
@@ -82,8 +104,8 @@ export const PlansView: React.FC<PlansViewProps> = ({
       name: '自定义分化计划',
       categoryTags: ['自定义'],
       description: '',
-      cardioMinutes: 20,
-      cardioType: '跑步机坡度快走',
+      cardioMinutes: 0,
+      cardioType: undefined,
       exercises: []
     };
     setEditingPlan(newPlan);
@@ -128,21 +150,44 @@ export const PlansView: React.FC<PlansViewProps> = ({
       setFormError('请输入计划名称');
       return;
     }
+    if (editingPlan.cardioMinutes > 300) {
+      setFormError('有氧时长不能超过 300 分钟');
+      return;
+    }
     setFormError(null);
     // 保存前清洗数字：清空未填的组数回退到标准 4 组，无效预设置空
     const sanitized: WorkoutPlan = {
       ...editingPlan,
-      exercises: editingPlan.exercises.map(pe => ({
-        ...pe,
-        targetSets: pe.targetSets >= 1 ? Math.floor(pe.targetSets) : 4,
-        targetReps: typeof pe.targetReps === 'number' && pe.targetReps >= 1 ? Math.floor(pe.targetReps) : undefined,
-        targetWeight: typeof pe.targetWeight === 'number' && pe.targetWeight >= 0 ? pe.targetWeight : undefined,
-        dropStages: pe.dropStages?.map(stg => ({
-          ...stg,
-          weightOrPlates: typeof stg.weightOrPlates === 'number' && stg.weightOrPlates >= 0 ? stg.weightOrPlates : 0,
-          reps: typeof stg.reps === 'number' && stg.reps >= 0 ? Math.floor(stg.reps) : 0,
-        })),
-      })),
+      exercises: editingPlan.exercises.map((pe) => {
+        const exercise = allExercises.find(ex => ex.id === pe.exerciseId);
+        const unit = pe.targetUnit || exercise?.defaultUnit || 'kg';
+        return {
+          ...pe,
+          targetSets: pe.targetSets >= 1 ? Math.floor(pe.targetSets) : 4,
+          targetReps: typeof pe.targetReps === 'number' && pe.targetReps >= 1 ? Math.floor(pe.targetReps) : undefined,
+          targetWeight: unit === 'bodyweight'
+            ? undefined
+            : (typeof pe.targetWeight === 'number' && pe.targetWeight >= 0 ? pe.targetWeight : undefined),
+          isDropSet: isExplicitPlanDropSet(pe),
+          // 新训练中的滑轮需要手动开启；计划仅保留原有历史值，不在这里自动生成。
+          pulleyRatio: pe.pulleyRatio || 'none',
+          dropStages: isExplicitPlanDropSet(pe)
+            ? pe.dropStages?.map((stg) => {
+                const sameUnit = stg.unit === unit;
+                return {
+                  ...stg,
+                  weightOrPlates: unit === 'bodyweight' || !sameUnit
+                    ? 0
+                    : (typeof stg.weightOrPlates === 'number' && stg.weightOrPlates >= 0 ? stg.weightOrPlates : 0),
+                  reps: typeof stg.reps === 'number' && stg.reps >= 0 ? Math.floor(stg.reps) : 0,
+                  unit,
+                };
+              })
+            : undefined,
+        };
+      }),
+      cardioMinutes: editingPlan.cardioMinutes > 0 ? Math.max(1, Math.round(editingPlan.cardioMinutes)) : 0,
+      cardioType: editingPlan.cardioMinutes > 0 ? (editingPlan.cardioType || '').trim() || undefined : undefined,
     };
     StorageService.savePlan(sanitized);
     setIsModalOpen(false);
@@ -157,11 +202,11 @@ export const PlansView: React.FC<PlansViewProps> = ({
       exerciseId: exercise.id,
       targetSets: 4,
       targetReps: 12,
-      targetWeight: exercise.defaultUnit === 'plates' ? 10 : 30,
+      targetWeight: undefined,
       targetUnit: exercise.defaultUnit,
-      pulleyRatio: exercise.defaultPulley || 'none',
+      pulleyRatio: 'none',
       // 左右独立动作默认带入单侧标记，开练时左右分别记录
-      isUnilateral: exercise.isUnilateral || undefined,
+      isUnilateral: Boolean(exercise.isUnilateral),
       notes: exercise.notes || ''
     };
     setEditingPlan({
@@ -221,15 +266,15 @@ export const PlansView: React.FC<PlansViewProps> = ({
         exerciseId: e.exerciseId,
         targetSets: Math.max(1, e.sets.length),
         targetReps: r,
-        targetWeight: w,
+        targetWeight: (ref?.unit || e.currentUnit) === 'bodyweight' ? undefined : w,
         targetUnit: ref?.unit || e.currentUnit,
-        pulleyRatio: ref?.pulleyRatio || e.pulleyRatio,
-        isUnilateral: uni || undefined,
+        pulleyRatio: 'none',
+        isUnilateral: uni,
         notes: e.notes || '',
       };
       if (ref?.isDropSet && ref.dropStages && ref.dropStages.length > 0) {
         target.isDropSet = true;
-        target.isUnilateral = undefined;
+        target.isUnilateral = false;
         target.dropStages = JSON.parse(JSON.stringify(ref.dropStages));
       }
       return target;
@@ -237,8 +282,9 @@ export const PlansView: React.FC<PlansViewProps> = ({
     setEditingPlan({
       ...editingPlan,
       name: editingPlan.name === '自定义分化计划' ? `${sess.planName}（模板）` : editingPlan.name,
-      cardioMinutes: sess.cardioMinutes,
-      cardioType: sess.cardioType,
+      // 历史仅作为动作预设来源，不自动把本次训练的有氧完成态带进新计划。
+      cardioMinutes: 0,
+      cardioType: undefined,
       exercises: targets,
     });
     setIsImportSessionOpen(false);
@@ -246,17 +292,6 @@ export const PlansView: React.FC<PlansViewProps> = ({
 
   // 编辑 Sheet 标题：已存在的计划显示“编辑计划”，新建的显示“新建计划”
   const isEditingExistingPlan = Boolean(editingPlan && plans.some(p => p.id === editingPlan.id));
-  // 历史导入可能带来 25 分钟这类非预设值：分段控件不选中任何一档，另起一行说明当前值
-  const cardioValue: CardioOptionValue = editingPlan
-    ? (CARDIO_OPTIONS.some(o => o.value === String(editingPlan.cardioMinutes))
-      ? (String(editingPlan.cardioMinutes) as CardioOptionValue)
-      : 'custom')
-    : '0';
-  const cardioOptions: ReadonlyArray<{ value: CardioOptionValue; label: string }> =
-    cardioValue === 'custom' && editingPlan
-      ? [...CARDIO_OPTIONS, { value: 'custom', label: `${editingPlan.cardioMinutes}分` }]
-      : CARDIO_OPTIONS;
-
   const importSessions = isImportSessionOpen
     ? StorageService.getSessions().filter(s => {
       const kw = importSearch.toLowerCase();
@@ -357,9 +392,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
               <div>
                 {plan.exercises.map((pe, idx) => {
                   const ex = allExercises.find(e => e.id === pe.exerciseId);
-                  const unitStr = pe.targetUnit === 'plates' ? '片' : pe.targetUnit === 'assisted' ? 'kg助力' : pe.targetUnit === 'bodyweight' ? '自重' : 'kg';
-                  const pulleyStr = pe.pulleyRatio && pe.pulleyRatio !== 'none' ? ` (${pe.pulleyRatio})` : '';
-                  const isDrop = Boolean(pe.isDropSet || (pe.dropStages && pe.dropStages.length > 0));
+                  const isDrop = isExplicitPlanDropSet(pe);
                   return (
                     <div
                       key={`${plan.id}-ex-${idx}`}
@@ -379,9 +412,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                             )}
                           </span>
                           <span className="mt-0.5 block truncate text-cap text-ink-3">
-                            {isDrop
-                              ? `${pe.targetSets} 大组 · ${(pe.dropStages || []).map(s => `${s.weightOrPlates}×${s.reps}`).join(' → ')}`
-                              : `${pe.targetSets}组 × ${pe.targetReps || 12}次${pe.targetWeight !== undefined ? ` · ${pe.targetWeight}${unitStr}${pulleyStr}` : ''}`}
+                            {formatPlanExerciseSummary(pe, isDrop)}
                           </span>
                         </span>
                       </div>
@@ -477,32 +508,64 @@ export const PlansView: React.FC<PlansViewProps> = ({
 
             {/* 有氧设置 */}
             <div className="rounded-ctl bg-surface-subtle p-3">
-              <div className="flex items-center justify-between gap-2">
+              <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3">
                 <span className="flex items-center gap-1.5 text-sm2 font-semibold text-ink">
                   <Flame className="h-4 w-4 text-ink-3" /> 练后附加有氧
                 </span>
-              </div>
-              <div className="mt-2">
-                <SegmentedControl
-                  label="练后附加有氧"
-                  value={cardioValue}
-                  onChange={(value) => {
-                    if (value === 'custom') return;
-                    setEditingPlan({ ...editingPlan, cardioMinutes: Number(value) });
-                  }}
-                  options={cardioOptions}
+                <input
+                  type="checkbox"
+                  checked={editingPlan.cardioMinutes > 0}
+                  onChange={(e) => setEditingPlan({
+                    ...editingPlan,
+                    cardioMinutes: e.target.checked ? (editingPlan.cardioMinutes > 0 ? editingPlan.cardioMinutes : 20) : 0,
+                    cardioType: e.target.checked ? editingPlan.cardioType : undefined,
+                  })}
+                  className="h-5 w-5 accent-accent"
                 />
-              </div>
+              </label>
 
               {editingPlan.cardioMinutes > 0 && (
-                <input
-                  type="text"
-                  value={editingPlan.cardioType || ''}
-                  onChange={(e) => setEditingPlan({ ...editingPlan, cardioType: e.target.value })}
-                  placeholder="有氧项目: 跑步机坡度快走 / 爬楼机 / 椭圆机"
-                  aria-label="有氧项目"
-                  className={cx(compactFieldCls, 'mt-2')}
-                />
+                <div className="mt-2 space-y-2">
+                  <input
+                    type="text"
+                    value={editingPlan.cardioType || ''}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, cardioType: e.target.value })}
+                    placeholder="有氧项目: 跑步机坡度快走 / 爬楼机 / 椭圆机"
+                    aria-label="有氧项目"
+                    className={compactFieldCls}
+                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={300}
+                      inputMode="numeric"
+                      value={editingPlan.cardioMinutes || ''}
+                      onChange={(e) => setEditingPlan({
+                        ...editingPlan,
+                        cardioMinutes: e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value) || 0),
+                      })}
+                      aria-label="有氧时长"
+                      className={cx(compactFieldCls, 'w-24 text-center tabular-nums')}
+                    />
+                    <span className="text-sm2 text-ink-2">分钟</span>
+                    <div className="ml-auto flex gap-1">
+                      {[15, 20, 30].map(minutes => (
+                        <button
+                          key={minutes}
+                          type="button"
+                          onClick={() => setEditingPlan({ ...editingPlan, cardioMinutes: minutes })}
+                          className={cx(
+                            'h-11 rounded-[8px] px-3 text-cap font-semibold',
+                            editingPlan.cardioMinutes === minutes ? 'bg-ink text-white' : 'bg-surface text-ink-2',
+                          )}
+                        >
+                          {minutes}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -534,7 +597,15 @@ export const PlansView: React.FC<PlansViewProps> = ({
                 <div className="mt-2 border-t border-line">
                   {editingPlan.exercises.map((pe, idx) => {
                     const ex = allExercises.find(e => e.id === pe.exerciseId);
-                    const unitLabel = pe.targetUnit === 'plates' ? '片' : pe.targetUnit === 'assisted' ? 'kg 助力' : pe.targetUnit === 'bodyweight' ? '自重' : 'kg';
+                    const resolvedUnit = pe.targetUnit || ex?.defaultUnit || 'kg';
+                    const isDrop = isExplicitPlanDropSet(pe);
+                    const unitLabel = resolvedUnit === 'plates'
+                      ? '片'
+                      : resolvedUnit === 'assisted'
+                        ? 'kg 助力'
+                        : resolvedUnit === 'bodyweight'
+                          ? '自重'
+                          : 'kg';
                     return (
                       <div
                         key={`${pe.exerciseId}-${idx}`}
@@ -546,12 +617,12 @@ export const PlansView: React.FC<PlansViewProps> = ({
                             <span className="flex flex-wrap items-center gap-1.5">
                               <span className="shrink-0 text-cap font-semibold tabular-nums text-ink-3">{idx + 1}.</span>
                               <span className="min-w-0 truncate text-body font-semibold text-ink">{ex?.name || '未知动作'}</span>
-                              {pe.isDropSet && (
+                              {isDrop && (
                                 <Badge>
                                   <Flame className="h-3 w-3" />超级组
                                 </Badge>
                               )}
-                              {pe.isUnilateral && !pe.isDropSet && <Badge>左右独立</Badge>}
+                              {pe.isUnilateral && !isDrop && <Badge>左右独立</Badge>}
                             </span>
                           </div>
                           <div className="flex shrink-0 items-center">
@@ -583,7 +654,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                         </div>
 
                         {/* 预设参数区：超级组面板 vs 普通动作面板 */}
-                        {pe.isDropSet ? (
+                        {isDrop ? (
                           <div className="mt-2 rounded-ctl bg-surface-subtle p-3">
                             <div className="flex items-center justify-between gap-2">
                               <span className="flex items-center gap-1.5 text-sm2 font-semibold text-ink">
@@ -616,20 +687,24 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                   className="flex min-h-11 items-center gap-1.5 rounded-[8px] border border-line bg-surface px-2"
                                 >
                                   <span className="w-5 shrink-0 text-cap font-semibold tabular-nums text-ink-3">#{stgIdx + 1}</span>
-                                  <input
-                                    type="number"
-                                    step="0.5"
-                                    aria-label={`第 ${stgIdx + 1} 阶重量`}
-                                    value={stg.weightOrPlates || ''}
-                                    onChange={(e) => {
-                                      const newExs = [...editingPlan.exercises];
-                                      newExs[idx].dropStages![stgIdx].weightOrPlates = parseFloat(e.target.value) || 0;
-                                      setEditingPlan({ ...editingPlan, exercises: newExs });
-                                    }}
-                                    className={cx(compactNumCls, 'w-16')}
-                                  />
-                                  <span className="text-cap text-ink-3">kg</span>
-                                  <span aria-hidden="true" className="text-cap text-ink-3">→</span>
+                                  {requiresWeightInput(resolvedUnit) && (
+                                    <>
+                                      <input
+                                        type="number"
+                                        step="0.5"
+                                        aria-label={`第 ${stgIdx + 1} 阶重量`}
+                                        value={stg.weightOrPlates || ''}
+                                        onChange={(e) => {
+                                          const newExs = [...editingPlan.exercises];
+                                          newExs[idx].dropStages![stgIdx].weightOrPlates = parseFloat(e.target.value) || 0;
+                                          setEditingPlan({ ...editingPlan, exercises: newExs });
+                                        }}
+                                        className={cx(compactNumCls, 'w-16')}
+                                      />
+                                      <span className="text-cap text-ink-3">{unitLabel}</span>
+                                      <span aria-hidden="true" className="text-cap text-ink-3">/</span>
+                                    </>
+                                  )}
                                   <input
                                     type="number"
                                     aria-label={`第 ${stgIdx + 1} 阶次数`}
@@ -669,8 +744,10 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                   const last = newExs[idx].dropStages![newExs[idx].dropStages!.length - 1];
                                   newExs[idx].dropStages!.push({
                                     id: `stg-${Date.now()}`,
-                                    weightOrPlates: last ? Math.max(1, last.weightOrPlates - 2.5) : 5,
-                                    unit: 'kg',
+                                    weightOrPlates: resolvedUnit === 'bodyweight'
+                                      ? 0
+                                      : (last ? Math.max(0, last.weightOrPlates - (resolvedUnit === 'plates' ? 2 : 2.5)) : 5),
+                                    unit: resolvedUnit,
                                     reps: 10,
                                   });
                                   setEditingPlan({ ...editingPlan, exercises: newExs });
@@ -684,6 +761,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                 onClick={() => {
                                   const newExs = [...editingPlan.exercises];
                                   newExs[idx].isDropSet = false;
+                                  newExs[idx].dropStages = undefined;
                                   setEditingPlan({ ...editingPlan, exercises: newExs });
                                 }}
                                 className="h-11 shrink-0 px-1 text-cap text-ink-3 underline"
@@ -730,31 +808,47 @@ export const PlansView: React.FC<PlansViewProps> = ({
                               />
                             </label>
 
-                            <label className="block">
-                              <span className="mb-1 block text-cap font-semibold text-ink-3">预设负荷（{unitLabel}）</span>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.5"
-                                aria-label="预设负荷"
-                                value={pe.targetWeight ?? ''}
-                                onChange={(e) => {
-                                  const newExs = [...editingPlan.exercises];
-                                  newExs[idx].targetWeight = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0);
-                                  setEditingPlan({ ...editingPlan, exercises: newExs });
-                                }}
-                                className={numFieldCls}
-                              />
-                            </label>
+                            {requiresWeightInput(resolvedUnit) && (
+                              <label className="block">
+                                <span className="mb-1 block text-cap font-semibold text-ink-3">预设负荷（{unitLabel}）</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.5"
+                                  aria-label="预设负荷"
+                                  value={pe.targetWeight ?? ''}
+                                  onChange={(e) => {
+                                    const newExs = [...editingPlan.exercises];
+                                    newExs[idx].targetWeight = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0);
+                                    setEditingPlan({ ...editingPlan, exercises: newExs });
+                                  }}
+                                  className={numFieldCls}
+                                />
+                              </label>
+                            )}
 
                             <label className="block">
                               <span className="mb-1 block text-cap font-semibold text-ink-3">阻力单位</span>
                               <select
-                                value={pe.targetUnit || ex?.defaultUnit || 'kg'}
+                                value={resolvedUnit}
                                 aria-label="阻力单位"
                                 onChange={(e) => {
+                                  const unit = e.target.value as ResistanceUnit;
                                   const newExs = [...editingPlan.exercises];
-                                  newExs[idx].targetUnit = e.target.value as ResistanceUnit;
+                                  const previousUnit = newExs[idx].targetUnit || ex?.defaultUnit || 'kg';
+                                  const unitChanged = previousUnit !== unit;
+                                  newExs[idx].targetUnit = unit;
+                                  if (unit === 'bodyweight' || unitChanged) {
+                                    newExs[idx].targetWeight = undefined;
+                                  }
+                                  if (unit === 'bodyweight') {
+                                    newExs[idx].pulleyRatio = 'none';
+                                  }
+                                  newExs[idx].dropStages = newExs[idx].dropStages?.map(stage => ({
+                                    ...stage,
+                                    unit,
+                                    weightOrPlates: unit === 'bodyweight' || unitChanged ? 0 : stage.weightOrPlates,
+                                  }));
                                   setEditingPlan({ ...editingPlan, exercises: newExs });
                                 }}
                                 className={fieldCls}
@@ -773,7 +867,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                               aria-label="左右独立记录"
                               onClick={() => {
                                 const newExs = [...editingPlan.exercises];
-                                newExs[idx].isUnilateral = newExs[idx].isUnilateral ? undefined : true;
+                                newExs[idx].isUnilateral = newExs[idx].isUnilateral ? false : true;
                                 setEditingPlan({ ...editingPlan, exercises: newExs });
                               }}
                               className={cx(
@@ -809,7 +903,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                         )}
 
                         {/* 动作底部：设为超级组按钮（超级组不支持分侧，切换时清除单侧标记） */}
-                        {!pe.isDropSet && (
+                        {!isDrop && (
                           <div className="mt-1 flex items-center justify-end">
                             <button
                               type="button"
@@ -817,14 +911,9 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                 const newExs = [...editingPlan.exercises];
                                 newExs[idx].isDropSet = true;
                                 // 超级组不支持分侧记录，切为超级组时清除单侧标记
-                                newExs[idx].isUnilateral = undefined;
+                                newExs[idx].isUnilateral = false;
                                 if (!newExs[idx].dropStages) {
-                                  newExs[idx].dropStages = [
-                                    { id: 'stg-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
-                                    { id: 'stg-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
-                                    { id: 'stg-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
-                                    { id: 'stg-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
-                                  ];
+                                  newExs[idx].dropStages = makeDefaultPlanDropStages(resolvedUnit);
                                 }
                                 setEditingPlan({ ...editingPlan, exercises: newExs });
                               }}
@@ -835,25 +924,8 @@ export const PlansView: React.FC<PlansViewProps> = ({
                           </div>
                         )}
 
-                        {/* 滑轮与备注可选行 */}
-                        <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
-                          <label className="flex shrink-0 items-center gap-2">
-                            <span className="text-cap font-semibold text-ink-3">滑轮</span>
-                            <select
-                              value={pe.pulleyRatio || ex?.defaultPulley || 'none'}
-                              aria-label="滑轮比例"
-                              onChange={(e) => {
-                                const newExs = [...editingPlan.exercises];
-                                newExs[idx].pulleyRatio = e.target.value as PulleyRatio;
-                                setEditingPlan({ ...editingPlan, exercises: newExs });
-                              }}
-                              className={compactSelectCls}
-                            >
-                              <option value="none">普通器械</option>
-                              <option value="1:1">单滑轮 (1:1)</option>
-                              <option value="2:1">双滑轮 (2:1)</option>
-                            </select>
-                          </label>
+                        {/* 滑轮改为训练中按需开启的高级记录项，计划仅保留备注。 */}
+                        <div className="mt-1">
                           <input
                             type="text"
                             value={pe.notes || ''}

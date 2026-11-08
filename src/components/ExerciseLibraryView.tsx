@@ -3,7 +3,7 @@ import {
   Search, Plus, X, Edit3, Trash2, ArrowLeftRight, Flame, Check, Star, AlertCircle
 } from 'lucide-react';
 import {
-  Exercise, MuscleCategory, ResistanceUnit, PulleyRatio, DropStage,
+  Exercise, MuscleCategory, ResistanceUnit, DropStage,
   CATEGORY_LABELS, UNIT_LABELS
 } from '../types';
 import { StorageService } from '../utils/storage';
@@ -18,17 +18,16 @@ interface ExerciseLibraryViewProps {
 // 输入框统一样式：与 WorkoutView 的 fieldCls 保持一致
 const fieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
 
-// 递减超级组默认阶梯：10 / 7.5 / 5 / 2.5 kg（与计划页默认一致）
-const DEFAULT_DROP_STAGES: DropStage[] = [
-  { id: 'stg-1', weightOrPlates: 10, unit: 'kg', reps: 12 },
-  { id: 'stg-2', weightOrPlates: 7.5, unit: 'kg', reps: 12 },
-  { id: 'stg-3', weightOrPlates: 5, unit: 'kg', reps: 10 },
-  { id: 'stg-4', weightOrPlates: 2.5, unit: 'kg', reps: 12 },
-];
-
-// 深拷贝默认阶梯，避免多个动作共享同一数组引用，并生成唯一 id
-const makeDefaultDropStages = (): DropStage[] =>
-  DEFAULT_DROP_STAGES.map((stg, i) => ({ ...stg, id: `stg-${Date.now()}-${i}` }));
+const makeDefaultDropStages = (unit: ResistanceUnit): DropStage[] => {
+  const weights = unit === 'plates' ? [10, 8, 6, 4] : [10, 7.5, 5, 2.5];
+  const reps = [12, 12, 10, 12];
+  return weights.map((weightOrPlates, i) => ({
+    id: `stg-${Date.now()}-${i}`,
+    weightOrPlates: unit === 'bodyweight' ? 0 : weightOrPlates,
+    unit,
+    reps: reps[i],
+  }));
+};
 
 export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
   exercises,
@@ -42,7 +41,6 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
   const [newName, setNewName] = useState('');
   const [newCategory, setNewCategory] = useState<MuscleCategory>('chest');
   const [newUnit, setNewUnit] = useState<ResistanceUnit>('plates');
-  const [newPulley, setNewPulley] = useState<PulleyRatio>('none');
   const [newUnilateral, setNewUnilateral] = useState(false);
   // 超级组标记与阶梯（与单侧互斥）
   const [newDropSet, setNewDropSet] = useState(false);
@@ -96,7 +94,6 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
     setNewName('');
     setNewCategory('chest');
     setNewUnit('plates');
-    setNewPulley('none');
     setNewUnilateral(false);
     setNewDropSet(false);
     setNewDropStages([]);
@@ -112,7 +109,6 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
     setNewName(ex.name);
     setNewCategory(ex.category);
     setNewUnit(ex.defaultUnit);
-    setNewPulley(ex.defaultPulley || 'none');
     setNewUnilateral(Boolean(ex.isUnilateral));
     const hasDrop = Boolean(ex.isDropSet);
     setNewDropSet(hasDrop);
@@ -144,7 +140,7 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
     setNewDropSet(next);
     if (next) {
       setNewUnilateral(false);
-      setNewDropStages(prev => (prev.length > 0 ? prev : makeDefaultDropStages()));
+      setNewDropStages(prev => (prev.length > 0 ? prev : makeDefaultDropStages(newUnit)));
     }
   };
 
@@ -160,11 +156,13 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
 
     // 超级组分支：清洗阶梯数字，无效值回退为 0；阶梯为空时回落到默认四阶
     const dropStages: DropStage[] | undefined = newDropSet
-      ? (newDropStages.length > 0 ? newDropStages : makeDefaultDropStages()).map(stg => ({
+      ? (newDropStages.length > 0 ? newDropStages : makeDefaultDropStages(newUnit)).map(stg => ({
           id: stg.id || `stg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          weightOrPlates: typeof stg.weightOrPlates === 'number' && stg.weightOrPlates >= 0 ? stg.weightOrPlates : 0,
+          weightOrPlates: newUnit === 'bodyweight'
+            ? 0
+            : (typeof stg.weightOrPlates === 'number' && stg.weightOrPlates >= 0 ? stg.weightOrPlates : 0),
           reps: typeof stg.reps === 'number' && stg.reps >= 0 ? Math.floor(stg.reps) : 0,
-          unit: stg.unit || 'kg',
+          unit: newUnit,
         }))
       : undefined;
 
@@ -172,10 +170,11 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
       name: isBuiltinEdit ? editingExercise!.name : newName.trim(),
       category: isBuiltinEdit ? editingExercise!.category : newCategory,
       defaultUnit: newUnit,
-      defaultPulley: newPulley,
+      // 滑轮改为训练中按需开启的高级记录项；动作库默认不启用。
+      defaultPulley: newUnit === 'bodyweight' ? 'none' : (editingExercise?.defaultPulley || 'none'),
       // 超级组与单侧互斥：开启超级组时不写入单侧标记
       isUnilateral: newDropSet ? undefined : (newUnilateral || undefined),
-      isDropSet: newDropSet || undefined,
+      isDropSet: newDropSet,
       dropStages,
       notes: newNotes.trim() || undefined,
     };
@@ -237,7 +236,7 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
         <div className="mt-0.5 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-h1 font-bold tracking-tight text-ink">动作库</h1>
-            <p className="mt-1 text-sm2 text-ink-2">内置标准动作库，支持插销片数与滑轮倍率设置</p>
+            <p className="mt-1 text-sm2 text-ink-2">内置标准动作库，统一管理计量单位与训练方式</p>
           </div>
           <Button variant="primary" onClick={openAddModal} className="shrink-0">
             <Plus className="h-4 w-4" /> 自定义动作
@@ -500,7 +499,16 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
               <select
                 id="library-exercise-unit"
                 value={newUnit}
-                onChange={(e) => setNewUnit(e.target.value as ResistanceUnit)}
+                onChange={(e) => {
+                  const unit = e.target.value as ResistanceUnit;
+                  const unitChanged = newUnit !== unit;
+                  setNewUnit(unit);
+                  setNewDropStages(prev => prev.map(stage => ({
+                    ...stage,
+                    unit,
+                    weightOrPlates: unit === 'bodyweight' || unitChanged ? 0 : stage.weightOrPlates,
+                  })));
+                }}
                 className={fieldCls}
               >
                 <option value="plates">插销 (片)</option>
@@ -509,22 +517,6 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                 <option value="bodyweight">自重</option>
               </select>
             </div>
-          </div>
-
-          <div>
-            <label htmlFor="library-exercise-pulley" className="mb-1 block text-cap font-semibold text-ink-2">
-              滑轮类型 (针对绳索)
-            </label>
-            <select
-              id="library-exercise-pulley"
-              value={newPulley}
-              onChange={(e) => setNewPulley(e.target.value as PulleyRatio)}
-              className={fieldCls}
-            >
-              <option value="none">普通固定器械/自由重量</option>
-              <option value="1:1">单滑轮 1:1</option>
-              <option value="2:1">双滑轮 2:1</option>
-            </select>
           </div>
 
           {/* 训练方式：左右独立 / 超级组 两张并排可选卡，互斥 */}
@@ -575,7 +567,7 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                 <span className="text-cap font-semibold text-ink-3">递减阶梯编排</span>
                 <button
                   type="button"
-                  onClick={() => setNewDropStages(makeDefaultDropStages())}
+                  onClick={() => setNewDropStages(makeDefaultDropStages(newUnit))}
                   className="h-11 shrink-0 px-1 text-cap font-semibold text-ink-3 underline hover:text-ink-2"
                 >
                   重置默认四阶
@@ -591,20 +583,24 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                     <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-surface-subtle text-cap font-semibold tabular-nums text-ink-3">
                       {stgIdx + 1}
                     </span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="0.5"
-                      aria-label={`第 ${stgIdx + 1} 阶重量`}
-                      value={stg.weightOrPlates || ''}
-                      onChange={(e) => setNewDropStages(prev =>
-                        prev.map((s, i) => i === stgIdx ? { ...s, weightOrPlates: parseFloat(e.target.value) || 0 } : s)
-                      )}
-                      className="h-10 w-14 rounded-[6px] border border-line bg-surface px-1 text-center text-h2 font-semibold tabular-nums text-ink focus:border-accent focus:outline-none"
-                    />
-                    <span className="shrink-0 text-sm2 text-ink-2">
-                      {stg.unit === 'plates' ? '片' : 'kg'} ×
-                    </span>
+                    {newUnit !== 'bodyweight' && (
+                      <>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step="0.5"
+                          aria-label={`第 ${stgIdx + 1} 阶重量`}
+                          value={stg.weightOrPlates || ''}
+                          onChange={(e) => setNewDropStages(prev =>
+                            prev.map((s, i) => i === stgIdx ? { ...s, weightOrPlates: parseFloat(e.target.value) || 0 } : s)
+                          )}
+                          className="h-10 w-14 rounded-[6px] border border-line bg-surface px-1 text-center text-h2 font-semibold tabular-nums text-ink focus:border-accent focus:outline-none"
+                        />
+                        <span className="shrink-0 text-sm2 text-ink-2">
+                          {newUnit === 'plates' ? '片' : newUnit === 'assisted' ? 'kg助力' : 'kg'}
+                        </span>
+                      </>
+                    )}
                     <input
                       type="number"
                       inputMode="numeric"
@@ -635,8 +631,10 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
                   const last = prev[prev.length - 1];
                   return [...prev, {
                     id: `stg-${Date.now()}`,
-                    weightOrPlates: last ? Math.max(0, last.weightOrPlates - 2.5) : 5,
-                    unit: 'kg',
+                    weightOrPlates: newUnit === 'bodyweight'
+                      ? 0
+                      : (last ? Math.max(0, last.weightOrPlates - (newUnit === 'plates' ? 2 : 2.5)) : 5),
+                    unit: newUnit,
                     reps: 10,
                   }];
                 })}

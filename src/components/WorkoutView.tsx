@@ -12,6 +12,17 @@ import {
 } from '../types';
 import { StorageService } from '../utils/storage';
 import { buildSessionFromPlan } from '../utils/sessionBuilder';
+import {
+  formatDropStagesSummary,
+  formatWorkoutSetSummary,
+  newSessionCardioDefaults,
+  newSessionPulleyRatio,
+  normalizePulleyForUnit,
+  requiresWeightInput,
+  seedWeightsOnly,
+  validateWorkoutSetForCompletion,
+  WorkoutSetMode,
+} from '../utils/trainingRules';
 import { todayLocalDate, yesterdayLocalDate } from '../utils/date';
 import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 import { ConfirmSheet } from './ConfirmSheet';
@@ -101,7 +112,6 @@ const UNIT_OPTIONS = [
 ] as const;
 
 const PULLEY_OPTIONS = [
-  { value: 'none', label: '无' },
   { value: '1:1', label: '1:1' },
   { value: '2:1', label: '2:1' },
 ] as const;
@@ -130,7 +140,7 @@ const makeDefaultDropStages = (unit: ResistanceUnit): DropStage[] => {
   const reps = [12, 12, 10, 12];
   return weights.map((weightOrPlates, index) => ({
     id: `default-stage-${index + 1}`,
-    weightOrPlates,
+    weightOrPlates: unit === 'bodyweight' ? 0 : weightOrPlates,
     unit,
     reps: reps[index],
   }));
@@ -153,7 +163,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const [customName, setCustomName] = useState('');
   const [customCategory, setCustomCategory] = useState<MuscleCategory>('chest');
   const [customUnit, setCustomUnit] = useState<ResistanceUnit>('plates');
-  const [customPulley, setCustomPulley] = useState<PulleyRatio>('none');
   const [customUnilateral, setCustomUnilateral] = useState(false);
   const [customDropSet, setCustomDropSet] = useState(false);
   const [customNotes, setCustomNotes] = useState('');
@@ -172,6 +181,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const [expandedDropSets, setExpandedDropSets] = useState<Set<string>>(new Set()); // 展开的大组 id
   const [showCardio, setShowCardio] = useState(false);    // 有氧折叠
   const [showNotes, setShowNotes] = useState(false);      // 备注折叠
+  const [setCompletionErrors, setSetCompletionErrors] = useState<Record<string, string>>({});
+  const [finishError, setFinishError] = useState<string | null>(null);
   const [confirmState, setConfirmState] = useState<{
     open: boolean; title: string; description: string; confirmText: string; danger: boolean;
     onConfirm: () => void;
@@ -201,8 +212,18 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     if (onFocusModeChange) onFocusModeChange(Boolean(activeSession));
   }, [activeSession, onFocusModeChange]);
 
+  useEffect(() => () => {
+    if (onFocusModeChange) onFocusModeChange(false);
+  }, [onFocusModeChange]);
+
   // 同步活动状态到本地缓存
   const updateActiveSession = (updated: WorkoutSession | null) => {
+    // 修改次数或切换组结构后，缺少本次次数的组需重新确认完成。
+    updated?.exercises.forEach(exercise => {
+      exercise.sets.forEach(set => {
+        if (set.completed && validateWorkoutSetForCompletion(set)) set.completed = false;
+      });
+    });
     setActiveSession(updated);
     StorageService.saveActiveSession(updated);
   };
@@ -225,9 +246,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       planName: '自由训练',
       startTime: Date.now(),
       exercises: [],
-      cardioMinutes: 20,
-      cardioCompleted: false,
-      cardioType: '跑步机坡度快走',
+      ...newSessionCardioDefaults(),
     };
     setFocusIdx(0);
     updateActiveSession(newSession);
@@ -237,44 +256,58 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const addExerciseToCurrent = (exercise: Exercise) => {
     if (!activeSession) return;
     const lastLog = StorageService.getLastExerciseLog(exercise.id);
-    const unit = lastLog?.currentUnit || exercise.defaultUnit || 'plates';
-    const pulley = lastLog?.pulleyRatio || exercise.defaultPulley || 'none';
+    const unit = exercise.defaultUnit;
 
-    // 优先动作库预设阶梯，其次上次训练的超级组阶梯，最后用默认四阶
-    const presetStages = exercise.dropStages?.length
-      ? exercise.dropStages
-      : lastLog?.sets.find(s => s.isDropSet && s.dropStages?.length)?.dropStages;
-    const shouldDrop = Boolean(exercise.isDropSet) || Boolean(presetStages?.length);
+    // 动作库决定训练模式；历史只提供同单位重量提示。
+    const presetStages = exercise.dropStages?.length ? exercise.dropStages : null;
+    const shouldDrop = Boolean(exercise.isDropSet);
     // 超级组与左右独立互斥
     const exIsUnilateral = !shouldDrop && Boolean(exercise.isUnilateral);
-    const sourceStages = presetStages?.length ? presetStages : makeDefaultDropStages(unit);
+    const mode: WorkoutSetMode = shouldDrop ? 'drop' : exIsUnilateral ? 'unilateral' : 'standard';
+    const historySets = (lastLog?.sets || []).filter(set =>
+      set.completed && seedWeightsOnly(set, unit, mode) !== null,
+    );
 
-    // 新增动作：4 组一律留空待填（重量/次数写 0，输入框按可清空原则显示为空），
-    // 不复用上次记录的数值，也不推断数值；仅沿用上次记录/动作默认推断出的单位与滑轮规格。
-    const defaultSets: WorkoutSet[] = [1, 2, 3, 4].map((num) => {
+    // 重复动作只带同单位重量，次数始终留空；首次训练则重量和次数都留空。
+    const defaultSets: WorkoutSet[] = [1, 2, 3, 4].map((num, index) => {
+      const weightSeed = seedWeightsOnly(
+        historySets[index] || historySets[historySets.length - 1],
+        unit,
+        mode,
+      );
       const newSet: WorkoutSet = {
         id: `s-${Date.now()}-${num}`,
         setNumber: num,
         unit,
-        weightOrPlates: 0,
+        weightOrPlates: weightSeed?.weightOrPlates ?? 0,
         reps: 0,
         completed: false,
-        pulleyRatio: pulley
+        pulleyRatio: newSessionPulleyRatio(),
       };
       if (shouldDrop) {
-        const firstStage = sourceStages[0];
-        newSet.isDropSet = true;
-        newSet.weightOrPlates = firstStage?.weightOrPlates ?? 0;
-        newSet.reps = firstStage?.reps ?? 0;
-        newSet.dropStages = sourceStages.map((stage, index) => ({
+        const sourceStages = presetStages || weightSeed?.dropStages || makeDefaultDropStages(unit);
+        const matchingHistory = weightSeed?.dropStages?.length === sourceStages.length
+          ? weightSeed.dropStages
+          : undefined;
+        const stages = sourceStages.map((stage, stageIndex) => ({
           ...stage,
-          id: `${newSet.id}-stage-${index + 1}`,
+          id: `${newSet.id}-stage-${stageIndex + 1}`,
+          unit,
+          weightOrPlates: unit === 'bodyweight' || stage.unit !== unit
+            ? 0
+            : (matchingHistory?.[stageIndex].weightOrPlates ?? stage.weightOrPlates),
+          reps: 0,
         }));
+        newSet.isDropSet = true;
+        newSet.weightOrPlates = stages[0]?.weightOrPlates ?? 0;
+        newSet.dropStages = stages;
       } else if (exIsUnilateral) {
-        // 左右独立动作：左右两侧同样留空待填
+        const leftWeight = weightSeed?.left?.weight ?? 0;
+        const rightWeight = weightSeed?.right?.weight ?? 0;
         newSet.unilateral = true;
-        newSet.left = { weight: 0, reps: 0 };
-        newSet.right = { weight: 0, reps: 0 };
+        newSet.weightOrPlates = leftWeight;
+        newSet.left = { weight: leftWeight, reps: 0 };
+        newSet.right = { weight: rightWeight, reps: 0 };
       }
       return newSet;
     });
@@ -283,7 +316,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       exerciseId: exercise.id,
       exerciseName: exercise.name,
       category: exercise.category,
-      pulleyRatio: pulley,
+      pulleyRatio: newSessionPulleyRatio(),
       currentUnit: unit,
       isUnilateral: exIsUnilateral || undefined,
       sets: defaultSets,
@@ -306,7 +339,19 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const exercises = [...activeSession.exercises];
     const ex = exercises[exIndex];
     const targetSet = ex.sets[setIndex];
+    if (!targetSet.completed) {
+      const error = validateWorkoutSetForCompletion(targetSet);
+      if (error) {
+        setSetCompletionErrors(prev => ({ ...prev, [targetSet.id]: error }));
+        return;
+      }
+    }
     targetSet.completed = !targetSet.completed;
+    setSetCompletionErrors(prev => {
+      const next = { ...prev };
+      delete next[targetSet.id];
+      return next;
+    });
     updateActiveSession({ ...activeSession, exercises });
   };
 
@@ -317,14 +362,31 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const targetSet = exercises[exIndex].sets[setIndex];
     const currentVal = targetSet[field];
     const nextVal = Math.max(0, currentVal + delta);
-    targetSet[field] = nextVal;
+    targetSet[field] = field === 'weightOrPlates' && !requiresWeightInput(targetSet.unit) ? 0 : nextVal;
+    if (field === 'reps') {
+      setSetCompletionErrors(prev => {
+        const next = { ...prev };
+        delete next[targetSet.id];
+        return next;
+      });
+    }
     updateActiveSession({ ...activeSession, exercises });
   };
 
   const setDirectVal = (exIndex: number, setIndex: number, field: 'weightOrPlates' | 'reps', val: number) => {
     if (!activeSession) return;
     const exercises = [...activeSession.exercises];
-    exercises[exIndex].sets[setIndex][field] = Math.max(0, val);
+    const targetSet = exercises[exIndex].sets[setIndex];
+    targetSet[field] = field === 'weightOrPlates' && !requiresWeightInput(targetSet.unit)
+      ? 0
+      : Math.max(0, val);
+    if (field === 'reps') {
+      setSetCompletionErrors(prev => {
+        const next = { ...prev };
+        delete next[targetSet.id];
+        return next;
+      });
+    }
     updateActiveSession({ ...activeSession, exercises });
   };
 
@@ -338,13 +400,22 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const targetSet = exercises[exIndex].sets[setIndex];
     const base: UnilateralSide = targetSet[side] || { weight: targetSet.weightOrPlates, reps: targetSet.reps };
     const next: UnilateralSide = { weight: base.weight, reps: base.reps };
-    next[field] = Math.max(0, next[field] + delta);
+    next[field] = field === 'weight' && !requiresWeightInput(targetSet.unit)
+      ? 0
+      : Math.max(0, next[field] + delta);
     targetSet[side] = next;
     targetSet.unilateral = true;
     // 主字段保持左侧副本，兼容未分侧渲染与历史摘要
     if (targetSet.left) {
       targetSet.weightOrPlates = targetSet.left.weight;
       targetSet.reps = targetSet.left.reps;
+    }
+    if (field === 'reps') {
+      setSetCompletionErrors(prev => {
+        const next = { ...prev };
+        delete next[targetSet.id];
+        return next;
+      });
     }
     updateActiveSession({ ...activeSession, exercises });
   };
@@ -359,12 +430,21 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const targetSet = exercises[exIndex].sets[setIndex];
     const base: UnilateralSide = targetSet[side] || { weight: targetSet.weightOrPlates, reps: targetSet.reps };
     const next: UnilateralSide = { weight: base.weight, reps: base.reps };
-    next[field] = Math.max(0, val);
+    next[field] = field === 'weight' && !requiresWeightInput(targetSet.unit)
+      ? 0
+      : Math.max(0, val);
     targetSet[side] = next;
     targetSet.unilateral = true;
     if (targetSet.left) {
       targetSet.weightOrPlates = targetSet.left.weight;
       targetSet.reps = targetSet.left.reps;
+    }
+    if (field === 'reps') {
+      setSetCompletionErrors(prev => {
+        const next = { ...prev };
+        delete next[targetSet.id];
+        return next;
+      });
     }
     updateActiveSession({ ...activeSession, exercises });
   };
@@ -375,7 +455,17 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const exercises = [...activeSession.exercises];
     const targetSet = exercises[exIndex].sets[setIndex];
     if (!targetSet.dropStages) return;
-    targetSet.dropStages[stageIndex][field] = Math.max(0, val);
+    targetSet.dropStages[stageIndex][field] =
+      field === 'weightOrPlates' && !requiresWeightInput(targetSet.unit)
+        ? 0
+        : Math.max(0, val);
+    if (field === 'reps') {
+      setSetCompletionErrors(prev => {
+        const next = { ...prev };
+        delete next[targetSet.id];
+        return next;
+      });
+    }
     updateActiveSession({ ...activeSession, exercises });
   };
 
@@ -386,12 +476,17 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const targetSet = exercises[exIndex].sets[setIndex];
     if (!targetSet.dropStages) targetSet.dropStages = [];
     const lastStg = targetSet.dropStages[targetSet.dropStages.length - 1];
-    const newWeight = lastStg ? Math.max(1, lastStg.weightOrPlates - 2.5) : 5;
+    const unit = targetSet.unit;
+    const newWeight = !requiresWeightInput(unit)
+      ? 0
+      : lastStg
+        ? Math.max(0, lastStg.weightOrPlates - (unit === 'plates' ? 2 : 2.5))
+        : 5;
     targetSet.dropStages.push({
       id: `stg-${Date.now()}`,
       weightOrPlates: newWeight,
-      unit: lastStg ? lastStg.unit : 'kg',
-      reps: 10,
+      unit,
+      reps: 0,
     });
     updateActiveSession({ ...activeSession, exercises });
   };
@@ -413,29 +508,51 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const ex = exercises[exIndex];
     const lastSet = ex.sets[ex.sets.length - 1];
     const isDrop = Boolean(lastSet?.isDropSet);
+    const mode: WorkoutSetMode = isDrop ? 'drop' : ex.isUnilateral ? 'unilateral' : 'standard';
+    const unit = lastSet?.unit || ex.currentUnit;
+    const completedSets = ex.sets.filter(set => set.completed);
+    const historyLog = StorageService.getLastExerciseLog(ex.exerciseId);
+    const historySets = (historyLog?.sets || []).filter(set =>
+      set.completed && seedWeightsOnly(set, unit, mode) !== null,
+    );
+    const weightSeed = seedWeightsOnly(
+      completedSets[completedSets.length - 1] || lastSet || historySets[historySets.length - 1],
+      unit,
+      mode,
+    );
+    const newSetId = `s-${Date.now()}-${ex.sets.length + 1}`;
 
     const newSet: WorkoutSet = {
-      id: `s-${Date.now()}-${ex.sets.length + 1}`,
+      id: newSetId,
       setNumber: ex.sets.length + 1,
-      unit: lastSet ? lastSet.unit : ex.currentUnit,
-      weightOrPlates: lastSet ? lastSet.weightOrPlates : 10,
-      reps: lastSet ? lastSet.reps : 12,
+      unit,
+      weightOrPlates: weightSeed?.weightOrPlates ?? 0,
+      reps: 0,
       completed: false,
-      pulleyRatio: lastSet ? lastSet.pulleyRatio : ex.pulleyRatio,
+      pulleyRatio: ex.pulleyRatio,
       isDropSet: isDrop,
-      dropStages: isDrop && lastSet?.dropStages ? JSON.parse(JSON.stringify(lastSet.dropStages)) : undefined,
+      dropStages: isDrop
+        ? (weightSeed?.dropStages || makeDefaultDropStages(unit)).map((stage, index) => ({
+            ...stage,
+            id: `${newSetId}-stage-${index + 1}`,
+            unit,
+            weightOrPlates: unit === 'bodyweight' ? 0 : stage.weightOrPlates,
+            reps: 0,
+          }))
+        : undefined,
     };
-    // 左右独立动作（普通组）：新组沿用上一组的左右值与单位
+    // 左右独立动作（普通组）：新组只沿用同单位重量，左右次数都留空。
     if (ex.isUnilateral && !isDrop) {
       newSet.unilateral = true;
       newSet.left = {
-        weight: lastSet?.left?.weight ?? newSet.weightOrPlates,
-        reps: lastSet?.left?.reps ?? newSet.reps,
+        weight: weightSeed?.left?.weight ?? newSet.weightOrPlates,
+        reps: 0,
       };
       newSet.right = {
-        weight: lastSet?.right?.weight ?? newSet.weightOrPlates,
-        reps: lastSet?.right?.reps ?? newSet.reps,
+        weight: weightSeed?.right?.weight ?? newSet.weightOrPlates,
+        reps: 0,
       };
+      newSet.weightOrPlates = newSet.left.weight;
     }
     ex.sets.push(newSet);
     updateActiveSession({ ...activeSession, exercises });
@@ -454,12 +571,26 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const changeExerciseUnit = (exIndex: number, newUnit: ResistanceUnit) => {
     if (!activeSession) return;
     const exercises = [...activeSession.exercises];
+    const previousUnit = exercises[exIndex].currentUnit;
+    const unitChanged = previousUnit !== newUnit;
     exercises[exIndex].currentUnit = newUnit;
     exercises[exIndex].sets.forEach(s => {
       s.unit = newUnit;
       // 超级组阶梯使用独立单位字段，换单位时一并同步
-      s.dropStages?.forEach(stage => { stage.unit = newUnit; });
+      s.dropStages?.forEach(stage => {
+        stage.unit = newUnit;
+        if (newUnit === 'bodyweight' || unitChanged) stage.weightOrPlates = 0;
+      });
+      if (newUnit === 'bodyweight' || unitChanged) {
+        s.weightOrPlates = 0;
+        if (s.left) s.left.weight = 0;
+        if (s.right) s.right.weight = 0;
+      }
     });
+    if (newUnit === 'bodyweight') {
+      exercises[exIndex].pulleyRatio = 'none';
+      exercises[exIndex].sets.forEach(s => { s.pulleyRatio = 'none'; });
+    }
     updateActiveSession({ ...activeSession, exercises });
   };
 
@@ -467,8 +598,10 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const changePulleyRatio = (exIndex: number, ratio: PulleyRatio) => {
     if (!activeSession) return;
     const exercises = [...activeSession.exercises];
-    exercises[exIndex].pulleyRatio = ratio;
-    exercises[exIndex].sets.forEach(s => s.pulleyRatio = ratio);
+    const unit = exercises[exIndex].currentUnit;
+    const normalized = normalizePulleyForUnit(unit, ratio);
+    exercises[exIndex].pulleyRatio = normalized;
+    exercises[exIndex].sets.forEach(s => s.pulleyRatio = normalized);
     updateActiveSession({ ...activeSession, exercises });
   };
 
@@ -490,6 +623,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
         s.reps = s.left.reps;
       } else {
         s.unilateral = undefined;
+        s.left = undefined;
+        s.right = undefined;
       }
     });
     updateActiveSession({ ...activeSession, exercises });
@@ -521,12 +656,13 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
           ...stage,
           id: `${set.id}-stage-${index + 1}`,
           unit,
+          weightOrPlates: unit === 'bodyweight' || stage.unit !== unit ? 0 : stage.weightOrPlates,
+          reps: 0,
         }));
-        if ((set.weightOrPlates || set.reps) && stages[0]) {
+        if (set.weightOrPlates && stages[0]) {
           stages[0] = {
             ...stages[0],
-            weightOrPlates: set.weightOrPlates || stages[0].weightOrPlates,
-            reps: set.reps || stages[0].reps,
+            weightOrPlates: unit === 'bodyweight' ? 0 : set.weightOrPlates,
           };
         }
         return {
@@ -537,7 +673,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
           left: undefined,
           right: undefined,
           weightOrPlates: stages[0]?.weightOrPlates ?? set.weightOrPlates,
-          reps: stages[0]?.reps ?? set.reps,
+          reps: 0,
         };
       });
     } else {
@@ -548,7 +684,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
           isDropSet: undefined,
           dropStages: undefined,
           weightOrPlates: firstStage?.weightOrPlates ?? set.weightOrPlates,
-          reps: firstStage?.reps ?? set.reps,
+          reps: 0,
         };
       });
     }
@@ -558,7 +694,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   // 在自由训练中新建自定义动作：写入动作库后立即加入本次训练
   const createAndAddCustomExercise = (data: {
     name: string; category: MuscleCategory; defaultUnit: ResistanceUnit;
-    defaultPulley: PulleyRatio; isUnilateral: boolean; isDropSet: boolean;
+    isUnilateral: boolean; isDropSet: boolean;
     dropStages?: DropStage[]; notes: string;
   }): boolean => {
     if (!activeSession) return false;
@@ -566,7 +702,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       name: data.name.trim(),
       category: data.category,
       defaultUnit: data.defaultUnit,
-      defaultPulley: data.defaultPulley,
+      defaultPulley: 'none',
       isUnilateral: data.isDropSet ? undefined : (data.isUnilateral || undefined),
       isDropSet: data.isDropSet || undefined,
       dropStages: data.isDropSet
@@ -598,30 +734,51 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       cardioMinutes: enabled
         ? (activeSession.cardioMinutes && activeSession.cardioMinutes > 0 ? activeSession.cardioMinutes : 20)
         : 0,
+      cardioType: enabled ? activeSession.cardioType : undefined,
+      cardioNotes: enabled ? activeSession.cardioNotes : undefined,
     });
+    setFinishError(null);
   };
 
   const setCardioMinutes = (minutes: number) => {
     if (!activeSession) return;
     updateActiveSession({ ...activeSession, cardioMinutes: Math.max(0, Math.round(minutes)) });
+    setFinishError(null);
   };
 
   // 完成结算
   const finishSession = () => {
     if (!activeSession) return;
+    const completedSets = activeSession.exercises.flatMap(exercise => exercise.sets).filter(set => set.completed);
+    if (completedSets.some(set => validateWorkoutSetForCompletion(set))) {
+      setFinishError('已完成组中仍有次数未填写，请返回补全或取消完成。');
+      return;
+    }
+    if (completedSets.length === 0 && !activeSession.cardioCompleted) {
+      setFinishError('还没有完成任何一组。请返回记录，或选择放弃本次训练。');
+      return;
+    }
+    if (activeSession.cardioCompleted) {
+      const minutes = Math.round(activeSession.cardioMinutes || 0);
+      if (minutes < 1 || minutes > 300) {
+        setFinishError('有氧时长请填写 1–300 分钟');
+        return;
+      }
+    }
+    setFinishError(null);
     const finalSession: WorkoutSession = {
       ...activeSession,
       endTime: Date.now()
     };
-    // 归档前统一有氧字段：无有氧清空明细；有有氧保证时长至少 1 分钟
+    // 归档前统一有氧字段；启用有氧必须由训练完成界面的手动选择产生。
     if (finalSession.cardioCompleted) {
-      const mins = Math.round(finalSession.cardioMinutes || 0);
-      finalSession.cardioMinutes = mins > 0 ? mins : 20;
-      finalSession.cardioType = (finalSession.cardioType || '').trim() || '跑步机坡度快走';
+      finalSession.cardioMinutes = Math.round(finalSession.cardioMinutes);
+      finalSession.cardioType = (finalSession.cardioType || '').trim() || undefined;
+      finalSession.cardioNotes = (finalSession.cardioNotes || '').trim() || undefined;
     } else {
       finalSession.cardioMinutes = 0;
-      finalSession.cardioType = '';
-      finalSession.cardioNotes = '';
+      finalSession.cardioType = undefined;
+      finalSession.cardioNotes = undefined;
     }
     StorageService.addSession(finalSession);
     StorageService.saveActiveSession(null);
@@ -843,49 +1000,69 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   };
 
   // 上次参考一行摘要
-  const lastLogSummary = (lastLog: ExerciseLog | null): string | null => {
+  const lastLogSummary = (lastLog: ExerciseLog | null, current: ExerciseLog | null): string | null => {
     if (!lastLog) return null;
-    const done = lastLog.sets.filter(s => s.completed);
+    const currentSet = current?.sets[0];
+    if (!currentSet) return null;
+    const mode: WorkoutSetMode = currentSet.isDropSet
+      ? 'drop'
+      : currentSet.unilateral
+        ? 'unilateral'
+        : 'standard';
+    const done = lastLog.sets.filter(s =>
+      s.completed && seedWeightsOnly(s, current.currentUnit, mode) !== null,
+    );
     if (done.length === 0) return null;
     const dropSet = done.find(s => s.isDropSet && s.dropStages?.length);
     if (dropSet?.dropStages?.length) {
-      return `超级组 ${dropSet.dropStages.map(st => `${st.weightOrPlates}×${st.reps}`).join(' → ')}`;
+      return `超级组 ${formatDropStagesSummary(dropSet.dropStages)}`;
     }
     return done
-      .map(s => {
-        // 左右独立：分侧展示
-        if (s.unilateral && s.left && s.right) {
-          return `左${s.left.weight}×${s.left.reps} / 右${s.right.weight}×${s.right.reps}`;
-        }
-        return `${s.weightOrPlates}${s.unit === 'plates' ? '片' : s.unit === 'assisted' ? '助力' : s.unit === 'bodyweight' ? '自重' : 'kg'}×${s.reps}`;
-      })
+      .map(formatWorkoutSetSummary)
       .join(' / ');
   };
 
-  // 一键带入上次数据（含左右独立的左右值与单位）
+  // 显式带入上次：只带同单位、同记录方式的重量；次数继续留空。
   const applyLastLog = (exIdx: number, lastLog: ExerciseLog) => {
     if (!activeSession) return;
     const exercises = [...activeSession.exercises];
     const targetEx = exercises[exIdx];
-    const exIsUnilateral = Boolean(targetEx.isUnilateral);
     targetEx.sets.forEach((s, idx) => {
-      const lastSet = lastLog.sets[idx];
-      if (!lastSet) return;
-      s.weightOrPlates = lastSet.weightOrPlates;
-      s.reps = lastSet.reps;
-      s.unit = lastSet.unit;
-      // 当前动作或上次记录为左右独立时，同步左右两侧的值与单位
-      if (exIsUnilateral || lastSet.unilateral) {
-        s.unilateral = true;
-        s.left = {
-          weight: lastSet.left?.weight ?? lastSet.weightOrPlates,
-          reps: lastSet.left?.reps ?? lastSet.reps,
-        };
-        s.right = {
-          weight: lastSet.right?.weight ?? lastSet.weightOrPlates,
-          reps: lastSet.right?.reps ?? lastSet.reps,
-        };
-      }
+      const mode: WorkoutSetMode = s.isDropSet ? 'drop' : s.unilateral ? 'unilateral' : 'standard';
+      const candidates = lastLog.sets.filter(set =>
+        set.completed && seedWeightsOnly(set, s.unit, mode) !== null,
+      );
+      const copied = seedWeightsOnly(candidates[idx] || candidates[candidates.length - 1], s.unit, mode);
+      if (!copied) return;
+      s.weightOrPlates = copied.weightOrPlates;
+      s.reps = 0;
+      s.left = copied.left;
+      s.right = copied.right;
+      s.dropStages = copied.dropStages?.map((stage, stageIndex) => ({
+        ...stage,
+        id: s.dropStages?.[stageIndex]?.id || `${s.id}-stage-${stageIndex + 1}`,
+      }));
+    });
+    updateActiveSession({ ...activeSession, exercises });
+  };
+
+  // 将当前正在录入的大组重量复制到后续未完成大组；次数保持不变。
+  const copyDropWeightsToOpenSets = (exIndex: number) => {
+    if (!activeSession) return;
+    const exercises = [...activeSession.exercises];
+    const sets = exercises[exIndex].sets;
+    const sourceIndex = sets.findIndex(set => !set.completed);
+    if (sourceIndex < 0) return;
+    const source = sets[sourceIndex];
+    if (!source.dropStages?.length || !requiresWeightInput(source.unit)) return;
+
+    sets.forEach((set, index) => {
+      if (index === sourceIndex || set.completed || !set.dropStages?.length || set.unit !== source.unit) return;
+      set.dropStages = set.dropStages.map((stage, stageIndex) => ({
+        ...stage,
+        weightOrPlates: source.dropStages?.[stageIndex]?.weightOrPlates ?? stage.weightOrPlates,
+      }));
+      set.weightOrPlates = set.dropStages[0]?.weightOrPlates ?? 0;
     });
     updateActiveSession({ ...activeSession, exercises });
   };
@@ -902,88 +1079,95 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   // 普通组行（整行可点，44px 大触控）
   const renderSetRow = (exIdx: number, set: WorkoutSet, setIdx: number) => {
     const isPlates = set.unit === 'plates';
+    const showWeight = requiresWeightInput(set.unit);
     const firstOpen = activeSession?.exercises[exIdx]?.sets.findIndex(s => !s.completed) ?? -1;
     const isCurrent = !set.completed && firstOpen === setIdx;
+    const error = setCompletionErrors[set.id];
     return (
-      <div
-        key={set.id}
-        onClick={() => toggleSetComplete(exIdx, setIdx)}
-        className={cx(
-          'relative grid h-14 grid-cols-[32px_1fr_64px_44px] items-center gap-2 rounded-ctl border px-2 transition-colors',
-          set.completed
-            ? 'border-line bg-surface-done'
-            : isCurrent
-              ? 'border-accent-line bg-accent-soft'
-              : 'border-line bg-surface',
-        )}
-      >
-        {isCurrent && (
-          <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-accent" />
-        )}
-        <span
+      <div key={set.id} className="space-y-1">
+        <div
+          onClick={() => toggleSetComplete(exIdx, setIdx)}
           className={cx(
-            'flex h-7 w-7 items-center justify-center justify-self-center rounded-[8px] text-sm2 font-semibold tabular-nums',
+            'relative grid h-14 items-center gap-2 rounded-ctl border px-2 transition-colors',
+            showWeight ? 'grid-cols-[32px_1fr_64px_44px]' : 'grid-cols-[32px_1fr_44px]',
             set.completed
-              ? 'bg-success-soft text-success'
+              ? 'border-line bg-surface-done'
               : isCurrent
-                ? 'bg-accent text-white'
-                : 'bg-surface-subtle text-ink-2',
+                ? 'border-accent-line bg-accent-soft'
+                : 'border-line bg-surface',
           )}
         >
-          {set.setNumber}
-        </span>
-        <div className="flex items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            aria-label="减少重量"
-            onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? -1 : -2.5)}
-            className="flex h-11 w-10 items-center justify-center rounded-[8px] border border-line bg-surface text-[18px] font-medium text-ink active:bg-surface-strong"
-          >
-            −
-          </button>
-          <input
-            type="number"
-            inputMode="decimal"
-            aria-label="重量"
-            value={set.weightOrPlates || ''}
-            onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
+          {isCurrent && (
+            <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-accent" />
+          )}
+          <span
             className={cx(
-              'w-[52px] bg-transparent text-center text-[20px] font-semibold tabular-nums text-ink focus:outline-none',
-              set.completed && 'text-ink-2',
+              'flex h-7 w-7 items-center justify-center justify-self-center rounded-[8px] text-sm2 font-semibold tabular-nums',
+              set.completed
+                ? 'bg-success-soft text-success'
+                : isCurrent
+                  ? 'bg-accent text-white'
+                  : 'bg-surface-subtle text-ink-2',
             )}
-          />
+          >
+            {set.setNumber}
+          </span>
+          {showWeight && (
+            <div className="flex items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                aria-label="减少重量"
+                onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? -1 : -2.5)}
+                className="flex h-11 w-10 items-center justify-center rounded-[8px] border border-line bg-surface text-[18px] font-medium text-ink active:bg-surface-strong"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                inputMode="decimal"
+                aria-label="重量"
+                value={set.weightOrPlates || ''}
+                onChange={(e) => setDirectVal(exIdx, setIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
+                className={cx(
+                  'w-[52px] bg-transparent text-center text-[20px] font-semibold tabular-nums text-ink focus:outline-none',
+                  set.completed && 'text-ink-2',
+                )}
+              />
+              <button
+                type="button"
+                aria-label="增加重量"
+                onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? 1 : 2.5)}
+                className="flex h-11 w-10 items-center justify-center rounded-[8px] border border-line bg-surface text-[18px] font-medium text-ink active:bg-surface-strong"
+              >
+                ＋
+              </button>
+            </div>
+          )}
+          <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="number"
+              inputMode="numeric"
+              aria-label="次数"
+              value={set.reps || ''}
+              onChange={(e) => setDirectVal(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
+              className="h-11 w-full rounded-[8px] bg-surface-subtle text-center text-[17px] font-semibold tabular-nums text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-accent/30"
+            />
+          </div>
           <button
             type="button"
-            aria-label="增加重量"
-            onClick={() => updateSetField(exIdx, setIdx, 'weightOrPlates', isPlates ? 1 : 2.5)}
-            className="flex h-11 w-10 items-center justify-center rounded-[8px] border border-line bg-surface text-[18px] font-medium text-ink active:bg-surface-strong"
+            aria-label={set.completed ? `取消完成第 ${set.setNumber} 组` : `完成第 ${set.setNumber} 组`}
+            onClick={(e) => { e.stopPropagation(); toggleSetComplete(exIdx, setIdx); }}
+            className={cx(
+              'flex h-11 w-11 items-center justify-center justify-self-center rounded-full border transition-colors',
+              set.completed
+                ? 'border-success bg-success text-white'
+                : 'border-line-strong bg-surface text-line-strong',
+            )}
           >
-            ＋
+            <Check className="h-[18px] w-[18px]" strokeWidth={2.5} />
           </button>
         </div>
-        <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
-          <input
-            type="number"
-            inputMode="numeric"
-            aria-label="次数"
-            value={set.reps || ''}
-            onChange={(e) => setDirectVal(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
-            className="h-11 w-full rounded-[8px] bg-surface-subtle text-center text-[17px] font-semibold tabular-nums text-ink focus:bg-surface focus:outline-none focus:ring-2 focus:ring-accent/30"
-          />
-        </div>
-        <button
-          type="button"
-          aria-label={set.completed ? `取消完成第 ${set.setNumber} 组` : `完成第 ${set.setNumber} 组`}
-          onClick={(e) => { e.stopPropagation(); toggleSetComplete(exIdx, setIdx); }}
-          className={cx(
-            'flex h-11 w-11 items-center justify-center justify-self-center rounded-full border transition-colors',
-            set.completed
-              ? 'border-success bg-success text-white'
-              : 'border-line-strong bg-surface text-line-strong',
-          )}
-        >
-          <Check className="h-[18px] w-[18px]" strokeWidth={2.5} />
-        </button>
+        {error && <p role="alert" className="px-2 text-cap font-semibold text-danger">{error}</p>}
       </div>
     );
   };
@@ -991,33 +1175,39 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   // 左右独立普通组行：每侧只保留重量步进，次数作为可点胶囊字段
   const renderUnilateralSetRow = (exIdx: number, set: WorkoutSet, setIdx: number) => {
     const step = set.unit === 'plates' ? 1 : 2.5;
+    const showWeight = requiresWeightInput(set.unit);
     const firstOpen = activeSession?.exercises[exIdx]?.sets.findIndex(s => !s.completed) ?? -1;
     const isCurrent = !set.completed && firstOpen === setIdx;
+    const error = setCompletionErrors[set.id];
     const sideBlock = (side: 'left' | 'right') => {
       const label = side === 'left' ? '左' : '右';
       const data: UnilateralSide = set[side] || { weight: set.weightOrPlates, reps: set.reps };
       return (
         <div className="flex min-w-0 items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            aria-label={`${label}侧减少重量`}
-            onClick={() => updateUnilateralField(exIdx, setIdx, side, 'weight', -step)}
-            className="relative flex h-[38px] w-7 shrink-0 items-center justify-center rounded-[8px] border border-line bg-surface text-[16px] font-medium text-ink after:absolute after:-inset-[3px] after:content-[''] active:bg-surface-strong"
-          >
-            −
-          </button>
+          {showWeight && (
+            <button
+              type="button"
+              aria-label={`${label}侧减少重量`}
+              onClick={() => updateUnilateralField(exIdx, setIdx, side, 'weight', -step)}
+              className="relative flex h-[38px] w-7 shrink-0 items-center justify-center rounded-[8px] border border-line bg-surface text-[16px] font-medium text-ink after:absolute after:-inset-[3px] after:content-[''] active:bg-surface-strong"
+            >
+              −
+            </button>
+          )}
           <div className="flex min-w-[44px] flex-col items-center">
-            <input
-              type="number"
-              inputMode="decimal"
-              aria-label={`${label}侧重量`}
-              value={data.weight || ''}
-              onChange={(e) => setUnilateralDirectVal(exIdx, setIdx, side, 'weight', parseFloat(e.target.value) || 0)}
-              className={cx(
-                'w-11 bg-transparent text-center text-[16px] font-semibold tabular-nums text-ink focus:outline-none',
-                set.completed && 'text-ink-2',
-              )}
-            />
+            {showWeight && (
+              <input
+                type="number"
+                inputMode="decimal"
+                aria-label={`${label}侧重量`}
+                value={data.weight || ''}
+                onChange={(e) => setUnilateralDirectVal(exIdx, setIdx, side, 'weight', parseFloat(e.target.value) || 0)}
+                className={cx(
+                  'w-11 bg-transparent text-center text-[16px] font-semibold tabular-nums text-ink focus:outline-none',
+                  set.completed && 'text-ink-2',
+                )}
+              />
+            )}
             <span
               className={cx(
                 'mt-0.5 inline-flex items-center gap-0.5 rounded-[6px] px-1 py-0.5',
@@ -1035,62 +1225,66 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               <span className="text-cap font-medium text-ink-3">次</span>
             </span>
           </div>
-          <button
-            type="button"
-            aria-label={`${label}侧增加重量`}
-            onClick={() => updateUnilateralField(exIdx, setIdx, side, 'weight', step)}
-            className="relative flex h-[38px] w-7 shrink-0 items-center justify-center rounded-[8px] border border-line bg-surface text-[16px] font-medium text-ink after:absolute after:-inset-[3px] after:content-[''] active:bg-surface-strong"
-          >
-            ＋
-          </button>
+          {showWeight && (
+            <button
+              type="button"
+              aria-label={`${label}侧增加重量`}
+              onClick={() => updateUnilateralField(exIdx, setIdx, side, 'weight', step)}
+              className="relative flex h-[38px] w-7 shrink-0 items-center justify-center rounded-[8px] border border-line bg-surface text-[16px] font-medium text-ink after:absolute after:-inset-[3px] after:content-[''] active:bg-surface-strong"
+            >
+              ＋
+            </button>
+          )}
         </div>
       );
     };
 
     return (
-      <div
-        key={set.id}
-        onClick={() => toggleSetComplete(exIdx, setIdx)}
-        className={cx(
-          'relative grid min-h-[58px] grid-cols-[26px_1fr_1px_1fr_44px] items-center gap-1.5 rounded-ctl border px-2 transition-colors',
-          set.completed
-            ? 'border-line bg-surface-done'
-            : isCurrent
-              ? 'border-accent-line bg-accent-soft'
-              : 'border-line bg-surface',
-        )}
-      >
-        {isCurrent && (
-          <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-accent" />
-        )}
-        <span
+      <div key={set.id} className="space-y-1">
+        <div
+          onClick={() => toggleSetComplete(exIdx, setIdx)}
           className={cx(
-            'flex h-[26px] w-[26px] items-center justify-center justify-self-center rounded-[8px] text-sm2 font-semibold tabular-nums',
+            'relative grid min-h-[58px] grid-cols-[26px_1fr_1px_1fr_44px] items-center gap-1.5 rounded-ctl border px-2 transition-colors',
             set.completed
-              ? 'bg-success-soft text-success'
+              ? 'border-line bg-surface-done'
               : isCurrent
-                ? 'bg-accent text-white'
-                : 'bg-surface-subtle text-ink-2',
+                ? 'border-accent-line bg-accent-soft'
+                : 'border-line bg-surface',
           )}
         >
-          {set.setNumber}
-        </span>
-        {sideBlock('left')}
-        <span aria-hidden="true" className="h-7 w-px justify-self-center bg-line" />
-        {sideBlock('right')}
-        <button
-          type="button"
-          aria-label={set.completed ? `取消完成第 ${set.setNumber} 组` : `完成第 ${set.setNumber} 组`}
-          onClick={(e) => { e.stopPropagation(); toggleSetComplete(exIdx, setIdx); }}
-          className={cx(
-            'flex h-11 w-11 items-center justify-center justify-self-center rounded-full border transition-colors',
-            set.completed
-              ? 'border-success bg-success text-white'
-              : 'border-line-strong bg-surface text-line-strong',
+          {isCurrent && (
+            <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-accent" />
           )}
-        >
-          <Check className="h-[18px] w-[18px]" strokeWidth={2.5} />
-        </button>
+          <span
+            className={cx(
+              'flex h-[26px] w-[26px] items-center justify-center justify-self-center rounded-[8px] text-sm2 font-semibold tabular-nums',
+              set.completed
+                ? 'bg-success-soft text-success'
+                : isCurrent
+                  ? 'bg-accent text-white'
+                  : 'bg-surface-subtle text-ink-2',
+            )}
+          >
+            {set.setNumber}
+          </span>
+          {sideBlock('left')}
+          <span aria-hidden="true" className="h-7 w-px justify-self-center bg-line" />
+          {sideBlock('right')}
+          <button
+            type="button"
+            aria-label={set.completed ? `取消完成第 ${set.setNumber} 组` : `完成第 ${set.setNumber} 组`}
+            onClick={(e) => { e.stopPropagation(); toggleSetComplete(exIdx, setIdx); }}
+            className={cx(
+              'flex h-11 w-11 items-center justify-center justify-self-center rounded-full border transition-colors',
+              set.completed
+                ? 'border-success bg-success text-white'
+                : 'border-line-strong bg-surface text-line-strong',
+            )}
+          >
+            <Check className="h-[18px] w-[18px]" strokeWidth={2.5} />
+          </button>
+        </div>
+        {error && <p role="alert" className="px-2 text-cap font-semibold text-danger">{error}</p>}
       </div>
     );
   };
@@ -1099,9 +1293,11 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   const renderDropBigSet = (exIdx: number, bigSet: WorkoutSet, setIdx: number) => {
     const stages = bigSet.dropStages || [];
     const expanded = expandedDropSets.has(bigSet.id);
-    const summary = stages.map(st => `${st.weightOrPlates}×${st.reps}`).join(' → ');
+    const showWeight = requiresWeightInput(bigSet.unit);
+    const summary = formatDropStagesSummary(stages);
     const firstOpen = activeSession?.exercises[exIdx]?.sets.findIndex(s => !s.completed) ?? -1;
     const isCurrent = !bigSet.completed && firstOpen === setIdx;
+    const error = setCompletionErrors[bigSet.id];
     return (
       <div
         key={bigSet.id}
@@ -1122,7 +1318,10 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             isCurrent && 'bg-accent-soft',
           )}
         >
-          <span className="shrink-0 text-sm font-semibold text-ink">第 {bigSet.setNumber} 大组</span>
+          <span className="shrink-0 text-sm font-semibold text-ink">
+            大组 {bigSet.setNumber}
+            <span className="ml-1 text-cap font-normal text-ink-3">{stages.length} 阶</span>
+          </span>
           {isCurrent && <Badge tone="accent">进行中</Badge>}
           <span className="min-w-0 flex-1 truncate text-sm2 tabular-nums text-ink-2">
             {summary || '暂无阶梯'}
@@ -1156,17 +1355,21 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-surface-subtle text-cap font-semibold text-ink-3">
                   {stageIdx + 1}
                 </span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  aria-label={`第 ${stageIdx + 1} 阶重量`}
-                  value={stage.weightOrPlates || ''}
-                  onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
-                  className="h-10 w-14 rounded-[6px] border border-line bg-surface px-1 text-center text-h2 font-semibold tabular-nums text-ink focus:border-accent focus:outline-none"
-                />
-                <span className="text-sm2 text-ink-2">
-                  {stage.unit === 'plates' ? '片' : 'kg'} ×
-                </span>
+                {showWeight && (
+                  <>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      aria-label={`第 ${stageIdx + 1} 阶重量`}
+                      value={stage.weightOrPlates || ''}
+                      onChange={(e) => setDropStageDirectVal(exIdx, setIdx, stageIdx, 'weightOrPlates', parseFloat(e.target.value) || 0)}
+                      className="h-10 w-14 rounded-[6px] border border-line bg-surface px-1 text-center text-h2 font-semibold tabular-nums text-ink focus:border-accent focus:outline-none"
+                    />
+                    <span className="text-sm2 text-ink-2">
+                      {stage.unit === 'plates' ? '片' : stage.unit === 'assisted' ? 'kg助力' : 'kg'}
+                    </span>
+                  </>
+                )}
                 <input
                   type="number"
                   inputMode="numeric"
@@ -1176,7 +1379,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                   className="h-10 w-10 rounded-[6px] border border-line bg-surface px-1 text-center text-sm2 font-semibold tabular-nums text-ink focus:border-accent focus:outline-none"
                 />
                 <span className="text-sm2 text-ink-2">次</span>
-                <Pencil className="ml-1 h-3.5 w-3.5 text-ink-3" aria-hidden="true" />
                 {stages.length > 1 && (
                   <IconButton
                     label={`删除第 ${stageIdx + 1} 阶`}
@@ -1197,6 +1399,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             </button>
           </div>
         )}
+        {error && <p role="alert" className="border-t border-line px-3 py-2 text-cap font-semibold text-danger">{error}</p>}
       </div>
     );
   };
@@ -1217,7 +1420,12 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const isDrop = focusEx.sets.some(s => s.isDropSet);
     // 单侧仅做普通组，isDropSet 为真一律按超级组渲染
     const isUnilateralEx = Boolean(focusEx.isUnilateral) && !isDrop;
-    const summary = lastLogSummary(focusLastLog);
+    const summary = lastLogSummary(focusLastLog, focusEx);
+    const latestOpenDropIdx = focusEx.sets.findIndex(set => !set.completed);
+    const canCopyDropWeights = isDrop
+      && latestOpenDropIdx >= 0
+      && requiresWeightInput(focusEx.currentUnit)
+      && focusEx.sets.some((set, index) => index > latestOpenDropIdx && !set.completed);
     return (
       <Card key={focusEx.exerciseId + '-' + exIdx} className="mt-3 p-4 animate-card-in">
         {/* 头部：动作名 + 类别 + 规格胶囊 */}
@@ -1270,6 +1478,15 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
         <div className="mt-4">
           {isDrop ? (
             <div className="space-y-2">
+              {canCopyDropWeights && (
+                <button
+                  type="button"
+                  onClick={() => copyDropWeightsToOpenSets(exIdx)}
+                  className="flex h-11 w-full items-center justify-center rounded-ctl border border-dashed border-line-strong text-cap font-semibold text-accent"
+                >
+                  复制第 {latestOpenDropIdx + 1} 大组重量到后续未完成组
+                </button>
+              )}
               {focusEx.sets.map((bigSet, setIdx) => renderDropBigSet(exIdx, bigSet, setIdx))}
             </div>
           ) : isUnilateralEx ? (
@@ -1287,9 +1504,12 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             </>
           ) : (
             <>
-              <div className="mb-1.5 grid grid-cols-[32px_1fr_64px_44px] items-center gap-2 px-2 text-center text-cap font-semibold text-ink-3">
+              <div className={cx(
+                'mb-1.5 grid items-center gap-2 px-2 text-center text-cap font-semibold text-ink-3',
+                requiresWeightInput(focusEx.currentUnit) ? 'grid-cols-[32px_1fr_64px_44px]' : 'grid-cols-[32px_1fr_44px]',
+              )}>
                 <span>组</span>
-                <span>{UNIT_LABELS[focusEx.currentUnit] || '负荷'}</span>
+                {requiresWeightInput(focusEx.currentUnit) && <span>{UNIT_LABELS[focusEx.currentUnit] || '负荷'}</span>}
                 <span>次</span>
                 <span />
               </div>
@@ -1542,9 +1762,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               <Plus className="h-4 w-4 text-ink-2" /> 从动作库添加动作
             </button>
 
-            {/* 有氧折叠行（腿日自动隐藏） */}
-            {!activeSession.planName.includes('腿') && (
-              <Card className="overflow-hidden">
+            {/* 有氧折叠行：所有训练均可用，由用户手动开启 */}
+            <Card className="overflow-hidden">
                 <button
                   type="button"
                   onClick={() => setShowCardio(v => !v)}
@@ -1604,6 +1823,14 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                         </div>
                         <input
                           type="text"
+                          value={activeSession.cardioType || ''}
+                          onChange={(e) => updateActiveSession({ ...activeSession, cardioType: e.target.value })}
+                          placeholder="有氧类型，例如：跑步机坡度快走"
+                          aria-label="有氧类型"
+                          className={fieldCls}
+                        />
+                        <input
+                          type="text"
                           value={activeSession.cardioNotes || ''}
                           onChange={(e) => updateActiveSession({ ...activeSession, cardioNotes: e.target.value })}
                           placeholder="例如: 跑步机坡度 10，速度 5.0 km/h 快走"
@@ -1613,8 +1840,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                     )}
                   </div>
                 )}
-              </Card>
-            )}
+            </Card>
 
             {/* 备注折叠行 */}
             <Card className="overflow-hidden">
@@ -1663,7 +1889,10 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             <button
               type="button"
               aria-label="结束训练"
-              onClick={() => setShowFinishModal(true)}
+              onClick={() => {
+                setFinishError(null);
+                setShowFinishModal(true);
+              }}
               className="flex h-16 w-16 flex-col items-center justify-center rounded-full bg-ink text-white shadow-modal active:scale-95"
             >
               <span className="text-cap font-semibold leading-tight">结束</span>
@@ -1693,6 +1922,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
           const specEx = activeSession.exercises[specExIdx];
           const isDrop = specEx.sets.some(s => s.isDropSet);
           const isUni = Boolean(specEx.isUnilateral) && !isDrop;
+          const pulleyEnabled = specEx.currentUnit !== 'bodyweight' && specEx.pulleyRatio !== 'none';
           return (
             <div>
               <p className="mb-1.5 text-cap font-semibold text-ink-3">计量单位</p>
@@ -1703,13 +1933,32 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 options={UNIT_OPTIONS}
               />
 
-              <p className="mb-1.5 mt-4 text-cap font-semibold text-ink-3">滑轮比例</p>
-              <SegmentedControl
-                label="滑轮比例"
-                value={specEx.pulleyRatio}
-                onChange={(ratio) => changePulleyRatio(specExIdx, ratio)}
-                options={PULLEY_OPTIONS}
-              />
+              {specEx.currentUnit !== 'bodyweight' && (
+                <div className="mt-4 rounded-ctl border border-line bg-surface-subtle p-3">
+                  <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3">
+                    <span>
+                      <span className="block text-sm2 font-semibold text-ink">滑轮记录</span>
+                      <span className="block text-cap text-ink-3">可选高级项，默认不记录</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={pulleyEnabled}
+                      onChange={(e) => changePulleyRatio(specExIdx, e.target.checked ? '1:1' : 'none')}
+                      className="h-5 w-5 accent-accent"
+                    />
+                  </label>
+                  {pulleyEnabled && (
+                    <div className="mt-2">
+                      <SegmentedControl
+                        label="滑轮比例"
+                        value={specEx.pulleyRatio === '2:1' ? '2:1' : '1:1'}
+                        onChange={(ratio) => changePulleyRatio(specExIdx, ratio)}
+                        options={PULLEY_OPTIONS}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               <p className="mb-1.5 mt-4 text-cap font-semibold text-ink-3">记录方式</p>
               <SegmentedControl
@@ -1841,7 +2090,9 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 <label className="mb-1 block text-cap font-semibold text-ink-2">计量单位</label>
                 <select
                   value={customUnit}
-                  onChange={(e) => setCustomUnit(e.target.value as ResistanceUnit)}
+                  onChange={(e) => {
+                    setCustomUnit(e.target.value as ResistanceUnit);
+                  }}
                   className={fieldCls}
                 >
                   <option value="plates">插销 (片)</option>
@@ -1850,18 +2101,6 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                   <option value="bodyweight">自重</option>
                 </select>
               </div>
-            </div>
-            <div>
-              <label className="mb-1 block text-cap font-semibold text-ink-2">滑轮类型</label>
-              <select
-                value={customPulley}
-                onChange={(e) => setCustomPulley(e.target.value as PulleyRatio)}
-                className={fieldCls}
-              >
-                <option value="none">普通固定器械/自由重量</option>
-                <option value="1:1">单滑轮 1:1</option>
-                <option value="2:1">双滑轮 2:1</option>
-              </select>
             </div>
             <div>
               <p className="mb-1.5 text-cap font-semibold text-ink-3">训练方式</p>
@@ -1904,7 +2143,13 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
             <div className="grid grid-cols-2 gap-2">
               <Button
                 variant="secondary"
-                onClick={() => { setCustomName(''); setCustomNotes(''); setCustomUnilateral(false); setCustomDropSet(false); setCustomError(null); }}
+                onClick={() => {
+                  setCustomName('');
+                  setCustomNotes('');
+                  setCustomUnilateral(false);
+                  setCustomDropSet(false);
+                  setCustomError(null);
+                }}
               >
                 清空
               </Button>
@@ -1914,7 +2159,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                   if (!customName.trim()) { setCustomError('请输入动作名称'); return; }
                   createAndAddCustomExercise({
                     name: customName, category: customCategory, defaultUnit: customUnit,
-                    defaultPulley: customPulley, isUnilateral: customUnilateral,
+                    isUnilateral: customUnilateral,
                     isDropSet: customDropSet,
                     dropStages: customDropSet ? makeDefaultDropStages(customUnit) : undefined,
                     notes: customNotes,
@@ -1948,8 +2193,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               <Award className="h-8 w-8" />
             </div>
 
-            <h2 className="text-[20px] font-bold text-ink">今日训练圆满完成</h2>
-            <p className="mt-1 text-sm2 text-ink-2">坚持渐进超负荷，肌肉正在恢复与增长</p>
+            <h2 className="text-[20px] font-bold text-ink">本次训练记录</h2>
+            <p className="mt-1 text-sm2 text-ink-2">确认已完成的组数与有氧，再保存本次记录</p>
 
             <div className="my-5 grid grid-cols-3 gap-2 rounded-ctl bg-surface-subtle p-3">
               <div>
@@ -1963,7 +2208,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               <div>
                 <span className="block text-cap text-ink-3">有氧燃脂</span>
                 <span className="block text-body font-semibold tabular-nums text-ink">
-                  {activeSession.cardioCompleted ? `${activeSession.cardioMinutes || 20}m` : '0m'}
+                  {activeSession.cardioCompleted ? `${activeSession.cardioMinutes}m` : '未安排'}
                 </span>
               </div>
             </div>
@@ -1983,19 +2228,32 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 options={CARDIO_MODE_OPTIONS}
               />
               {activeSession.cardioCompleted && (
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-2 space-y-2">
                   <input
-                    type="number"
-                    min={1}
-                    max={300}
-                    inputMode="numeric"
-                    value={activeSession.cardioMinutes || ''}
-                    onChange={(e) => setCardioMinutes(parseInt(e.target.value) || 0)}
-                    className="h-11 w-20 rounded-ctl border border-line bg-surface px-2 text-center text-body font-semibold tabular-nums text-ink focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent/15"
+                    type="text"
+                    value={activeSession.cardioType || ''}
+                    onChange={(e) => updateActiveSession({ ...activeSession, cardioType: e.target.value })}
+                    placeholder="有氧类型"
+                    aria-label="有氧类型"
+                    className={fieldCls}
                   />
-                  <span className="text-sm2 text-ink-2">分钟</span>
-                  <span className="text-cap text-ink-3">可填 1–300 分钟</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={300}
+                      inputMode="numeric"
+                      value={activeSession.cardioMinutes || ''}
+                      onChange={(e) => setCardioMinutes(parseInt(e.target.value) || 0)}
+                      className="h-11 w-20 rounded-ctl border border-line bg-surface px-2 text-center text-body font-semibold tabular-nums text-ink focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent/15"
+                    />
+                    <span className="text-sm2 text-ink-2">分钟</span>
+                    <span className="text-cap text-ink-3">可填 1–300 分钟</span>
+                  </div>
                 </div>
+              )}
+              {finishError && (
+                <p role="alert" className="mt-2 text-cap font-semibold text-danger">{finishError}</p>
               )}
             </div>
 
