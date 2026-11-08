@@ -9,8 +9,8 @@ gradle.beforeProject { currentProject ->
     [currentProject.repositories, currentProject.buildscript.repositories].each { repositories ->
         repositories.configureEach { repository ->
             if (repository instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository &&
-                    repository.url.host == 'repo.maven.apache.org') {
-                repository.setUrl('https://repo1.maven.org/maven2')
+                    repository.url.host in ['repo.maven.apache.org', 'repo1.maven.org']) {
+                repository.setUrl('https://maven-central.storage-download.googleapis.com/maven2')
             }
         }
     }
