@@ -13,6 +13,8 @@ import {
   MuscleCategory, ResistanceUnit, PulleyRatio
 } from '../types';
 import { StorageService } from '../utils/storage';
+import { useAppSettings } from '../settings/AppSettingsContext';
+import { withAutoRestDays } from '../utils/autoRest';
 import { diffLocalDays, todayLocalDate, shiftLocalDate, weekdayOf } from '../utils/date';
 import { MED_CHANGED_EVENT } from '../utils/medication';
 import {
@@ -120,6 +122,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
   onRefreshExercises,
   initialSubTab = 'training',
 }) => {
+  const { settings } = useAppSettings();
   // 当前子标签: 'training' | 'weight'
   const [activeSubTab, setActiveSubTab] = useState<'training' | 'weight'>(initialSubTab);
 
@@ -936,19 +939,24 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
 
   // ================= 训练历史统计 =================
   const todayStr = todayLocalDate();
+  // 未训练日自动休息：派生只读休息记录，参与历史、日历与连续打卡
+  const effectiveSessions = useMemo(
+    () => withAutoRestDays(sessions, todayStr, settings.autoRest),
+    [sessions, todayStr, settings.autoRest],
+  );
   const historyStats = useMemo(() => ({
-    trainings: sessions.filter(s => !s.isRestDay).length,
-    rests: sessions.filter(s => s.isRestDay).length,
-    weekTrainings: countWeekTrainings(sessions, todayStr),
-    streak: computeStreak(sessions, todayStr),
-    totalSets: totalCompletedSetsAll(sessions),
-  }), [sessions, todayStr]);
+    trainings: effectiveSessions.filter(s => !s.isRestDay).length,
+    rests: effectiveSessions.filter(s => s.isRestDay).length,
+    weekTrainings: countWeekTrainings(effectiveSessions, todayStr),
+    streak: computeStreak(effectiveSessions, todayStr),
+    totalSets: totalCompletedSetsAll(effectiveSessions),
+  }), [effectiveSessions, todayStr]);
 
   // 活动日历：近 8 周（56 天），以今天结尾
   const activityCal = useMemo(() => {
     const days: { date: string; day: number; isToday: boolean; hasTraining: boolean; hasRest: boolean }[] = [];
     const byDate = new Map<string, { t: boolean; r: boolean }>();
-    for (const s of sessions) {
+    for (const s of effectiveSessions) {
       const cur = byDate.get(s.date) || { t: false, r: false };
       if (s.isRestDay) cur.r = true; else cur.t = true;
       byDate.set(s.date, cur);
@@ -965,17 +973,17 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
       });
     }
     return days;
-  }, [sessions, todayStr]);
+  }, [effectiveSessions, todayStr]);
 
   // 过滤后的历史列表（类型筛选 + 日历日期筛选）
   const visibleSessions = useMemo(() => {
-    return sessions.filter(s => {
+    return effectiveSessions.filter(s => {
       if (historyFilter === 'training' && s.isRestDay) return false;
       if (historyFilter === 'rest' && !s.isRestDay) return false;
       if (selectedCalDate && s.date !== selectedCalDate) return false;
       return true;
     });
-  }, [sessions, historyFilter, selectedCalDate]);
+  }, [effectiveSessions, historyFilter, selectedCalDate]);
 
   // ================= 体重统计与洞察 =================
   // 汇总栏只反映今天：没有今天的记录时保持空，不用上一次的数据冒充
@@ -1210,7 +1218,7 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
         value={activeSubTab}
         onChange={setActiveSubTab}
         options={[
-          { value: 'training', label: `历史训练记录 (${sessions.length} 次)` },
+          { value: 'training', label: `历史训练记录 (${effectiveSessions.length} 条)` },
           { value: 'weight', label: `体重与生活日志 (${weights.length} 条)` },
         ]}
       />
@@ -1274,7 +1282,25 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
             </Card>
           ) : (
             visibleSessions.map((sess) => {
-              // 专属渲染：纯粹的完全休息日卡片
+              // 自动休息是读取时派生的虚拟记录，只读展示，不能编辑或删除
+              if (sess.isRestDay && sess.isAutoRest) {
+                return (
+                  <Card key={sess.id} className="flex items-center justify-between gap-3 p-3.5">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning-soft text-warning">
+                        <Coffee className="h-4 w-4" aria-hidden="true" />
+                      </span>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="text-body font-semibold text-ink">休息日 (未训练自动记录)</span>
+                        <Badge>{sess.date}</Badge>
+                        <Badge tone="warning">自动</Badge>
+                      </div>
+                    </div>
+                  </Card>
+                );
+              }
+
+              // 专属渲染：手动打卡的完全休息日卡片
               if (sess.isRestDay) {
                 return (
                   <Card key={sess.id} className="flex items-center justify-between gap-3 p-3.5">
@@ -2047,20 +2073,27 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                 />
               </div>
 
-              <div>
-                <label htmlFor="edit-session-notes" className="mb-1 block text-cap font-semibold text-ink-2">训练备注</label>
-                <textarea
-                  id="edit-session-notes"
-                  rows={2}
-                  value={editingSession.notes || ''}
-                  onChange={(e) => editSessionNotes(e.target.value)}
-                  placeholder="记录当日状态、器械手感等..."
-                  className="w-full rounded-ctl border border-line bg-surface-subtle p-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15"
-                />
-              </div>
+              {settings.showNotes ? (
+                <div>
+                  <label htmlFor="edit-session-notes" className="mb-1 block text-cap font-semibold text-ink-2">训练备注</label>
+                  <textarea
+                    id="edit-session-notes"
+                    rows={2}
+                    value={editingSession.notes || ''}
+                    onChange={(e) => editSessionNotes(e.target.value)}
+                    placeholder="记录当日状态、器械手感等..."
+                    className="w-full rounded-ctl border border-line bg-surface-subtle p-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15"
+                  />
+                </div>
+              ) : editingSession.notes ? (
+                <div>
+                  <p className="mb-1 text-cap font-semibold text-ink-2">训练备注（只读）</p>
+                  <p className="whitespace-pre-wrap rounded-ctl bg-surface-subtle p-3 text-sm2 leading-relaxed text-ink-2">{editingSession.notes}</p>
+                </div>
+              ) : null}
 
-              {/* 有氧编辑：无有氧 / 有有氧 + 自定义时长、类型、备注 */}
-              {!editingSession.isRestDay && (
+              {/* 有氧编辑：无有氧 / 有有氧 + 自定义时长、类型、备注；设置可隐藏入口 */}
+              {settings.showCardio && !editingSession.isRestDay && (
                 <div className="space-y-2.5 rounded-ctl border border-line bg-surface-subtle/60 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="flex items-center gap-1.5 text-body font-semibold text-ink">
@@ -2165,21 +2198,25 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                           {e.isUnilateral ? '左右独立' : '双侧'}
                         </Badge>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => editToggleUnilateral(exIdx, !e.isUnilateral)}
-                        className="h-11 px-1 text-sm2 font-semibold text-accent underline"
-                      >
-                        {e.isUnilateral ? '切回双侧' : '改为单侧'}
-                      </button>
+                      {(settings.showUnilateral || e.isUnilateral) && (
+                        <button
+                          type="button"
+                          onClick={() => editToggleUnilateral(exIdx, !e.isUnilateral)}
+                          className="h-11 px-1 text-sm2 font-semibold text-accent underline"
+                        >
+                          {e.isUnilateral ? '切回双侧' : '改为单侧'}
+                        </button>
+                      )}
                       {isDrop && <Badge><Flame className="h-3 w-3" aria-hidden="true" />超级组</Badge>}
-                      <button
-                        type="button"
-                        onClick={() => editToggleDropSet(exIdx, !isDrop)}
-                        className="h-11 px-1 text-sm2 font-semibold text-accent underline"
-                      >
-                        {isDrop ? '取消超级组' : '设为超级组'}
-                      </button>
+                      {(settings.showDropSets || isDrop) && (
+                        <button
+                          type="button"
+                          onClick={() => editToggleDropSet(exIdx, !isDrop)}
+                          className="h-11 px-1 text-sm2 font-semibold text-accent underline"
+                        >
+                          {isDrop ? '取消超级组' : '设为超级组'}
+                        </button>
+                      )}
                       <span className="ml-auto flex items-center">
                         <button
                           type="button"
@@ -2416,17 +2453,21 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                       </button>
                     </div>
 
-                    <div>
-                      <label htmlFor={`edit-ex-notes-${exIdx}`} className="mb-1 block text-cap font-semibold text-ink-2">动作备注</label>
-                      <input
-                        id={`edit-ex-notes-${exIdx}`}
-                        type="text"
-                        value={e.notes || ''}
-                        onChange={(ev) => editExerciseNotes(exIdx, ev.target.value)}
-                        placeholder="该动作备注（可留空）"
-                        className={fieldCls}
-                      />
-                    </div>
+                    {settings.showNotes ? (
+                      <div>
+                        <label htmlFor={`edit-ex-notes-${exIdx}`} className="mb-1 block text-cap font-semibold text-ink-2">动作备注</label>
+                        <input
+                          id={`edit-ex-notes-${exIdx}`}
+                          type="text"
+                          value={e.notes || ''}
+                          onChange={(ev) => editExerciseNotes(exIdx, ev.target.value)}
+                          placeholder="该动作备注（可留空）"
+                          className={fieldCls}
+                        />
+                      </div>
+                    ) : e.notes ? (
+                      <p className="text-cap leading-relaxed text-ink-3">动作备注（只读）：{e.notes}</p>
+                    ) : null}
                   </div>
                 );
               })}
@@ -2669,37 +2710,41 @@ export const WeightJournalView: React.FC<WeightJournalViewProps> = ({
                     )}
                   </div>
                 )}
-                <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
-                  <span className="min-w-0">
-                    <span className="block text-sm2 font-semibold text-ink">左右独立动作（单侧）</span>
-                    <span className="block text-cap text-ink-3">开启后左右分别记录</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={historyCustomUnilateral}
-                    onChange={(e) => {
-                      setHistoryCustomUnilateral(e.target.checked);
-                      if (e.target.checked) setHistoryCustomDropSet(false);
-                    }}
-                    className="h-4 w-4 shrink-0 accent-accent"
-                  />
-                </label>
-                <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
-                  <span className="min-w-0">
-                    <span className="block text-sm2 font-semibold text-ink">递减超级组（4 阶梯）</span>
-                    <span className="block text-cap text-ink-3">默认 10/7.5/5/2.5 kg，之后可逐级改</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={historyCustomDropSet}
-                    onChange={(e) => {
-                      setHistoryCustomDropSet(e.target.checked);
-                      // 超级组与单侧互斥，与历史编辑里的切换规则一致
-                      if (e.target.checked) setHistoryCustomUnilateral(false);
-                    }}
-                    className="h-4 w-4 shrink-0 accent-accent"
-                  />
-                </label>
+                {settings.showUnilateral && (
+                  <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
+                    <span className="min-w-0">
+                      <span className="block text-sm2 font-semibold text-ink">左右独立动作（单侧）</span>
+                      <span className="block text-cap text-ink-3">开启后左右分别记录</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={historyCustomUnilateral}
+                      onChange={(e) => {
+                        setHistoryCustomUnilateral(e.target.checked);
+                        if (e.target.checked) setHistoryCustomDropSet(false);
+                      }}
+                      className="h-4 w-4 shrink-0 accent-accent"
+                    />
+                  </label>
+                )}
+                {settings.showDropSets && (
+                  <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
+                    <span className="min-w-0">
+                      <span className="block text-sm2 font-semibold text-ink">递减超级组（4 阶梯）</span>
+                      <span className="block text-cap text-ink-3">默认 10/7.5/5/2.5 kg，之后可逐级改</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={historyCustomDropSet}
+                      onChange={(e) => {
+                        setHistoryCustomDropSet(e.target.checked);
+                        // 超级组与单侧互斥，与历史编辑里的切换规则一致
+                        if (e.target.checked) setHistoryCustomUnilateral(false);
+                      }}
+                      className="h-4 w-4 shrink-0 accent-accent"
+                    />
+                  </label>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   <Button
                     variant="secondary"

@@ -15,12 +15,15 @@ import { WeightJournalView } from './components/WeightJournalView';
 import { MedicationView } from './components/MedicationView';
 import { Button } from './ui/Button';
 import { Sheet } from './ui/Sheet';
+import { AppSettingsProvider } from './settings/AppSettingsContext';
+import { SettingsSheet } from './settings/SettingsSheet';
 
 type TabId = 'workout' | 'plans' | 'library' | 'journal' | 'medication';
 
-export function App() {
+function AppShell() {
   const [activeTab, setActiveTab] = useState<TabId>('workout');
   const [allExercises, setAllExercises] = useState<Exercise[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // 专注模式：训练进行中时隐藏底部导航，防组间误触
   const [inFocusMode, setInFocusMode] = useState(false);
   // 用药状态提升到 App：用药页、底部导航红点、到点弹层共用同一份快照
@@ -113,6 +116,7 @@ export function App() {
             allExercises={allExercises}
             onFocusModeChange={setInFocusMode}
             onRefreshExercises={refreshExercises}
+            onOpenSettings={() => setSettingsOpen(true)}
           />
         )}
 
@@ -214,7 +218,18 @@ export function App() {
           </p>
         </div>
       </Sheet>
+
+      {/* 全局设置面板：只控制入口显隐，不修改已有记录 */}
+      <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <AppSettingsProvider>
+      <AppShell />
+    </AppSettingsProvider>
   );
 }
 

@@ -8,6 +8,7 @@ import {
   ResistanceUnit, DropStage
 } from '../types';
 import { StorageService } from '../utils/storage';
+import { useAppSettings } from '../settings/AppSettingsContext';
 import { formatDropStagesSummary, requiresWeightInput } from '../utils/trainingRules';
 import { ConfirmSheet } from './ConfirmSheet';
 import { Badge, Button, Card, IconButton, Sheet, cx } from '../ui';
@@ -69,6 +70,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
   onStartPlan,
   medication,
 }) => {
+  const { settings } = useAppSettings();
   const [plans, setPlans] = useState<WorkoutPlan[]>([]);
   const [editingPlan, setEditingPlan] = useState<WorkoutPlan | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -506,7 +508,8 @@ export const PlansView: React.FC<PlansViewProps> = ({
               />
             </label>
 
-            {/* 有氧设置 */}
+            {/* 有氧设置：可在设置里隐藏入口 */}
+            {settings.showCardio && (
             <div className="rounded-ctl bg-surface-subtle p-3">
               <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3">
                 <span className="flex items-center gap-1.5 text-sm2 font-semibold text-ink">
@@ -568,6 +571,7 @@ export const PlansView: React.FC<PlansViewProps> = ({
                 </div>
               )}
             </div>
+            )}
 
             {/* 动作列表编辑与重量预设 */}
             <div>
@@ -860,7 +864,8 @@ export const PlansView: React.FC<PlansViewProps> = ({
                               </select>
                             </label>
 
-                            {/* 左右独立（单侧）开关：仅普通动作提供，超级组不支持分侧 */}
+                            {/* 左右独立（单侧）开关：仅普通动作提供，超级组不支持分侧；设置可隐藏 */}
+                            {(settings.showUnilateral || pe.isUnilateral) && (
                             <button
                               type="button"
                               aria-pressed={Boolean(pe.isUnilateral)}
@@ -899,11 +904,12 @@ export const PlansView: React.FC<PlansViewProps> = ({
                                 </span>
                               </span>
                             </button>
+                            )}
                           </div>
                         )}
 
-                        {/* 动作底部：设为超级组按钮（超级组不支持分侧，切换时清除单侧标记） */}
-                        {!isDrop && (
+                        {/* 动作底部：设为超级组按钮（超级组不支持分侧，切换时清除单侧标记）；设置可隐藏 */}
+                        {!isDrop && settings.showDropSets && (
                           <div className="mt-1 flex items-center justify-end">
                             <button
                               type="button"
@@ -924,21 +930,25 @@ export const PlansView: React.FC<PlansViewProps> = ({
                           </div>
                         )}
 
-                        {/* 滑轮改为训练中按需开启的高级记录项，计划仅保留备注。 */}
-                        <div className="mt-1">
-                          <input
-                            type="text"
-                            value={pe.notes || ''}
-                            onChange={(e) => {
-                              const newExs = [...editingPlan.exercises];
-                              newExs[idx].notes = e.target.value;
-                              setEditingPlan({ ...editingPlan, exercises: newExs });
-                            }}
-                            placeholder="动作小贴士 (如: 顶峰停顿1秒/热身组)"
-                            aria-label="动作小贴士"
-                            className={compactFieldCls}
-                          />
-                        </div>
+                        {/* 滑轮改为训练中按需开启的高级记录项，计划仅保留备注；备注入口可隐藏 */}
+                        {settings.showNotes ? (
+                          <div className="mt-1">
+                            <input
+                              type="text"
+                              value={pe.notes || ''}
+                              onChange={(e) => {
+                                const newExs = [...editingPlan.exercises];
+                                newExs[idx].notes = e.target.value;
+                                setEditingPlan({ ...editingPlan, exercises: newExs });
+                              }}
+                              placeholder="动作小贴士 (如: 顶峰停顿1秒/热身组)"
+                              aria-label="动作小贴士"
+                              className={compactFieldCls}
+                            />
+                          </div>
+                        ) : pe.notes ? (
+                          <p className="mt-1 text-cap leading-relaxed text-ink-3">动作小贴士（只读）：{pe.notes}</p>
+                        ) : null}
                       </div>
                     );
                   })}

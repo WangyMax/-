@@ -67,14 +67,14 @@ jobs:
             exit 1
           fi
           cat android-build.log
-          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/FitCustomPro-v2.9.3.apk
+          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/FitCustomPro-v2.9.4.apk
 
       - name: Verify APK Signature and Upgrade Version
         run: |
           signing_tool="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name apksigner | sort -V | tail -n 1)"
           package_tool="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name aapt | sort -V | tail -n 1)"
-          "$signing_tool" verify --verbose --print-certs android/app/build/outputs/apk/debug/FitCustomPro-v2.9.3.apk
-          "$package_tool" dump badging android/app/build/outputs/apk/debug/FitCustomPro-v2.9.3.apk | grep "package: name='com.fitcustom.pro' versionCode='42' versionName='2.9.3'"
+          "$signing_tool" verify --verbose --print-certs android/app/build/outputs/apk/debug/FitCustomPro-v2.9.4.apk
+          "$package_tool" dump badging android/app/build/outputs/apk/debug/FitCustomPro-v2.9.4.apk | grep "package: name='com.fitcustom.pro' versionCode='43' versionName='2.9.4'"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -87,20 +87,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.9.3
-          name: "FitCustom Pro v2.9.3（训练交互与体重图表优化）"
+          tag_name: v2.9.4
+          name: "FitCustom Pro v2.9.4（自动休息与全局设置）"
           body: |
             ### 本次更新
-            - 有氧与滑轮默认关闭，按需手动开启；关闭后同步清理不适用内容。
-            - 自重模式只填写次数，不显示重量输入。
-            - 重复动作沿用上次重量，本次次数留空；递减组可逐阶编辑、增删与复制重量。
-            - 重新设计体重周/月视图，按真实日期展示，支持点选查看数值。
-            - 改善输入焦点、抽屉滚动与页面动效，并修复切换后的残留状态。
-            - 构建时同步最新页面资源，确保安装包包含本次修改。
+            - 新增「未训练自动休息」：没训练的日子自动记为休息，不需要每天打卡今日休息（可在设置关闭）。
+            - 今日训练页右上角新增设置入口：统一显示/隐藏超级组、左右组、有氧、备注、补签与自由训练入口。
+            - 开关只影响入口显示，已有训练、超级组、单侧、有氧和备注记录照常显示与统计。
+            - 历史记录补出过去的休息日（只读，带「自动」标记），连续打卡与 8 周日历同步更新。
+            - 关闭自动休息后恢复原来的手动休息与补签流程。
 
             ### 数据兼容
-            versionCode 42；沿用原签名与包名 com.fitcustom.pro，支持从 v2.9.2 覆盖安装，无需卸载，保留本地数据。
+            versionCode 43；沿用原签名与包名 com.fitcustom.pro，支持从 v2.9.3 覆盖安装，无需卸载，保留本地数据。
 
-          files: android/app/build/outputs/apk/debug/FitCustomPro-v2.9.3.apk
+          files: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/debug/FitCustomPro-v2.9.4.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -7,6 +7,7 @@ import {
   CATEGORY_LABELS, UNIT_LABELS
 } from '../types';
 import { StorageService } from '../utils/storage';
+import { useAppSettings } from '../settings/AppSettingsContext';
 import { ConfirmSheet } from './ConfirmSheet';
 import { Badge, Button, IconButton, Sheet, cx } from '../ui';
 
@@ -33,6 +34,7 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
   exercises,
   onRefreshExercises,
 }) => {
+  const { settings } = useAppSettings();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -54,6 +56,10 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
   const [confirmState, setConfirmState] = useState<{
     open: boolean; title: string; description: string; confirmText: string; onConfirm: () => void;
   }>({ open: false, title: '', description: '', confirmText: '确认删除', onConfirm: () => {} });
+
+  // 设置关闭时仍保留「当前动作已经在用」的入口，避免无法查看/取消已有状态
+  const showUniCard = settings.showUnilateral || newUnilateral;
+  const showDropCard = settings.showDropSets || newDropSet;
 
   const categories: { key: string; label: string }[] = [
     { key: 'all', label: '全部' },
@@ -519,46 +525,54 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
             </div>
           </div>
 
-          {/* 训练方式：左右独立 / 超级组 两张并排可选卡，互斥 */}
-          <div>
-            <p className="mb-1.5 text-cap font-semibold text-ink-2">训练方式</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                aria-pressed={newUnilateral}
-                onClick={toggleUnilateral}
-                className={cx(
-                  'flex min-h-16 flex-col items-start justify-center gap-1 rounded-ctl border px-3 py-2 text-left transition-colors',
-                  newUnilateral ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+          {/* 训练方式：左右独立 / 超级组 两张并排可选卡，互斥；设置可隐藏入口 */}
+          {(showUniCard || showDropCard) && (
+            <div>
+              <p className="mb-1.5 text-cap font-semibold text-ink-2">训练方式</p>
+              <div className={cx('grid gap-2', showUniCard && showDropCard ? 'grid-cols-2' : 'grid-cols-1')}>
+                {showUniCard && (
+                  <button
+                    type="button"
+                    aria-pressed={newUnilateral}
+                    onClick={toggleUnilateral}
+                    className={cx(
+                      'flex min-h-16 flex-col items-start justify-center gap-1 rounded-ctl border px-3 py-2 text-left transition-colors',
+                      newUnilateral ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+                    )}
+                  >
+                    <span className="flex w-full items-center gap-1.5 text-sm2 font-semibold text-ink">
+                      <ArrowLeftRight className={cx('h-4 w-4', newUnilateral ? 'text-accent' : 'text-ink-3')} />
+                      左右独立
+                      {newUnilateral && <Check className="ml-auto h-4 w-4 text-accent" />}
+                    </span>
+                    <span className="text-cap text-ink-3">左右分别记录</span>
+                  </button>
                 )}
-              >
-                <span className="flex w-full items-center gap-1.5 text-sm2 font-semibold text-ink">
-                  <ArrowLeftRight className={cx('h-4 w-4', newUnilateral ? 'text-accent' : 'text-ink-3')} />
-                  左右独立
-                  {newUnilateral && <Check className="ml-auto h-4 w-4 text-accent" />}
-                </span>
-                <span className="text-cap text-ink-3">左右分别记录</span>
-              </button>
 
-              <button
-                type="button"
-                aria-pressed={newDropSet}
-                onClick={toggleDropSet}
-                className={cx(
-                  'flex min-h-16 flex-col items-start justify-center gap-1 rounded-ctl border px-3 py-2 text-left transition-colors',
-                  newDropSet ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+                {showDropCard && (
+                  <button
+                    type="button"
+                    aria-pressed={newDropSet}
+                    onClick={toggleDropSet}
+                    className={cx(
+                      'flex min-h-16 flex-col items-start justify-center gap-1 rounded-ctl border px-3 py-2 text-left transition-colors',
+                      newDropSet ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+                    )}
+                  >
+                    <span className="flex w-full items-center gap-1.5 text-sm2 font-semibold text-ink">
+                      <Flame className={cx('h-4 w-4', newDropSet ? 'text-accent' : 'text-ink-3')} />
+                      超级组
+                      {newDropSet && <Check className="ml-auto h-4 w-4 text-accent" />}
+                    </span>
+                    <span className="text-cap text-ink-3">自动 4 阶递减</span>
+                  </button>
                 )}
-              >
-                <span className="flex w-full items-center gap-1.5 text-sm2 font-semibold text-ink">
-                  <Flame className={cx('h-4 w-4', newDropSet ? 'text-accent' : 'text-ink-3')} />
-                  超级组
-                  {newDropSet && <Check className="ml-auto h-4 w-4 text-accent" />}
-                </span>
-                <span className="text-cap text-ink-3">自动 4 阶递减</span>
-              </button>
+              </div>
+              {showUniCard && showDropCard && (
+                <p className="mt-1.5 text-cap text-ink-3">两种方式互斥，也可都不选</p>
+              )}
             </div>
-            <p className="mt-1.5 text-cap text-ink-3">两种方式互斥，也可都不选</p>
-          </div>
+          )}
 
           {/* 超级组阶梯编辑器：紧凑输入行（阶号 + 重量 + 单位 + 次数） */}
           {newDropSet && (
@@ -645,19 +659,23 @@ export const ExerciseLibraryView: React.FC<ExerciseLibraryViewProps> = ({
             </div>
           )}
 
-          <div>
-            <label htmlFor="library-exercise-notes" className="mb-1 block text-cap font-semibold text-ink-2">
-              动作要领或器械备注
-            </label>
-            <input
-              id="library-exercise-notes"
-              type="text"
-              value={newNotes}
-              onChange={(e) => setNewNotes(e.target.value)}
-              placeholder="例如: 某某牌器械3号机、沉肩挺胸..."
-              className={fieldCls}
-            />
-          </div>
+          {settings.showNotes ? (
+            <div>
+              <label htmlFor="library-exercise-notes" className="mb-1 block text-cap font-semibold text-ink-2">
+                动作要领或器械备注
+              </label>
+              <input
+                id="library-exercise-notes"
+                type="text"
+                value={newNotes}
+                onChange={(e) => setNewNotes(e.target.value)}
+                placeholder="例如: 某某牌器械3号机、沉肩挺胸..."
+                className={fieldCls}
+              />
+            </div>
+          ) : newNotes ? (
+            <p className="text-cap leading-relaxed text-ink-3">动作要领（只读）：{newNotes}</p>
+          ) : null}
         </div>
       </Sheet>
 

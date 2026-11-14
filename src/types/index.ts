@@ -108,6 +108,7 @@ export interface WorkoutSession {
   cardioNotes?: string;
   notes?: string;
   isRestDay?: boolean; // 是否为休息日打卡
+  isAutoRest?: boolean; // 是否为「未训练日自动记为休息」派生的虚拟记录（不落盘）
   restType?: 'full_rest' | 'active_recovery' | 'busy_or_unwell'; // 休息恢复类型
 }
 

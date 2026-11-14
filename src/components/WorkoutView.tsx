@@ -3,7 +3,7 @@ import {
   Play, Plus, Check, Trash2, Flame, ArrowLeftRight,
   Sparkles, Award, Coffee,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
-  Pencil,
+  Pencil, Settings as SettingsIcon,
 } from 'lucide-react';
 import {
   WorkoutPlan, WorkoutSession, ExerciseLog, WorkoutSet, DropStage,
@@ -24,6 +24,8 @@ import {
   WorkoutSetMode,
 } from '../utils/trainingRules';
 import { todayLocalDate, yesterdayLocalDate } from '../utils/date';
+import { withAutoRestDays } from '../utils/autoRest';
+import { useAppSettings } from '../settings/AppSettingsContext';
 import { useLockBodyScroll } from '../utils/useLockBodyScroll';
 import { ConfirmSheet } from './ConfirmSheet';
 import { Badge, Button, Card, IconButton, NumberText, SegmentedControl, Sheet, cx } from '../ui';
@@ -33,6 +35,7 @@ interface WorkoutViewProps {
   allExercises: Exercise[];
   onFocusModeChange?: (inFocus: boolean) => void;
   onRefreshExercises?: () => void;
+  onOpenSettings: () => void;
 }
 
 // 分化罗盘定义：胸 → 背 → 肩 → 腿 → 休
@@ -98,12 +101,6 @@ function inferSessionCategory(session: WorkoutSession): CycleKey | null {
 
 const fieldCls = 'h-11 w-full rounded-ctl border border-line bg-surface-subtle px-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15';
 
-const STATUS_OPTIONS = [
-  { value: 'train', label: '开练' },
-  { value: 'rest', label: '今日休息' },
-  { value: 'backfill', label: '补签' },
-] as const;
-
 const UNIT_OPTIONS = [
   { value: 'plates', label: '插片' },
   { value: 'kg', label: 'kg' },
@@ -153,7 +150,10 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
   allExercises,
   onFocusModeChange,
   onRefreshExercises,
+  onOpenSettings,
 }) => {
+  const { settings } = useAppSettings();
+  const todayDateStr = todayLocalDate();
   const [plans, setPlans] = useState<WorkoutPlan[]>([]);
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
@@ -187,6 +187,30 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     open: boolean; title: string; description: string; confirmText: string; danger: boolean;
     onConfirm: () => void;
   }>({ open: false, title: '', description: '', confirmText: '确定', danger: true, onConfirm: () => {} });
+
+  // 未训练日自动休息：把已结束的空白日派生成只读休息记录（不写 localStorage）
+  const effectiveSessions = useMemo(
+    () => withAutoRestDays(sessions, todayDateStr, settings.autoRest),
+    [sessions, todayDateStr, settings.autoRest],
+  );
+
+  // 今日状态卡：自动休息开启时不再显示补签段
+  const statusOptions = useMemo(() => {
+    const options: Array<{ value: 'train' | 'rest' | 'backfill'; label: string }> = [
+      { value: 'train', label: '开练' },
+      { value: 'rest', label: '今日休息' },
+    ];
+    if (settings.showBackfill && !settings.autoRest) {
+      options.push({ value: 'backfill', label: '补签' });
+    }
+    return options;
+  }, [settings.showBackfill, settings.autoRest]);
+
+  useEffect(() => {
+    if (statusCardTab === 'backfill' && (!settings.showBackfill || settings.autoRest)) {
+      setStatusCardTab('train');
+    }
+  }, [statusCardTab, settings.showBackfill, settings.autoRest]);
 
   // 弹窗打开时锁住底层 body 滚动，彻底杜绝滚动穿透
   useLockBodyScroll(specExIdx !== null || showAddExModal || showFinishModal || confirmState.open);
@@ -758,7 +782,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
       setFinishError('还没有完成任何一组。请返回记录，或选择放弃本次训练。');
       return;
     }
-    if (activeSession.cardioCompleted) {
+    // 有氧入口被设置隐藏时不阻断归档：沿用已有有氧数据，不强迫用户编辑不可见字段
+    if (settings.showCardio && activeSession.cardioCompleted) {
       const minutes = Math.round(activeSession.cardioMinutes || 0);
       if (minutes < 1 || minutes > 300) {
         setFinishError('有氧时长请填写 1–300 分钟');
@@ -888,8 +913,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     (acc, ex) => acc + ex.sets.length, 0
   ) || 0;
 
-  // 检查今日是否已安排休息日（读 state，不再在渲染体里打 localStorage）
-  const todayDateStr = todayLocalDate();
+  // 检查今日是否已安排休息日（只认手动打卡，自动休息不生成今日记录）
   const todayRestSession = sessions.find(s => s.date === todayDateStr && s.isRestDay);
 
   // 每个动作最近一次已完成训练日志：一次扫描建 Map，
@@ -913,7 +937,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     if (activeSession && activeSession.exercises.some(e => e.sets.some(s => s.completed))) {
       candidates.push(activeSession);
     }
-    candidates.push(...sessions);
+    candidates.push(...effectiveSessions);
 
     let lastKey: CycleKey | null = null;
     let targetSession: WorkoutSession | null = null;
@@ -940,7 +964,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
     const daysAgo = Math.max(0, Math.round((today.getTime() - last.getTime()) / 86400000));
 
     return { lastKey, suggestKey, daysAgo };
-  }, [sessions, activeSession, todayDateStr]);
+  }, [effectiveSessions, activeSession, todayDateStr]);
 
   // 推荐计划：按罗盘建议部位匹配计划名称，仅作视觉提示，不改变开练逻辑
   const suggestedPlanId = useMemo(() => {
@@ -1570,10 +1594,21 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
           <div className="mb-4">
             <div className="flex items-center justify-between text-cap font-semibold tracking-[0.04em] text-ink-3">
               <span>FITCUSTOM PRO</span>
-              <span>
-                {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}
-                {' '}
-                {new Date().toLocaleDateString('zh-CN', { weekday: 'short' })}
+              <span className="flex items-center gap-1">
+                <span>
+                  {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}
+                  {' '}
+                  {new Date().toLocaleDateString('zh-CN', { weekday: 'short' })}
+                </span>
+                <button
+                  type="button"
+                  onClick={onOpenSettings}
+                  aria-label="打开设置"
+                  title="设置"
+                  className="-mr-2 flex h-11 w-11 items-center justify-center rounded-full text-ink-3 hover:bg-surface-subtle hover:text-ink"
+                >
+                  <SettingsIcon className="h-[18px] w-[18px]" aria-hidden="true" />
+                </button>
               </span>
             </div>
             <h1 className="mt-0.5 text-h1 font-bold tracking-tight text-ink">今日训练</h1>
@@ -1605,7 +1640,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               label="今日状态"
               value={statusCardTab}
               onChange={setStatusCardTab}
-              options={STATUS_OPTIONS}
+              options={statusOptions}
             />
 
             {statusCardTab === 'train' && (
@@ -1654,13 +1689,15 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                     );
                   })}
                 </div>
-                <button
-                  type="button"
-                  onClick={startFreeWorkout}
-                  className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-ctl border border-dashed border-line-strong bg-transparent text-body font-medium text-ink-2 hover:bg-surface-subtle"
-                >
-                  <Plus className="h-4 w-4" /> 自由训练（不选预设计划）
-                </button>
+                {settings.showFreeWorkout && (
+                  <button
+                    type="button"
+                    onClick={startFreeWorkout}
+                    className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-ctl border border-dashed border-line-strong bg-transparent text-body font-medium text-ink-2 hover:bg-surface-subtle"
+                  >
+                    <Plus className="h-4 w-4" /> 自由训练（不选预设计划）
+                  </button>
+                )}
               </div>
             )}
 
@@ -1668,6 +1705,20 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               <div className="animate-card-in py-5 text-center">
                 {todayRestSession ? (
                   <p className="text-body font-semibold text-ink">今日已安排完全休息，好好恢复</p>
+                ) : settings.autoRest ? (
+                  <>
+                    <p className="text-body font-semibold text-ink">未训练自动休息已开启</p>
+                    <p className="mt-1 text-sm2 leading-relaxed text-ink-2">
+                      今天不练也不用打卡；明天会自动记为休息日。
+                    </p>
+                    <button
+                      type="button"
+                      onClick={onOpenSettings}
+                      className="mt-2 h-11 px-2 text-sm2 font-semibold text-accent underline"
+                    >
+                      去设置
+                    </button>
+                  </>
                 ) : (
                   <>
                     <p className="text-sm2 text-ink-2">今天不练？一键打卡完全休息，串联训练周期</p>
@@ -1679,7 +1730,7 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               </div>
             )}
 
-            {statusCardTab === 'backfill' && (
+            {statusCardTab === 'backfill' && settings.showBackfill && !settings.autoRest && (
               <div className="animate-card-in pt-4">
                 <p className="text-sm2 text-ink-2">之前漏打卡了？选择过去某天补上休息记录</p>
                 <div className="mt-2.5 flex items-center gap-2">
@@ -1762,7 +1813,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               <Plus className="h-4 w-4 text-ink-2" /> 从动作库添加动作
             </button>
 
-            {/* 有氧折叠行：所有训练均可用，由用户手动开启 */}
+            {/* 有氧折叠行：所有训练均可用，由用户手动开启；可在设置里隐藏入口 */}
+            {settings.showCardio && (
             <Card className="overflow-hidden">
                 <button
                   type="button"
@@ -1841,33 +1893,41 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                   </div>
                 )}
             </Card>
+            )}
 
-            {/* 备注折叠行 */}
-            <Card className="overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowNotes(v => !v)}
-                className="flex h-14 w-full items-center justify-between px-4 text-left"
-              >
-                <span className="text-body font-semibold text-ink-3">
-                  训练备注 <span className="text-sm2 font-normal">{activeSession.notes ? '' : '（点开展开）'}</span>
-                </span>
-                {showNotes
-                  ? <ChevronUp className="h-4 w-4 text-ink-3" />
-                  : <ChevronDown className="h-4 w-4 text-ink-3" />}
-              </button>
-              {showNotes && (
-                <div className="border-t border-line px-4 pb-4 pt-3 animate-card-in">
-                  <textarea
-                    rows={2}
-                    value={activeSession.notes || ''}
-                    onChange={(e) => updateActiveSession({ ...activeSession, notes: e.target.value })}
-                    placeholder="记录今日力量状态、器械手感、酸痛度等..."
-                    className="w-full rounded-ctl border border-line bg-surface-subtle p-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15"
-                  />
-                </div>
-              )}
-            </Card>
+            {/* 备注：设置关闭时只读展示已有内容 */}
+            {settings.showNotes ? (
+              <Card className="overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowNotes(v => !v)}
+                  className="flex h-14 w-full items-center justify-between px-4 text-left"
+                >
+                  <span className="text-body font-semibold text-ink-3">
+                    训练备注 <span className="text-sm2 font-normal">{activeSession.notes ? '' : '（点开展开）'}</span>
+                  </span>
+                  {showNotes
+                    ? <ChevronUp className="h-4 w-4 text-ink-3" />
+                    : <ChevronDown className="h-4 w-4 text-ink-3" />}
+                </button>
+                {showNotes && (
+                  <div className="border-t border-line px-4 pb-4 pt-3 animate-card-in">
+                    <textarea
+                      rows={2}
+                      value={activeSession.notes || ''}
+                      onChange={(e) => updateActiveSession({ ...activeSession, notes: e.target.value })}
+                      placeholder="记录今日力量状态、器械手感、酸痛度等..."
+                      className="w-full rounded-ctl border border-line bg-surface-subtle p-3 text-body text-ink placeholder:text-ink-3 focus:border-accent focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-accent/15"
+                    />
+                  </div>
+                )}
+              </Card>
+            ) : activeSession.notes ? (
+              <Card className="p-4">
+                <p className="text-cap font-semibold text-ink-3">训练备注（只读）</p>
+                <p className="mt-1 whitespace-pre-wrap text-sm2 leading-relaxed text-ink-2">{activeSession.notes}</p>
+              </Card>
+            ) : null}
 
             {/* 放弃训练 */}
             <div className="pt-1 text-center">
@@ -1960,40 +2020,46 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 </div>
               )}
 
-              <p className="mb-1.5 mt-4 text-cap font-semibold text-ink-3">记录方式</p>
-              <SegmentedControl
-                label="记录方式"
-                value={isUni ? 'unilateral' : 'both'}
-                onChange={(mode) => changeRecordMode(specExIdx, mode === 'unilateral', false)}
-                options={RECORD_MODE_OPTIONS}
-                disabled={isDrop}
-              />
-              {isDrop ? (
-                <p className="mt-2 text-cap text-ink-3">超级组按大组记录，不支持左右分开</p>
-              ) : (
-                <label className="mt-2 flex min-h-11 cursor-pointer items-center gap-2 text-sm2 text-ink-2">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(specEx.isUnilateral)}
-                    onChange={(e) => changeRecordMode(specExIdx, Boolean(specEx.isUnilateral), e.target.checked)}
-                    className="h-4 w-4 accent-accent"
+              {(settings.showUnilateral || isUni) && (
+                <>
+                  <p className="mb-1.5 mt-4 text-cap font-semibold text-ink-3">记录方式</p>
+                  <SegmentedControl
+                    label="记录方式"
+                    value={isUni ? 'unilateral' : 'both'}
+                    onChange={(mode) => changeRecordMode(specExIdx, mode === 'unilateral', false)}
+                    options={settings.showUnilateral ? RECORD_MODE_OPTIONS : RECORD_MODE_OPTIONS.filter(o => o.value !== 'unilateral')}
+                    disabled={isDrop}
                   />
-                  同时记住到动作库（以后该动作默认左右分开）
-                </label>
+                  {isDrop ? (
+                    <p className="mt-2 text-cap text-ink-3">超级组按大组记录，不支持左右分开</p>
+                  ) : settings.showUnilateral ? (
+                    <label className="mt-2 flex min-h-11 cursor-pointer items-center gap-2 text-sm2 text-ink-2">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(specEx.isUnilateral)}
+                        onChange={(e) => changeRecordMode(specExIdx, Boolean(specEx.isUnilateral), e.target.checked)}
+                        className="h-4 w-4 accent-accent"
+                      />
+                      同时记住到动作库（以后该动作默认左右分开）
+                    </label>
+                  ) : null}
+                </>
               )}
 
-              <label className="mt-3 flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
-                <span className="min-w-0">
-                  <span className="block text-sm2 font-semibold text-ink">超级组</span>
-                  <span className="block text-cap text-ink-3">把当前组转换为递减阶梯；与左右分开互斥</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={isDrop}
-                  onChange={(e) => changeExerciseDropMode(specExIdx, e.target.checked)}
-                  className="h-4 w-4 shrink-0 accent-accent"
-                />
-              </label>
+              {(settings.showDropSets || isDrop) && (
+                <label className="mt-3 flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-ctl border border-line bg-surface px-3">
+                  <span className="min-w-0">
+                    <span className="block text-sm2 font-semibold text-ink">超级组</span>
+                    <span className="block text-cap text-ink-3">把当前组转换为递减阶梯；与左右分开互斥</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={isDrop}
+                    onChange={(e) => changeExerciseDropMode(specExIdx, e.target.checked)}
+                    className="h-4 w-4 shrink-0 accent-accent"
+                  />
+                </label>
+              )}
             </div>
           );
         })()}
@@ -2102,44 +2168,52 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                 </select>
               </div>
             </div>
-            <div>
-              <p className="mb-1.5 text-cap font-semibold text-ink-3">训练方式</p>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  aria-pressed={customUnilateral}
-                  onClick={() => { setCustomUnilateral(v => !v); setCustomDropSet(false); }}
-                  className={cx(
-                    'flex min-h-16 flex-col items-start justify-center gap-1 rounded-ctl border px-3 py-2 text-left transition-colors',
-                    customUnilateral ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+            {(settings.showUnilateral || settings.showDropSets) && (
+              <div>
+                <p className="mb-1.5 text-cap font-semibold text-ink-3">训练方式</p>
+                <div className={cx('grid gap-2', settings.showUnilateral && settings.showDropSets ? 'grid-cols-2' : 'grid-cols-1')}>
+                  {settings.showUnilateral && (
+                    <button
+                      type="button"
+                      aria-pressed={customUnilateral}
+                      onClick={() => { setCustomUnilateral(v => !v); setCustomDropSet(false); }}
+                      className={cx(
+                        'flex min-h-16 flex-col items-start justify-center gap-1 rounded-ctl border px-3 py-2 text-left transition-colors',
+                        customUnilateral ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+                      )}
+                    >
+                      <span className="flex w-full items-center gap-1.5 text-sm2 font-semibold text-ink">
+                        <ArrowLeftRight className={cx('h-4 w-4', customUnilateral ? 'text-accent' : 'text-ink-3')} />
+                        左右独立
+                        {customUnilateral && <Check className="ml-auto h-4 w-4 text-accent" />}
+                      </span>
+                      <span className="text-cap text-ink-3">左右分别记录</span>
+                    </button>
                   )}
-                >
-                  <span className="flex w-full items-center gap-1.5 text-sm2 font-semibold text-ink">
-                    <ArrowLeftRight className={cx('h-4 w-4', customUnilateral ? 'text-accent' : 'text-ink-3')} />
-                    左右独立
-                    {customUnilateral && <Check className="ml-auto h-4 w-4 text-accent" />}
-                  </span>
-                  <span className="text-cap text-ink-3">左右分别记录</span>
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={customDropSet}
-                  onClick={() => { setCustomDropSet(v => !v); setCustomUnilateral(false); }}
-                  className={cx(
-                    'flex min-h-16 flex-col items-start justify-center gap-1 rounded-ctl border px-3 py-2 text-left transition-colors',
-                    customDropSet ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+                  {settings.showDropSets && (
+                    <button
+                      type="button"
+                      aria-pressed={customDropSet}
+                      onClick={() => { setCustomDropSet(v => !v); setCustomUnilateral(false); }}
+                      className={cx(
+                        'flex min-h-16 flex-col items-start justify-center gap-1 rounded-ctl border px-3 py-2 text-left transition-colors',
+                        customDropSet ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+                      )}
+                    >
+                      <span className="flex w-full items-center gap-1.5 text-sm2 font-semibold text-ink">
+                        <Flame className={cx('h-4 w-4', customDropSet ? 'text-accent' : 'text-ink-3')} />
+                        超级组
+                        {customDropSet && <Check className="ml-auto h-4 w-4 text-accent" />}
+                      </span>
+                      <span className="text-cap text-ink-3">自动 4 阶递减</span>
+                    </button>
                   )}
-                >
-                  <span className="flex w-full items-center gap-1.5 text-sm2 font-semibold text-ink">
-                    <Flame className={cx('h-4 w-4', customDropSet ? 'text-accent' : 'text-ink-3')} />
-                    超级组
-                    {customDropSet && <Check className="ml-auto h-4 w-4 text-accent" />}
-                  </span>
-                  <span className="text-cap text-ink-3">自动 4 阶递减</span>
-                </button>
+                </div>
+                {settings.showUnilateral && settings.showDropSets && (
+                  <p className="mt-1.5 text-cap text-ink-3">两种方式互斥，也可都不选</p>
+                )}
               </div>
-              <p className="mt-1.5 text-cap text-ink-3">两种方式互斥，也可都不选</p>
-            </div>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <Button
                 variant="secondary"
@@ -2213,7 +2287,8 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
               </div>
             </div>
 
-            {/* 完成前最后确认有氧：无有氧 / 有有氧 + 自定义时长 */}
+            {/* 完成前最后确认有氧：无有氧 / 有有氧 + 自定义时长；设置隐藏时不显示 */}
+            {settings.showCardio && (
             <div className="mb-4 rounded-ctl bg-surface-subtle p-3 text-left">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-cap font-semibold text-ink-3">有氧安排</span>
@@ -2252,10 +2327,12 @@ export const WorkoutView: React.FC<WorkoutViewProps> = ({
                   </div>
                 </div>
               )}
-              {finishError && (
-                <p role="alert" className="mt-2 text-cap font-semibold text-danger">{finishError}</p>
-              )}
             </div>
+            )}
+
+            {finishError && (
+              <p role="alert" className="mb-3 text-cap font-semibold text-danger">{finishError}</p>
+            )}
 
             <div className="flex gap-2">
               <Button variant="secondary" className="flex-1" onClick={() => setShowFinishModal(false)}>

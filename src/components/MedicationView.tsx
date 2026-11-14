@@ -3,7 +3,7 @@ import {
   BellOff, BellRing, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronUp, Clock, Info, Pill,
   ShieldAlert, SkipForward, Trash2,
 } from 'lucide-react';
-import { Badge, Button, Card, cx, IconButton, NumberText, SegmentedControl, Sheet } from '../ui';
+import { Badge, Button, Card, cx, IconButton, NumberText, SegmentedControl, Sheet, Toggle } from '../ui';
 import { ConfirmSheet } from './ConfirmSheet';
 import { MedicationController } from '../utils/useMedication';
 import {
@@ -29,30 +29,6 @@ const PERMISSION_HINT = {
   prompt: '还没有通知权限，点下方按钮开启',
   unsupported: '当前环境不支持系统通知（网页预览），仅显示应用内提醒',
 } as const;
-
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className={cx(
-        'relative h-7 w-12 shrink-0 rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
-        checked ? 'bg-accent' : 'bg-line-strong',
-      )}
-    >
-      <span
-        aria-hidden="true"
-        className={cx(
-          'absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-sm transition-all duration-150',
-          checked ? 'left-[22px]' : 'left-0.5',
-        )}
-      />
-    </button>
-  );
-}
 
 function StatTile({ label, value, unit, tone }: { label: string; value: string; unit?: string; tone?: 'success' | 'danger' | 'accent' }) {
   const toneClass = tone === 'success' ? 'text-success' : tone === 'danger' ? 'text-danger' : 'text-ink';
